@@ -243,6 +243,9 @@ class Daemon:
 
         slug = topic.lower().replace(" ", "-")
         slug = "".join(c for c in slug if c.isalnum() or c == "-")
+        slug = slug.strip("-")
+        if not slug:
+            slug = "untitled"
         path = f"{slug}.md"
 
         self.wiki.write_article(path=path, title=topic, body=body + "\n")

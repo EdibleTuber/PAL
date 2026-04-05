@@ -14,12 +14,17 @@ from pal.frontmatter import parse_frontmatter, serialize_frontmatter
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_DIRS = {"_index.md", "_wisdom", "_learning", "_profile"}
-
-
 class WikiManager:
     def __init__(self, vault_path: Path) -> None:
         self.vault_path = vault_path
+
+    def _resolve_safe(self, path: str) -> Path:
+        """Resolve a path within the vault, rejecting traversal attempts."""
+        full_path = (self.vault_path / path).resolve()
+        vault_resolved = self.vault_path.resolve()
+        if not str(full_path).startswith(str(vault_resolved) + "/") and full_path != vault_resolved:
+            raise ValueError(f"Path escapes vault: {path}")
+        return full_path
 
     def init_vault(self) -> None:
         """Create vault directory structure if it doesn't exist."""
@@ -44,7 +49,7 @@ class WikiManager:
         Creates parent directories as needed. Preserves the original
         'created' timestamp on updates and sets 'updated'.
         """
-        full_path = self.vault_path / path
+        full_path = self._resolve_safe(path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
 
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -73,7 +78,10 @@ class WikiManager:
 
         Raises FileNotFoundError if the article doesn't exist.
         """
-        full_path = self.vault_path / path
+        try:
+            full_path = self._resolve_safe(path)
+        except ValueError as exc:
+            raise FileNotFoundError(str(exc)) from exc
         if not full_path.exists():
             raise FileNotFoundError(f"Article not found: {path}")
         return parse_frontmatter(full_path.read_text())

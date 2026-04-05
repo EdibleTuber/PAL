@@ -172,3 +172,15 @@ def test_lint_finds_broken_wiki_links(wiki, vault):
     )
     issues = wiki.lint()
     assert any("nonexistent.md" in i["issue"] for i in issues)
+
+
+def test_read_article_path_traversal_blocked(wiki, vault):
+    wiki.init_vault()
+    with pytest.raises(FileNotFoundError):
+        wiki.read_article("../../etc/passwd")
+
+
+def test_write_article_path_traversal_blocked(wiki, vault):
+    wiki.init_vault()
+    with pytest.raises(ValueError):
+        wiki.write_article(path="../../etc/evil.md", title="Evil", body="Bad.\n")
