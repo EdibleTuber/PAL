@@ -82,10 +82,36 @@ async def mock_collection_get_doc(request: Request):
     })
 
 
+async def mock_searxng_search(request: Request):
+    """Mock SearxNG /search endpoint."""
+    query = request.query_params.get("q", "")
+    return JSONResponse({
+        "query": query,
+        "results": [
+            {
+                "url": f"https://wikipedia.org/wiki/{query.replace(' ', '_')}",
+                "title": f"{query} - Wikipedia",
+                "content": f"Wikipedia snippet about {query}.",
+            },
+            {
+                "url": f"https://arxiv.org/abs/2301.00001",
+                "title": f"Research on {query}",
+                "content": f"Abstract mentioning {query}.",
+            },
+            {
+                "url": "https://evil.example.com/junk",
+                "title": "Not allowlisted",
+                "content": "Should be filtered by allowlist.",
+            },
+        ],
+    })
+
+
 mock_app = Starlette(routes=[
     Route("/v1/chat/completions", mock_chat_completions, methods=["POST"]),
     Route("/collections/{collection_id}/search", mock_collection_search, methods=["POST"]),
     Route("/collections/{collection_id}/docs/{doc_id:path}", mock_collection_get_doc, methods=["GET"]),
+    Route("/search", mock_searxng_search, methods=["GET"]),
 ])
 
 
