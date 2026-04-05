@@ -1,0 +1,1 @@
+"""PAL — Personal Agentic Librarian."""
