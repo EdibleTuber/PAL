@@ -9,7 +9,6 @@ async def test_complete_non_streaming(mock_inference_server):
     client = InferenceClient(base_url=mock_inference_server, model="test-model")
     result = await client.complete(
         messages=[{"role": "user", "content": "hello world"}],
-        stream=False,
     )
     assert result == "echo: hello world"
 

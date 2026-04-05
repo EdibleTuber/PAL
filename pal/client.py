@@ -40,7 +40,8 @@ class PalClient:
 
     async def chat(self, text: str) -> AsyncGenerator[Message, None]:
         """Send a chat message and yield streaming chunks + final response."""
-        assert self._writer and self._reader, "Not connected"
+        if not self._writer or not self._reader:
+            raise RuntimeError("Not connected")
         msg = ChatMessage(text=text)
         self._writer.write(encode_message(msg))
         await self._writer.drain()
@@ -56,7 +57,8 @@ class PalClient:
 
     async def command(self, name: str, args: str = "") -> ResponseMessage:
         """Send a slash command and return the response."""
-        assert self._writer and self._reader, "Not connected"
+        if not self._writer or not self._reader:
+            raise RuntimeError("Not connected")
         msg = CommandMessage(name=name, args=args)
         self._writer.write(encode_message(msg))
         await self._writer.drain()

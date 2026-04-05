@@ -3,6 +3,7 @@ import asyncio
 import json
 import socket
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import pytest
 from starlette.applications import Starlette
@@ -10,6 +11,9 @@ from starlette.requests import Request
 from starlette.responses import StreamingResponse, JSONResponse
 from starlette.routing import Route
 import uvicorn
+
+from pal.config import Config
+from pal.daemon import Daemon
 
 
 async def mock_chat_completions(request: Request):
@@ -69,11 +73,6 @@ async def mock_inference_server() -> AsyncGenerator[str, None]:
 
     server.should_exit = True
     await task
-
-
-from pathlib import Path
-from pal.config import Config
-from pal.daemon import Daemon
 
 
 @pytest.fixture()

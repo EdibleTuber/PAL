@@ -81,7 +81,7 @@ class Daemon:
 
                 try:
                     msg = decode_message(line.strip())
-                except (ValueError, Exception) as exc:
+                except ValueError as exc:
                     error = ErrorMessage(error=str(exc))
                     writer.write(encode_message(error))
                     await writer.drain()
