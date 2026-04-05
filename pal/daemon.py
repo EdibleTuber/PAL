@@ -15,6 +15,9 @@ from pal.retrieval import RetrievalClient
 from pal.profile import ProfileManager
 from pal.wisdom import WisdomManager
 from pal.prompt_builder import SystemPromptBuilder
+from pal.allowlist import AllowlistManager
+from pal.websearch import WebSearchClient
+from pal.fetcher import URLFetcher, FetchError
 from pal.protocol import (
     ChatMessage,
     CommandMessage,
@@ -49,6 +52,16 @@ class Daemon:
         self.prompt_builder = SystemPromptBuilder(
             profile=self.profile,
             wisdom=self.wisdom,
+        )
+        self.allowlist = AllowlistManager(config.vault_path)
+        self.allowlist.seed()
+        self.websearch = WebSearchClient(
+            base_url=config.searxng_url,
+            timeout=config.fetch_timeout,
+        )
+        self.fetcher = URLFetcher(
+            max_bytes=config.fetch_max_bytes,
+            timeout=config.fetch_timeout,
         )
 
     async def serve(self) -> None:
@@ -184,6 +197,10 @@ class Daemon:
             await self._handle_profile(msg.args, writer)
         elif msg.name == "wisdom":
             await self._handle_wisdom(msg.args, writer)
+        elif msg.name == "search-web":
+            await self._handle_search_web(msg.args, writer)
+        elif msg.name == "fetch":
+            await self._handle_fetch(msg.args, writer)
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
@@ -240,6 +257,12 @@ class Daemon:
 
         prompt = (
             f"Write a concise wiki article about: {topic}\n\n"
+            "RULES:\n"
+            "- If you do not have confident, factual knowledge of this topic, "
+            "respond with exactly: UNKNOWN: <one-sentence reason>\n"
+            "- Do NOT guess, speculate, or fabricate facts.\n"
+            "- Do NOT use placeholder text like [insert details here].\n"
+            "- Only write the article if you can ground every claim in what you actually know.\n\n"
             "Format: Start with a markdown heading, then clear explanatory paragraphs. "
             "Be informative and concise."
         )
@@ -255,6 +278,19 @@ class Daemon:
             logger.exception("Inference error during /note: %s", exc)
             error = ErrorMessage(error=f"Inference error: {exc}")
             writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        if body.strip().startswith("UNKNOWN:"):
+            resp = ResponseMessage(
+                text=(
+                    f"{body.strip()}\n\n"
+                    "No article saved. Try `/search-web <topic>` to find sources, "
+                    "then `/fetch` and `/compile` to build from them."
+                ),
+                command="note",
+            )
+            writer.write(encode_message(resp))
             await writer.drain()
             return
 
@@ -404,6 +440,120 @@ class Daemon:
             for e in entries:
                 lines.append(f"- **{e['title']}** ({e['slug']})")
             resp = ResponseMessage(text="\n".join(lines), command="wisdom")
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_search_web(self, query: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /search-web <query> — SearxNG query, return allowlisted results."""
+        query = query.strip()
+        if not query:
+            error = ErrorMessage(error="Usage: /search-web <query>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+        try:
+            results = await self.websearch.search(query)
+        except Exception as exc:
+            logger.exception("Web search failed: %s", exc)
+            error = ErrorMessage(error=f"Web search failed: {exc}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        # Filter through allowlist
+        allowed = [r for r in results if self.allowlist.is_allowed(r.url)]
+
+        if not allowed:
+            resp = ResponseMessage(
+                text=(
+                    "No allowlisted results. "
+                    "Edit `_config/allowlist.md` in the vault to add domains."
+                ),
+                command="search-web",
+            )
+        else:
+            lines = [f"Found {len(allowed)} allowed result(s) (of {len(results)} total):\n"]
+            for i, r in enumerate(allowed, 1):
+                lines.append(f"{i}. **{r.title}**")
+                lines.append(f"   {r.url}")
+                if r.snippet:
+                    lines.append(f"   {r.snippet}")
+            lines.append("\nUse `/fetch <url>` to save a page to the vault.")
+            resp = ResponseMessage(text="\n".join(lines), command="search-web")
+
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_fetch(self, url: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /fetch <url> — download URL content into raw/web/ (quarantine)."""
+        url = url.strip()
+        if not url:
+            error = ErrorMessage(error="Usage: /fetch <url>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        if not self.allowlist.is_allowed(url):
+            error = ErrorMessage(
+                error=(
+                    f"URL not on allowlist: {url}\n"
+                    "Add its domain to _config/allowlist.md in the vault, then retry."
+                )
+            )
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        try:
+            result = await self.fetcher.fetch(url)
+        except FetchError as exc:
+            error = ErrorMessage(error=f"Fetch failed: {exc}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+        except Exception as exc:
+            logger.exception("Fetch failed: %s", exc)
+            error = ErrorMessage(error=f"Fetch failed: {exc}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        # Build a slug from the URL path + hash suffix for uniqueness
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        path_part = (parsed.path or "/").strip("/").replace("/", "-") or parsed.hostname or "page"
+        path_part = "".join(c for c in path_part if c.isalnum() or c in "-_")[:40]
+        slug = f"{path_part}-{result.content_hash[:8]}"
+        filename = f"{slug}.md"
+
+        # Write to raw/web/ with frontmatter containing provenance
+        raw_dir = self.config.vault_path / "raw" / "web"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+
+        from datetime import datetime, timezone
+        from pal.frontmatter import serialize_frontmatter
+        fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        meta = {
+            "source_url": url,
+            "title": result.title or slug,
+            "fetched_at": fetched_at,
+            "content_hash": result.content_hash,
+            "byte_size": result.byte_size,
+            "status": "raw",
+        }
+        content = serialize_frontmatter(meta, result.text + "\n")
+        (raw_dir / filename).write_text(content)
+        logger.info("Fetched %s to %s", url, filename)
+
+        resp = ResponseMessage(
+            text=(
+                f"Saved to raw/web/{filename}\n"
+                f"Title: {result.title or '(no title)'}\n"
+                f"Size: {result.byte_size} bytes\n\n"
+                "Review it in Obsidian before running /summarize (Phase 4b)."
+            ),
+            command="fetch",
+        )
         writer.write(encode_message(resp))
         await writer.drain()
 

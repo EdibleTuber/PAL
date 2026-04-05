@@ -23,6 +23,9 @@ class Config:
     vault_path: Path = field(default_factory=lambda: Path.home() / "vault")
     collection_id: str = "vault"
     username: str = "user"
+    searxng_url: str = "http://192.168.1.14:8080"
+    fetch_max_bytes: int = 2_000_000
+    fetch_timeout: int = 30
 
 
 def load_config() -> Config:
@@ -42,4 +45,10 @@ def load_config() -> Config:
         kwargs["collection_id"] = cid
     if user := os.environ.get("PAL_USERNAME"):
         kwargs["username"] = user
+    if url := os.environ.get("PAL_SEARXNG_URL"):
+        kwargs["searxng_url"] = url
+    if mb := os.environ.get("PAL_FETCH_MAX_BYTES"):
+        kwargs["fetch_max_bytes"] = int(mb)
+    if ft := os.environ.get("PAL_FETCH_TIMEOUT"):
+        kwargs["fetch_timeout"] = int(ft)
     return Config(**kwargs)
