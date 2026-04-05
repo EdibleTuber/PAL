@@ -240,6 +240,12 @@ class Daemon:
 
         prompt = (
             f"Write a concise wiki article about: {topic}\n\n"
+            "RULES:\n"
+            "- If you do not have confident, factual knowledge of this topic, "
+            "respond with exactly: UNKNOWN: <one-sentence reason>\n"
+            "- Do NOT guess, speculate, or fabricate facts.\n"
+            "- Do NOT use placeholder text like [insert details here].\n"
+            "- Only write the article if you can ground every claim in what you actually know.\n\n"
             "Format: Start with a markdown heading, then clear explanatory paragraphs. "
             "Be informative and concise."
         )
@@ -255,6 +261,19 @@ class Daemon:
             logger.exception("Inference error during /note: %s", exc)
             error = ErrorMessage(error=f"Inference error: {exc}")
             writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        if body.strip().startswith("UNKNOWN:"):
+            resp = ResponseMessage(
+                text=(
+                    f"{body.strip()}\n\n"
+                    "No article saved. Try `/search-web <topic>` to find sources, "
+                    "then `/fetch` and `/compile` to build from them."
+                ),
+                command="note",
+            )
+            writer.write(encode_message(resp))
             await writer.drain()
             return
 
