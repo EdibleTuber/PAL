@@ -111,3 +111,35 @@ def test_rebuild_index_empty_vault(wiki, vault):
     index_content = (vault / "_index.md").read_text()
     assert "Vault Index" in index_content
     # Should not crash with no articles
+
+
+import subprocess
+
+
+def test_git_init(wiki, vault):
+    """init_vault creates a git repo if one doesn't exist."""
+    wiki.init_vault()
+    wiki.git_init()
+    assert (vault / ".git").exists()
+
+
+def test_git_commit(wiki, vault):
+    wiki.init_vault()
+    wiki.git_init()
+    wiki.write_article(path="test.md", title="Test", body="Content.\n")
+    wiki.git_commit("Add test article")
+    result = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=vault,
+        capture_output=True,
+        text=True,
+    )
+    assert "Add test article" in result.stdout
+
+
+def test_git_commit_no_changes(wiki, vault):
+    """Committing with no changes does not error."""
+    wiki.init_vault()
+    wiki.git_init()
+    wiki.git_commit("Nothing to commit")
+    # Should not raise — just a no-op

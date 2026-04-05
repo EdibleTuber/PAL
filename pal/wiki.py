@@ -5,6 +5,7 @@ organized into topic directories. System directories (prefixed with _)
 are managed by PAL and should not appear in user-facing article lists.
 """
 import logging
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -124,3 +125,55 @@ class WikiManager:
         index_path = self.vault_path / "_index.md"
         index_path.write_text(serialize_frontmatter(meta, body))
         logger.info("Rebuilt vault index (%d articles)", len(articles))
+
+    def git_init(self) -> None:
+        """Initialize a git repo in the vault if one doesn't exist."""
+        if not (self.vault_path / ".git").exists():
+            subprocess.run(
+                ["git", "init"],
+                cwd=self.vault_path,
+                capture_output=True,
+                check=True,
+            )
+            # Initial commit so we have a HEAD
+            subprocess.run(
+                ["git", "add", "."],
+                cwd=self.vault_path,
+                capture_output=True,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "Initial vault", "--allow-empty"],
+                cwd=self.vault_path,
+                capture_output=True,
+                check=True,
+            )
+            logger.info("Initialized git repo in vault")
+
+    def git_commit(self, message: str) -> None:
+        """Stage all changes in the vault and commit.
+
+        No-op if there are no changes to commit.
+        """
+        subprocess.run(
+            ["git", "add", "."],
+            cwd=self.vault_path,
+            capture_output=True,
+            check=True,
+        )
+        # Check if there's anything to commit
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=self.vault_path,
+            capture_output=True,
+            text=True,
+        )
+        if not result.stdout.strip():
+            return
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=self.vault_path,
+            capture_output=True,
+            check=True,
+        )
+        logger.info("Committed: %s", message)
