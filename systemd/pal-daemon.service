@@ -1,0 +1,14 @@
+[Unit]
+Description=PAL Agent Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m pal.daemon_main
+Restart=on-failure
+RestartSec=5
+Environment=PAL_INFERENCE_URL=http://192.168.1.14:11434
+Environment=PAL_MODEL=qwen3.5
+
+[Install]
+WantedBy=default.target

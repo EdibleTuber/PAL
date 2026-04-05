@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 pal = "pal.cli:main"
+pal-daemon = "pal.daemon_main:main"
 
 [project.optional-dependencies]
 dev = [
