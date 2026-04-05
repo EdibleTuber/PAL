@@ -61,3 +61,22 @@ def test_load_config_username_from_env(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     cfg = load_config()
     assert cfg.username == "edible"
+
+
+def test_default_config_has_web_settings():
+    cfg = Config()
+    assert cfg.searxng_url == "http://192.168.1.14:8080"
+    assert cfg.fetch_max_bytes == 2_000_000
+    assert cfg.fetch_timeout == 30
+
+
+def test_load_config_web_settings_from_env(monkeypatch):
+    monkeypatch.setenv("PAL_SEARXNG_URL", "http://localhost:9999")
+    monkeypatch.setenv("PAL_FETCH_MAX_BYTES", "500000")
+    monkeypatch.setenv("PAL_FETCH_TIMEOUT", "10")
+    for key in ["PAL_INFERENCE_URL", "PAL_MODEL", "PAL_SOCKET_PATH", "PAL_HISTORY_DEPTH", "PAL_VAULT_PATH", "PAL_COLLECTION_ID", "PAL_USERNAME"]:
+        monkeypatch.delenv(key, raising=False)
+    cfg = load_config()
+    assert cfg.searxng_url == "http://localhost:9999"
+    assert cfg.fetch_max_bytes == 500_000
+    assert cfg.fetch_timeout == 10
