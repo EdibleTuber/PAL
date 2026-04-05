@@ -12,6 +12,9 @@ from pal.wiki import WikiManager
 from pal.conversation import Conversation
 from pal.inference import InferenceClient
 from pal.retrieval import RetrievalClient
+from pal.profile import ProfileManager
+from pal.wisdom import WisdomManager
+from pal.prompt_builder import SystemPromptBuilder
 from pal.protocol import (
     ChatMessage,
     CommandMessage,
@@ -24,12 +27,6 @@ from pal.protocol import (
 )
 
 logger = logging.getLogger(__name__)
-
-SYSTEM_PROMPT = (
-    "You are PAL, a personal AI librarian and conversational companion. "
-    "You help the user think, answer questions, and manage knowledge. "
-    "Be concise, direct, and helpful."
-)
 
 
 class Daemon:
@@ -46,6 +43,12 @@ class Daemon:
         self.retrieval = RetrievalClient(
             base_url=config.inference_url,
             collection_id=config.collection_id,
+        )
+        self.profile = ProfileManager(config.vault_path, username=config.username)
+        self.wisdom = WisdomManager(config.vault_path)
+        self.prompt_builder = SystemPromptBuilder(
+            profile=self.profile,
+            wisdom=self.wisdom,
         )
 
     async def serve(self) -> None:
@@ -120,7 +123,7 @@ class Daemon:
     ) -> None:
         """Process a chat message: add to history, stream inference, send response."""
         conv.add_user(msg.text)
-        messages = conv.get_messages_for_api(system_prompt=SYSTEM_PROMPT)
+        messages = conv.get_messages_for_api(system_prompt=self.prompt_builder.build())
 
         full_response = []
         try:
@@ -238,7 +241,7 @@ class Daemon:
         )
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self.prompt_builder.build()},
             {"role": "user", "content": prompt},
         ]
 
