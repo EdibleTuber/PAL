@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import StreamingResponse, JSONResponse
+from starlette.responses import StreamingResponse, JSONResponse, Response
 from starlette.routing import Route
 import uvicorn
 
@@ -107,11 +107,55 @@ async def mock_searxng_search(request: Request):
     })
 
 
+async def mock_page_html(request: Request):
+    """Return a basic HTML page for fetcher tests."""
+    return Response(
+        "<html><head><title>Test Page</title></head>"
+        "<body>"
+        "<nav id=\"navigation\"><ul><li>Home</li><li>About</li><li>Nav junk</li></ul></nav>"
+        "<main><article id=\"content\">"
+        "<h1>Test Article</h1>"
+        "<p>This is the main content. Extract me. This paragraph contains important information.</p>"
+        "<p>Second paragraph with more main content for the article body extraction test.</p>"
+        "<p>Third paragraph with additional content to ensure trafilatura picks this as main.</p>"
+        "<p>Fourth paragraph confirming this is the primary content zone of the page.</p>"
+        "</article></main>"
+        "<footer id=\"footer\"><p>Footer junk copyright 2024</p></footer>"
+        "</body></html>",
+        media_type="text/html",
+    )
+
+
+async def mock_page_too_large(request: Request):
+    """Return a response with a too-large Content-Length."""
+    return Response(
+        "tiny body",
+        media_type="text/html",
+        headers={"Content-Length": "999999999"},
+    )
+
+
+async def mock_page_binary(request: Request):
+    """Return a binary content-type."""
+    return Response(
+        b"\x00\x01\x02\x03",
+        media_type="application/octet-stream",
+    )
+
+
+async def mock_page_404(request: Request):
+    return Response("not found", status_code=404)
+
+
 mock_app = Starlette(routes=[
     Route("/v1/chat/completions", mock_chat_completions, methods=["POST"]),
     Route("/collections/{collection_id}/search", mock_collection_search, methods=["POST"]),
     Route("/collections/{collection_id}/docs/{doc_id:path}", mock_collection_get_doc, methods=["GET"]),
     Route("/search", mock_searxng_search, methods=["GET"]),
+    Route("/page.html", mock_page_html, methods=["GET"]),
+    Route("/too-large", mock_page_too_large, methods=["GET"]),
+    Route("/binary", mock_page_binary, methods=["GET"]),
+    Route("/missing", mock_page_404, methods=["GET"]),
 ])
 
 
