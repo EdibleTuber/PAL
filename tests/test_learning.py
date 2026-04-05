@@ -85,3 +85,49 @@ def test_add_stores_metadata(learning, vault):
     assert meta["source"] == "conversation"
     assert "created" in meta
     assert meta["status"] == "active"
+
+
+from pal.wisdom import WisdomManager
+
+
+def test_mark_promoted_updates_status(learning, vault):
+    learning.add(title="Good Idea", body="This works.", source="conversation")
+    learning.mark_promoted("good-idea")
+    import yaml
+    content = (vault / "_learning" / "good-idea.md").read_text()
+    meta = yaml.safe_load(content.split("---")[1])
+    assert meta["status"] == "promoted"
+    assert "promoted_at" in meta
+
+
+def test_mark_promoted_nonexistent_raises(learning):
+    with pytest.raises(FileNotFoundError):
+        learning.mark_promoted("nope")
+
+
+def test_add_rating(learning, vault):
+    learning.add_rating("good", "Great session")
+    ratings_path = vault / "_learning" / "ratings.md"
+    assert ratings_path.exists()
+    content = ratings_path.read_text()
+    assert "**good**" in content
+    assert "Great session" in content
+
+
+def test_add_rating_appends(learning, vault):
+    learning.add_rating("good", "First")
+    learning.add_rating("bad", "Second")
+    content = (vault / "_learning" / "ratings.md").read_text()
+    assert "**good**" in content
+    assert "**bad**" in content
+    assert "First" in content
+    assert "Second" in content
+
+
+def test_list_excludes_ratings_file(learning):
+    learning.add(title="Real Learning", body="Body.", source="conversation")
+    learning.add_rating("good")
+    entries = learning.list()
+    slugs = [e["slug"] for e in entries]
+    assert "ratings" not in slugs
+    assert "real-learning" in slugs
