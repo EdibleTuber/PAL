@@ -47,7 +47,10 @@ class RetrievalClient:
 
         Returns a dict with keys: id, name, collection, summary, content, metadata.
         Raises FileNotFoundError if the document doesn't exist.
+        Raises ValueError if doc_id contains path traversal sequences.
         """
+        if ".." in doc_id.split("/") or doc_id.startswith("/"):
+            raise ValueError(f"Invalid doc_id: {doc_id}")
         resp = await self._client.get(
             f"{self.base_url}/collections/{self.collection_id}/docs/{doc_id}"
         )

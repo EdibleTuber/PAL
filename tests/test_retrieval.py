@@ -34,3 +34,12 @@ async def test_get_document_not_found(mock_inference_server):
     client = RetrievalClient(base_url=mock_inference_server, collection_id="vault")
     with pytest.raises(FileNotFoundError):
         await client.get_document("missing")
+
+
+@pytest.mark.asyncio
+async def test_get_document_rejects_path_traversal(mock_inference_server):
+    client = RetrievalClient(base_url=mock_inference_server, collection_id="vault")
+    with pytest.raises(ValueError, match="Invalid doc_id"):
+        await client.get_document("../../etc/passwd")
+    with pytest.raises(ValueError, match="Invalid doc_id"):
+        await client.get_document("/absolute/path")
