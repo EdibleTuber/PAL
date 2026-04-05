@@ -44,19 +44,37 @@ class URLFetcher:
         self.timeout = timeout
 
     async def fetch(self, url: str) -> FetchResult:
-        """Fetch a URL and return extracted main content."""
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+        """Fetch a URL and return extracted main content.
+
+        Redirects are NOT followed — the caller has already validated the
+        specific URL against the allowlist, and a redirect could land on a
+        different host (SSRF risk). If the server returns a redirect, fetch
+        fails and the caller can explicitly fetch the redirect target.
+        """
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
             async with client.stream("GET", url) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("location", "")
+                    raise FetchError(
+                        f"redirect not followed (HTTP {resp.status_code} to {location})"
+                    )
                 if resp.status_code >= 400:
                     raise FetchError(f"HTTP {resp.status_code} for {url}")
 
                 ct = resp.headers.get("content-type", "").split(";")[0].strip().lower()
-                if ct and not any(ct.startswith(t) for t in ALLOWED_CONTENT_TYPES):
+                if not ct:
+                    raise FetchError("missing Content-Type header")
+                if not any(ct.startswith(t) for t in ALLOWED_CONTENT_TYPES):
                     raise FetchError(f"rejected content type: {ct}")
 
                 cl = resp.headers.get("content-length")
-                if cl and int(cl) > self.max_bytes:
-                    raise FetchError(f"response too large (Content-Length: {cl})")
+                if cl:
+                    try:
+                        cl_int = int(cl)
+                    except ValueError:
+                        raise FetchError(f"invalid Content-Length header: {cl}")
+                    if cl_int > self.max_bytes:
+                        raise FetchError(f"response too large (Content-Length: {cl})")
 
                 chunks: list[bytes] = []
                 total = 0

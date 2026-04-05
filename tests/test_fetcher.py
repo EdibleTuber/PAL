@@ -50,3 +50,19 @@ async def test_fetch_respects_max_bytes_during_download(mock_inference_server):
     fetcher = URLFetcher(max_bytes=1, timeout=10)
     with pytest.raises(FetchError, match="too large"):
         await fetcher.fetch(f"{mock_inference_server}/page.html")
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_redirects(mock_inference_server):
+    """Redirects must be rejected (SSRF protection)."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    with pytest.raises(FetchError, match="redirect"):
+        await fetcher.fetch(f"{mock_inference_server}/redirect")
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_missing_content_type(mock_inference_server):
+    """Missing Content-Type header must be rejected."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    with pytest.raises(FetchError, match="Content-Type"):
+        await fetcher.fetch(f"{mock_inference_server}/no-content-type")

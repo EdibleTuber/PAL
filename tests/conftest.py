@@ -147,6 +147,23 @@ async def mock_page_404(request: Request):
     return Response("not found", status_code=404)
 
 
+async def mock_page_redirect(request: Request):
+    return Response(
+        "",
+        status_code=302,
+        headers={"location": "http://internal-service:9999/admin"},
+    )
+
+
+async def mock_page_no_content_type(request: Request):
+    # Starlette sets a default content-type if we don't override — use raw 200
+    return Response(
+        "<html><body>no content-type</body></html>",
+        media_type=None,
+        headers={"content-type": ""},
+    )
+
+
 mock_app = Starlette(routes=[
     Route("/v1/chat/completions", mock_chat_completions, methods=["POST"]),
     Route("/collections/{collection_id}/search", mock_collection_search, methods=["POST"]),
@@ -156,6 +173,8 @@ mock_app = Starlette(routes=[
     Route("/too-large", mock_page_too_large, methods=["GET"]),
     Route("/binary", mock_page_binary, methods=["GET"]),
     Route("/missing", mock_page_404, methods=["GET"]),
+    Route("/redirect", mock_page_redirect, methods=["GET"]),
+    Route("/no-content-type", mock_page_no_content_type, methods=["GET"]),
 ])
 
 
