@@ -69,3 +69,36 @@ async def mock_inference_server() -> AsyncGenerator[str, None]:
 
     server.should_exit = True
     await task
+
+
+from pathlib import Path
+from pal.config import Config
+from pal.daemon import Daemon
+
+
+@pytest.fixture()
+def socket_path(tmp_path) -> Path:
+    return tmp_path / "pal-test.sock"
+
+
+@pytest.fixture()
+async def running_daemon(
+    socket_path, mock_inference_server
+) -> AsyncGenerator[Daemon, None]:
+    """Start a daemon with a mock inference backend, yield it, then shut down."""
+    cfg = Config(
+        inference_url=mock_inference_server,
+        model="test-model",
+        socket_path=socket_path,
+        history_depth=50,
+    )
+    daemon = Daemon(cfg)
+    task = asyncio.create_task(daemon.serve())
+    # Wait for socket to appear
+    for _ in range(100):
+        if socket_path.exists():
+            break
+        await asyncio.sleep(0.01)
+    yield daemon
+    daemon.shutdown()
+    await task
