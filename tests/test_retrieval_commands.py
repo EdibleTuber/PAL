@@ -78,3 +78,16 @@ async def test_get_command_document_not_found(retrieval_daemon, socket_path):
         await client.command("get", "missing")
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_status_includes_collection(retrieval_daemon, socket_path):
+    """/status now shows the collection id."""
+    client = PalClient(socket_path)
+    await client.connect()
+
+    resp = await client.command("status")
+    assert "Collection:" in resp.text
+    assert "vault" in resp.text
+
+    await client.close()

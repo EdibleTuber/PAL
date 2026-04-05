@@ -160,7 +160,8 @@ class Daemon:
                 text=(
                     f"Model: {self.inference.model}\n"
                     f"Server: {self.inference.base_url}\n"
-                    f"Vault: {self.wiki.vault_path} ({len(articles)} articles)"
+                    f"Vault: {self.wiki.vault_path} ({len(articles)} articles)\n"
+                    f"Collection: {self.retrieval.collection_id}"
                 ),
                 command="status",
             )
