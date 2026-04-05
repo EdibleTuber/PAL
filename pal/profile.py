@@ -5,6 +5,7 @@ world facts, biographical notes, and opinions that get injected into
 PAL's system prompt on every chat.
 """
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,10 +14,17 @@ from pal.frontmatter import parse_frontmatter, serialize_frontmatter
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_username(username: str) -> str:
+    """Reduce username to a filesystem-safe identifier."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", username)
+    safe = safe.strip("_")
+    return safe or "user"
+
+
 class ProfileManager:
     def __init__(self, vault_path: Path, username: str) -> None:
         self.vault_path = vault_path
-        self.username = username
+        self.username = _sanitize_username(username)
 
     @property
     def profile_path(self) -> Path:

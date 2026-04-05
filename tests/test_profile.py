@@ -52,3 +52,19 @@ def test_profile_directory_created_automatically(profile, vault):
     assert not (vault / "_profile").exists()
     profile.write("## Bio\n\nHi.\n")
     assert (vault / "_profile").is_dir()
+
+
+def test_username_sanitized(vault):
+    """Malicious usernames get sanitized to prevent path traversal."""
+    bad = ProfileManager(vault, username="../../etc/passwd")
+    # Should not escape vault
+    assert ".." not in bad.username
+    assert "/" not in bad.username
+    bad.write("## Bio\n\nTest.\n")
+    # File should be inside vault's _profile dir
+    assert bad.profile_path.parent == vault / "_profile"
+
+
+def test_empty_username_becomes_user(vault):
+    p = ProfileManager(vault, username="")
+    assert p.username == "user"
