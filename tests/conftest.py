@@ -47,8 +47,45 @@ async def mock_chat_completions(request: Request):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+async def mock_collection_search(request: Request):
+    """Mock POST /collections/{collection_id}/search endpoint."""
+    body = await request.json()
+    query = body.get("query", "")
+    limit = body.get("limit", 5)
+    results = [
+        {
+            "id": f"doc-{i}",
+            "name": f"Document {i}",
+            "collection": request.path_params["collection_id"],
+            "summary": f"Summary for {query} result {i}",
+            "tags": ["mock"],
+            "score": 0.9 - (i * 0.1),
+        }
+        for i in range(min(limit, 3))
+    ]
+    return JSONResponse({"results": results})
+
+
+async def mock_collection_get_doc(request: Request):
+    """Mock GET /collections/{collection_id}/docs/{doc_id} endpoint."""
+    doc_id = request.path_params["doc_id"]
+    collection_id = request.path_params["collection_id"]
+    if doc_id == "missing":
+        return JSONResponse({"error": f"Document not found: {doc_id}"}, status_code=404)
+    return JSONResponse({
+        "id": doc_id,
+        "name": f"Name of {doc_id}",
+        "collection": collection_id,
+        "summary": f"Summary of {doc_id}",
+        "content": f"# {doc_id}\n\nFull content of {doc_id}.\n",
+        "metadata": {"tags": ["mock"]},
+    })
+
+
 mock_app = Starlette(routes=[
     Route("/v1/chat/completions", mock_chat_completions, methods=["POST"]),
+    Route("/collections/{collection_id}/search", mock_collection_search, methods=["POST"]),
+    Route("/collections/{collection_id}/docs/{doc_id:path}", mock_collection_get_doc, methods=["GET"]),
 ])
 
 
