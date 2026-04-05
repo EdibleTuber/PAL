@@ -182,6 +182,8 @@ class Daemon:
             await self._handle_get(msg.args, writer)
         elif msg.name == "profile":
             await self._handle_profile(msg.args, writer)
+        elif msg.name == "wisdom":
+            await self._handle_wisdom(msg.args, writer)
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
@@ -334,6 +336,74 @@ class Daemon:
             text=f"**{name}** ({doc_id})\n\n{content}",
             command="get",
         )
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_wisdom(self, args: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /wisdom [add <title> | <body>] [remove <slug>] — manage wisdom.
+
+        Usage:
+          /wisdom                          — list all wisdom entries
+          /wisdom add <title> | <body>     — add a new entry
+          /wisdom remove <slug>            — remove an entry by slug
+        """
+        args = args.strip()
+
+        if args.startswith("add "):
+            rest = args[4:].strip()
+            if "|" not in rest:
+                error = ErrorMessage(error="Usage: /wisdom add <title> | <body>")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+            title, body = rest.split("|", 1)
+            title = title.strip()
+            body = body.strip()
+            if not title or not body:
+                error = ErrorMessage(error="Usage: /wisdom add <title> | <body>")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+            slug = self.wisdom.add(title=title, body=body)
+            resp = ResponseMessage(
+                text=f"Added wisdom: {slug}",
+                command="wisdom",
+            )
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
+
+        if args.startswith("remove "):
+            slug = args[7:].strip()
+            if not slug:
+                error = ErrorMessage(error="Usage: /wisdom remove <slug>")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+            try:
+                self.wisdom.remove(slug)
+            except FileNotFoundError:
+                error = ErrorMessage(error=f"Wisdom not found: {slug}")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+            resp = ResponseMessage(text=f"Removed wisdom: {slug}", command="wisdom")
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
+
+        # Default: list entries
+        entries = self.wisdom.list()
+        if not entries:
+            resp = ResponseMessage(
+                text="No wisdom entries. Use `/wisdom add <title> | <body>` to add one.",
+                command="wisdom",
+            )
+        else:
+            lines = [f"{len(entries)} wisdom entries:\n"]
+            for e in entries:
+                lines.append(f"- **{e['title']}** ({e['slug']})")
+            resp = ResponseMessage(text="\n".join(lines), command="wisdom")
         writer.write(encode_message(resp))
         await writer.drain()
 
