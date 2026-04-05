@@ -8,7 +8,7 @@ from pal.config import Config, load_config
 def test_default_config():
     cfg = Config()
     assert cfg.inference_url == "http://192.168.1.14:11434"
-    assert cfg.model == "qwen3.5"
+    assert cfg.model == "Qwen3.5-35B-A3B-Q4_K_M"
     assert cfg.socket_path == Path("/run/user") / str(os.getuid()) / "pal.sock"
     assert cfg.history_depth == 50
     assert cfg.vault_path == Path.home() / "vault"
@@ -34,4 +34,4 @@ def test_load_config_defaults_without_env(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     cfg = load_config()
     assert cfg.inference_url == "http://192.168.1.14:11434"
-    assert cfg.model == "qwen3.5"
+    assert cfg.model == "Qwen3.5-35B-A3B-Q4_K_M"

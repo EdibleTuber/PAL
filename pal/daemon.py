@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 
 from pal.config import Config
+from pal.wiki import WikiManager
 from pal.conversation import Conversation
 from pal.inference import InferenceClient
 from pal.protocol import (
@@ -39,6 +40,8 @@ class Daemon:
         )
         self._server: asyncio.AbstractServer | None = None
         self._should_exit = False
+        self.wiki = WikiManager(config.vault_path)
+        self.wiki.init_vault()
 
     async def serve(self) -> None:
         """Start listening on the unix socket."""
@@ -90,7 +93,7 @@ class Daemon:
                 if isinstance(msg, ChatMessage):
                     await self._handle_chat(msg, conv, writer)
                 elif isinstance(msg, CommandMessage):
-                    await self._handle_command(msg, writer)
+                    await self._handle_command(msg, conv, writer)
                 else:
                     error = ErrorMessage(error=f"Unexpected message type: {msg.type}")
                     writer.write(encode_message(error))
@@ -138,21 +141,121 @@ class Daemon:
     async def _handle_command(
         self,
         msg: CommandMessage,
+        conv: Conversation,
         writer: asyncio.StreamWriter,
     ) -> None:
-        """Handle a slash command. Phase 1 only supports /quit and /status."""
-        if msg.name == "quit":
+        """Handle a slash command."""
+        if msg.name in ("quit", "exit"):
             resp = ResponseMessage(text="Goodbye.", command="quit")
             writer.write(encode_message(resp))
             await writer.drain()
         elif msg.name == "status":
+            articles = self.wiki.list_articles()
             resp = ResponseMessage(
-                text=f"Model: {self.inference.model}\nServer: {self.inference.base_url}",
+                text=(
+                    f"Model: {self.inference.model}\n"
+                    f"Server: {self.inference.base_url}\n"
+                    f"Vault: {self.wiki.vault_path} ({len(articles)} articles)"
+                ),
                 command="status",
             )
             writer.write(encode_message(resp))
             await writer.drain()
+        elif msg.name == "read":
+            await self._handle_read(msg.args, writer)
+        elif msg.name == "lint":
+            await self._handle_lint(writer)
+        elif msg.name == "note":
+            await self._handle_note(msg.args, writer)
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
             await writer.drain()
+
+    async def _handle_read(self, path: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /read <path> — return article content."""
+        path = path.strip()
+        if not path:
+            error = ErrorMessage(error="Usage: /read <path>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+        try:
+            meta, body = self.wiki.read_article(path)
+            title = meta.get("title", path)
+            tags = meta.get("tags", [])
+            header = f"**{title}**"
+            if tags:
+                header += f"  tags: {', '.join(tags)}"
+            resp = ResponseMessage(text=f"{header}\n\n{body}", command="read")
+            writer.write(encode_message(resp))
+            await writer.drain()
+        except FileNotFoundError:
+            error = ErrorMessage(error=f"Article not found: {path}")
+            writer.write(encode_message(error))
+            await writer.drain()
+
+    async def _handle_lint(self, writer: asyncio.StreamWriter) -> None:
+        """Handle /lint — run vault health check."""
+        issues = self.wiki.lint()
+        if not issues:
+            resp = ResponseMessage(text="Vault is clean — no issues found.", command="lint")
+        else:
+            lines = [f"Found {len(issues)} issue(s):\n"]
+            for issue in issues:
+                lines.append(f"- **{issue['path']}**: {issue['issue']}")
+            resp = ResponseMessage(text="\n".join(lines), command="lint")
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_note(
+        self,
+        topic: str,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        """Handle /note <topic> — create or update a wiki article."""
+        topic = topic.strip()
+        if not topic:
+            error = ErrorMessage(error="Usage: /note <topic>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        prompt = (
+            f"Write a concise wiki article about: {topic}\n\n"
+            "Format: Start with a markdown heading, then clear explanatory paragraphs. "
+            "Be informative and concise."
+        )
+
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+
+        try:
+            body = await self.inference.complete(messages)
+        except Exception as exc:
+            logger.exception("Inference error during /note: %s", exc)
+            error = ErrorMessage(error=f"Inference error: {exc}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        slug = topic.lower().replace(" ", "-")
+        slug = "".join(c for c in slug if c.isalnum() or c == "-")
+        slug = slug.strip("-")
+        if not slug:
+            slug = "untitled"
+        path = f"{slug}.md"
+
+        self.wiki.write_article(path=path, title=topic, body=body + "\n")
+        self.wiki.rebuild_index()
+        self.wiki.git_init()
+        self.wiki.git_commit(f"note: {topic}")
+
+        resp = ResponseMessage(
+            text=f"Created article: {path}\n\n{body}",
+            command="note",
+        )
+        writer.write(encode_message(resp))
+        await writer.drain()
