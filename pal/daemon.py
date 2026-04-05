@@ -180,6 +180,8 @@ class Daemon:
             await self._handle_search(msg.args, writer)
         elif msg.name == "get":
             await self._handle_get(msg.args, writer)
+        elif msg.name == "profile":
+            await self._handle_profile(msg.args, writer)
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
@@ -332,5 +334,37 @@ class Daemon:
             text=f"**{name}** ({doc_id})\n\n{content}",
             command="get",
         )
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_profile(self, args: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /profile [set <text>] — show or update user profile.
+
+        Usage:
+          /profile             — show current profile
+          /profile set <text>  — replace profile with <text>
+        """
+        args = args.strip()
+        if args.startswith("set "):
+            body = args[4:].strip()
+            if not body:
+                error = ErrorMessage(error="Usage: /profile set <text>")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+            self.profile.write(body)
+            resp = ResponseMessage(text="Profile updated.", command="profile")
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
+        # Default: show current profile
+        body = self.profile.read()
+        if not body:
+            resp = ResponseMessage(
+                text="Profile is empty. Use `/profile set <text>` to set it.",
+                command="profile",
+            )
+        else:
+            resp = ResponseMessage(text=body, command="profile")
         writer.write(encode_message(resp))
         await writer.drain()
