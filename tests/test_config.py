@@ -48,3 +48,16 @@ def test_load_config_collection_id_from_env(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     cfg = load_config()
     assert cfg.collection_id == "my-vault"
+
+
+def test_default_config_has_username():
+    cfg = Config()
+    assert cfg.username == "user"
+
+
+def test_load_config_username_from_env(monkeypatch):
+    monkeypatch.setenv("PAL_USERNAME", "edible")
+    for key in ["PAL_INFERENCE_URL", "PAL_MODEL", "PAL_SOCKET_PATH", "PAL_HISTORY_DEPTH", "PAL_VAULT_PATH", "PAL_COLLECTION_ID"]:
+        monkeypatch.delenv(key, raising=False)
+    cfg = load_config()
+    assert cfg.username == "edible"

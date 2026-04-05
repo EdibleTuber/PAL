@@ -22,6 +22,7 @@ class Config:
     history_depth: int = 50
     vault_path: Path = field(default_factory=lambda: Path.home() / "vault")
     collection_id: str = "vault"
+    username: str = "user"
 
 
 def load_config() -> Config:
@@ -39,4 +40,6 @@ def load_config() -> Config:
         kwargs["vault_path"] = Path(vault)
     if cid := os.environ.get("PAL_COLLECTION_ID"):
         kwargs["collection_id"] = cid
+    if user := os.environ.get("PAL_USERNAME"):
+        kwargs["username"] = user
     return Config(**kwargs)

@@ -12,6 +12,9 @@ from pal.wiki import WikiManager
 from pal.conversation import Conversation
 from pal.inference import InferenceClient
 from pal.retrieval import RetrievalClient
+from pal.profile import ProfileManager
+from pal.wisdom import WisdomManager
+from pal.prompt_builder import SystemPromptBuilder
 from pal.protocol import (
     ChatMessage,
     CommandMessage,
@@ -24,12 +27,6 @@ from pal.protocol import (
 )
 
 logger = logging.getLogger(__name__)
-
-SYSTEM_PROMPT = (
-    "You are PAL, a personal AI librarian and conversational companion. "
-    "You help the user think, answer questions, and manage knowledge. "
-    "Be concise, direct, and helpful."
-)
 
 
 class Daemon:
@@ -46,6 +43,12 @@ class Daemon:
         self.retrieval = RetrievalClient(
             base_url=config.inference_url,
             collection_id=config.collection_id,
+        )
+        self.profile = ProfileManager(config.vault_path, username=config.username)
+        self.wisdom = WisdomManager(config.vault_path)
+        self.prompt_builder = SystemPromptBuilder(
+            profile=self.profile,
+            wisdom=self.wisdom,
         )
 
     async def serve(self) -> None:
@@ -120,7 +123,7 @@ class Daemon:
     ) -> None:
         """Process a chat message: add to history, stream inference, send response."""
         conv.add_user(msg.text)
-        messages = conv.get_messages_for_api(system_prompt=SYSTEM_PROMPT)
+        messages = conv.get_messages_for_api(system_prompt=self.prompt_builder.build())
 
         full_response = []
         try:
@@ -177,6 +180,10 @@ class Daemon:
             await self._handle_search(msg.args, writer)
         elif msg.name == "get":
             await self._handle_get(msg.args, writer)
+        elif msg.name == "profile":
+            await self._handle_profile(msg.args, writer)
+        elif msg.name == "wisdom":
+            await self._handle_wisdom(msg.args, writer)
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
@@ -238,7 +245,7 @@ class Daemon:
         )
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self.prompt_builder.build()},
             {"role": "user", "content": prompt},
         ]
 
@@ -329,5 +336,105 @@ class Daemon:
             text=f"**{name}** ({doc_id})\n\n{content}",
             command="get",
         )
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_wisdom(self, args: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /wisdom [add <title> | <body>] [remove <slug>] — manage wisdom.
+
+        Usage:
+          /wisdom                          — list all wisdom entries
+          /wisdom add <title> | <body>     — add a new entry
+          /wisdom remove <slug>            — remove an entry by slug
+        """
+        args = args.strip()
+
+        if args.startswith("add "):
+            rest = args[4:].strip()
+            if "|" not in rest:
+                error = ErrorMessage(error="Usage: /wisdom add <title> | <body>")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+            title, body = rest.split("|", 1)
+            title = title.strip()
+            body = body.strip()
+            if not title or not body:
+                error = ErrorMessage(error="Usage: /wisdom add <title> | <body>")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+            slug = self.wisdom.add(title=title, body=body)
+            resp = ResponseMessage(
+                text=f"Added wisdom: {slug}",
+                command="wisdom",
+            )
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
+
+        if args.startswith("remove "):
+            slug = args[7:].strip()
+            if not slug:
+                error = ErrorMessage(error="Usage: /wisdom remove <slug>")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+            try:
+                self.wisdom.remove(slug)
+            except FileNotFoundError:
+                error = ErrorMessage(error=f"Wisdom not found: {slug}")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+            resp = ResponseMessage(text=f"Removed wisdom: {slug}", command="wisdom")
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
+
+        # Default: list entries
+        entries = self.wisdom.list()
+        if not entries:
+            resp = ResponseMessage(
+                text="No wisdom entries. Use `/wisdom add <title> | <body>` to add one.",
+                command="wisdom",
+            )
+        else:
+            lines = [f"{len(entries)} wisdom entries:\n"]
+            for e in entries:
+                lines.append(f"- **{e['title']}** ({e['slug']})")
+            resp = ResponseMessage(text="\n".join(lines), command="wisdom")
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_profile(self, args: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /profile [set <text>] — show or update user profile.
+
+        Usage:
+          /profile             — show current profile
+          /profile set <text>  — replace profile with <text>
+        """
+        args = args.strip()
+        if args.startswith("set "):
+            body = args[4:].strip()
+            if not body:
+                error = ErrorMessage(error="Usage: /profile set <text>")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+            self.profile.write(body)
+            resp = ResponseMessage(text="Profile updated.", command="profile")
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
+        # Default: show current profile
+        body = self.profile.read()
+        if not body:
+            resp = ResponseMessage(
+                text="Profile is empty. Use `/profile set <text>` to set it.",
+                command="profile",
+            )
+        else:
+            resp = ResponseMessage(text=body, command="profile")
         writer.write(encode_message(resp))
         await writer.drain()
