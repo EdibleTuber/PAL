@@ -11,6 +11,7 @@ from pal.config import Config
 from pal.wiki import WikiManager
 from pal.conversation import Conversation
 from pal.inference import InferenceClient
+from pal.retrieval import RetrievalClient
 from pal.protocol import (
     ChatMessage,
     CommandMessage,
@@ -42,6 +43,10 @@ class Daemon:
         self._should_exit = False
         self.wiki = WikiManager(config.vault_path)
         self.wiki.init_vault()
+        self.retrieval = RetrievalClient(
+            base_url=config.inference_url,
+            collection_id=config.collection_id,
+        )
 
     async def serve(self) -> None:
         """Start listening on the unix socket."""
@@ -167,6 +172,10 @@ class Daemon:
             await self._handle_lint(writer)
         elif msg.name == "note":
             await self._handle_note(msg.args, writer)
+        elif msg.name == "search":
+            await self._handle_search(msg.args, writer)
+        elif msg.name == "get":
+            await self._handle_get(msg.args, writer)
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
@@ -256,6 +265,68 @@ class Daemon:
         resp = ResponseMessage(
             text=f"Created article: {path}\n\n{body}",
             command="note",
+        )
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_search(self, query: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /search <query> — semantic search over the vault collection."""
+        query = query.strip()
+        if not query:
+            error = ErrorMessage(error="Usage: /search <query>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+        try:
+            results = await self.retrieval.search(query, limit=5)
+        except Exception as exc:
+            logger.exception("Search failed: %s", exc)
+            error = ErrorMessage(error=f"Search failed: {exc}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        if not results:
+            resp = ResponseMessage(text="No results found.", command="search")
+        else:
+            lines = [f"Found {len(results)} result(s):\n"]
+            for r in results:
+                score = r.get("score", 0.0)
+                summary = r.get("summary", "")
+                lines.append(f"- **{r['id']}** (score: {score:.2f})")
+                if summary:
+                    lines.append(f"  {summary}")
+            resp = ResponseMessage(text="\n".join(lines), command="search")
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_get(self, doc_id: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /get <doc_id> — fetch full document content."""
+        doc_id = doc_id.strip()
+        if not doc_id:
+            error = ErrorMessage(error="Usage: /get <doc_id>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+        try:
+            doc = await self.retrieval.get_document(doc_id)
+        except FileNotFoundError:
+            error = ErrorMessage(error=f"Document not found: {doc_id}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+        except Exception as exc:
+            logger.exception("Get document failed: %s", exc)
+            error = ErrorMessage(error=f"Get failed: {exc}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        content = doc.get("content", "")
+        name = doc.get("name", doc_id)
+        resp = ResponseMessage(
+            text=f"**{name}** ({doc_id})\n\n{content}",
+            command="get",
         )
         writer.write(encode_message(resp))
         await writer.drain()
