@@ -66,3 +66,6 @@ credentials/
 .claude/pai_updates/
 .claude/pai_backups/
 .claude/.pai-sync-history
+
+# Git worktrees
+.worktrees/
