@@ -35,3 +35,16 @@ def test_load_config_defaults_without_env(monkeypatch):
     cfg = load_config()
     assert cfg.inference_url == "http://192.168.1.14:11434"
     assert cfg.model == "Qwen3.5-35B-A3B-Q4_K_M"
+
+
+def test_default_config_has_collection_id():
+    cfg = Config()
+    assert cfg.collection_id == "vault"
+
+
+def test_load_config_collection_id_from_env(monkeypatch):
+    monkeypatch.setenv("PAL_COLLECTION_ID", "my-vault")
+    for key in ["PAL_INFERENCE_URL", "PAL_MODEL", "PAL_SOCKET_PATH", "PAL_HISTORY_DEPTH", "PAL_VAULT_PATH"]:
+        monkeypatch.delenv(key, raising=False)
+    cfg = load_config()
+    assert cfg.collection_id == "my-vault"

@@ -21,6 +21,7 @@ class Config:
     socket_path: Path = field(default_factory=_default_socket_path)
     history_depth: int = 50
     vault_path: Path = field(default_factory=lambda: Path.home() / "vault")
+    collection_id: str = "vault"
 
 
 def load_config() -> Config:
@@ -36,4 +37,6 @@ def load_config() -> Config:
         kwargs["history_depth"] = int(depth)
     if vault := os.environ.get("PAL_VAULT_PATH"):
         kwargs["vault_path"] = Path(vault)
+    if cid := os.environ.get("PAL_COLLECTION_ID"):
+        kwargs["collection_id"] = cid
     return Config(**kwargs)
