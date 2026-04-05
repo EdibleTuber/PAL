@@ -5,6 +5,7 @@ organized into topic directories. System directories (prefixed with _)
 are managed by PAL and should not appear in user-facing article lists.
 """
 import logging
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -177,3 +178,43 @@ class WikiManager:
             check=True,
         )
         logger.info("Committed: %s", message)
+
+    def lint(self) -> list[dict]:
+        """Check vault health. Returns a list of issue dicts.
+
+        Each issue has 'path' and 'issue' keys.
+        Checks:
+        - Missing title in frontmatter
+        - Broken wiki-style links ([[target]])
+        """
+        issues = []
+        all_paths = set()
+        for md_file in self.vault_path.rglob("*.md"):
+            rel = md_file.relative_to(self.vault_path)
+            if any(part.startswith("_") for part in rel.parts):
+                continue
+            all_paths.add(str(rel))
+
+        for md_file in self.vault_path.rglob("*.md"):
+            rel = md_file.relative_to(self.vault_path)
+            if any(part.startswith("_") for part in rel.parts):
+                continue
+
+            path_str = str(rel)
+            content = md_file.read_text()
+            meta, body = parse_frontmatter(content)
+
+            # Check: missing title
+            if not meta.get("title"):
+                issues.append({"path": path_str, "issue": "Missing title in frontmatter"})
+
+            # Check: broken wiki links
+            for match in re.finditer(r"\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]", body):
+                target = match.group(1)
+                if target not in all_paths:
+                    issues.append({
+                        "path": path_str,
+                        "issue": f"Broken link: [[{target}]] — target not found",
+                    })
+
+        return issues

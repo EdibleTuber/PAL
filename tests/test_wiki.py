@@ -143,3 +143,32 @@ def test_git_commit_no_changes(wiki, vault):
     wiki.git_init()
     wiki.git_commit("Nothing to commit")
     # Should not raise — just a no-op
+
+
+def test_lint_finds_missing_title(wiki, vault):
+    wiki.init_vault()
+    # Write a file with no frontmatter
+    (vault / "bad.md").write_text("# No frontmatter\n\nJust body.\n")
+    issues = wiki.lint()
+    paths = [i["path"] for i in issues]
+    assert "bad.md" in paths
+    assert any("title" in i["issue"].lower() for i in issues)
+
+
+def test_lint_clean_vault(wiki, vault):
+    wiki.init_vault()
+    wiki.write_article(path="good.md", title="Good", body="All good.\n")
+    issues = wiki.lint()
+    article_issues = [i for i in issues if i["path"] == "good.md"]
+    assert article_issues == []
+
+
+def test_lint_finds_broken_wiki_links(wiki, vault):
+    wiki.init_vault()
+    wiki.write_article(
+        path="linker.md",
+        title="Linker",
+        body="See [[nonexistent.md]] for more.\n",
+    )
+    issues = wiki.lint()
+    assert any("nonexistent.md" in i["issue"] for i in issues)
