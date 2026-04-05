@@ -17,6 +17,7 @@ from pal.wisdom import WisdomManager
 from pal.prompt_builder import SystemPromptBuilder
 from pal.allowlist import AllowlistManager
 from pal.websearch import WebSearchClient
+from pal.fetcher import URLFetcher, FetchError
 from pal.protocol import (
     ChatMessage,
     CommandMessage,
@@ -56,6 +57,10 @@ class Daemon:
         self.allowlist.seed()
         self.websearch = WebSearchClient(
             base_url=config.searxng_url,
+            timeout=config.fetch_timeout,
+        )
+        self.fetcher = URLFetcher(
+            max_bytes=config.fetch_max_bytes,
             timeout=config.fetch_timeout,
         )
 
@@ -194,6 +199,8 @@ class Daemon:
             await self._handle_wisdom(msg.args, writer)
         elif msg.name == "search-web":
             await self._handle_search_web(msg.args, writer)
+        elif msg.name == "fetch":
+            await self._handle_fetch(msg.args, writer)
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
@@ -474,6 +481,79 @@ class Daemon:
             lines.append("\nUse `/fetch <url>` to save a page to the vault.")
             resp = ResponseMessage(text="\n".join(lines), command="search-web")
 
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_fetch(self, url: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /fetch <url> — download URL content into raw/web/ (quarantine)."""
+        url = url.strip()
+        if not url:
+            error = ErrorMessage(error="Usage: /fetch <url>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        if not self.allowlist.is_allowed(url):
+            error = ErrorMessage(
+                error=(
+                    f"URL not on allowlist: {url}\n"
+                    "Add its domain to _config/allowlist.md in the vault, then retry."
+                )
+            )
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        try:
+            result = await self.fetcher.fetch(url)
+        except FetchError as exc:
+            error = ErrorMessage(error=f"Fetch failed: {exc}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+        except Exception as exc:
+            logger.exception("Fetch failed: %s", exc)
+            error = ErrorMessage(error=f"Fetch failed: {exc}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        # Build a slug from the URL path + hash suffix for uniqueness
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        path_part = (parsed.path or "/").strip("/").replace("/", "-") or parsed.hostname or "page"
+        path_part = "".join(c for c in path_part if c.isalnum() or c in "-_")[:40]
+        slug = f"{path_part}-{result.content_hash[:8]}"
+        filename = f"{slug}.md"
+
+        # Write to raw/web/ with frontmatter containing provenance
+        raw_dir = self.config.vault_path / "raw" / "web"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+
+        from datetime import datetime, timezone
+        from pal.frontmatter import serialize_frontmatter
+        fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        meta = {
+            "source_url": url,
+            "title": result.title or slug,
+            "fetched_at": fetched_at,
+            "content_hash": result.content_hash,
+            "byte_size": result.byte_size,
+            "status": "raw",
+        }
+        content = serialize_frontmatter(meta, result.text + "\n")
+        (raw_dir / filename).write_text(content)
+        logger.info("Fetched %s to %s", url, filename)
+
+        resp = ResponseMessage(
+            text=(
+                f"Saved to raw/web/{filename}\n"
+                f"Title: {result.title or '(no title)'}\n"
+                f"Size: {result.byte_size} bytes\n\n"
+                "Review it in Obsidian before running /summarize (Phase 4b)."
+            ),
+            command="fetch",
+        )
         writer.write(encode_message(resp))
         await writer.drain()
 
