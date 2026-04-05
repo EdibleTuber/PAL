@@ -34,7 +34,7 @@ async def run_repl() -> None:
         sys.exit(1)
 
     console.print("[dim]PAL — Personal Agentic Librarian[/dim]")
-    console.print("[dim]Type /quit to exit, /status for daemon info[/dim]\n")
+    console.print("[dim]Type /quit or /exit to exit, /status for daemon info[/dim]\n")
 
     try:
         while True:
@@ -54,7 +54,7 @@ async def run_repl() -> None:
                 cmd_name = parts[0]
                 cmd_args = parts[1] if len(parts) > 1 else ""
 
-                if cmd_name == "quit":
+                if cmd_name in ("quit", "exit"):
                     break
 
                 try:
