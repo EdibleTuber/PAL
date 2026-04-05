@@ -49,5 +49,6 @@ class InferenceClient:
                     break
                 chunk = json.loads(data)
                 delta = chunk["choices"][0].get("delta", {})
-                if "content" in delta:
-                    yield delta["content"]
+                content = delta.get("content")
+                if content is not None:
+                    yield content
