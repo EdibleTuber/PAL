@@ -8,7 +8,7 @@ ExecStart=/usr/bin/python3 -m pal.daemon_main
 Restart=on-failure
 RestartSec=5
 Environment=PAL_INFERENCE_URL=http://192.168.1.14:11434
-Environment=PAL_MODEL=qwen3.5
+Environment=PAL_MODEL=Qwen3.5-35B-A3B-Q4_K_M
 
 [Install]
 WantedBy=default.target

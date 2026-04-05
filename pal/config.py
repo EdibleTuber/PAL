@@ -17,7 +17,7 @@ def _default_socket_path() -> Path:
 @dataclass
 class Config:
     inference_url: str = "http://192.168.1.14:11434"
-    model: str = "qwen3.5"
+    model: str = "Qwen3.5-35B-A3B-Q4_K_M"
     socket_path: Path = field(default_factory=_default_socket_path)
     history_depth: int = 50
     vault_path: Path = field(default_factory=lambda: Path.home() / "vault")
