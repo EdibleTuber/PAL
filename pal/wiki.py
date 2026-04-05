@@ -93,3 +93,34 @@ class WikiManager:
                 "title": meta.get("title", rel.stem),
             })
         return articles
+
+    def rebuild_index(self) -> None:
+        """Rebuild _index.md from all articles in the vault.
+
+        Groups articles by their top-level directory, with a summary line
+        for each article showing path and title.
+        """
+        articles = self.list_articles()
+        groups: dict[str, list[dict]] = {}
+        for article in articles:
+            parts = article["path"].split("/")
+            group = parts[0] if len(parts) > 1 else "Ungrouped"
+            groups.setdefault(group, []).append(article)
+
+        lines = ["# Vault Index\n"]
+        lines.append("_Auto-maintained by PAL. Lists all articles in the vault._\n")
+
+        if not groups:
+            lines.append("_No articles yet._\n")
+        else:
+            for group_name in sorted(groups):
+                lines.append(f"\n## {group_name}\n")
+                for article in sorted(groups[group_name], key=lambda a: a["path"]):
+                    lines.append(f"- [[{article['path']}|{article['title']}]]")
+            lines.append("")
+
+        body = "\n".join(lines)
+        meta = {"title": "Vault Index"}
+        index_path = self.vault_path / "_index.md"
+        index_path.write_text(serialize_frontmatter(meta, body))
+        logger.info("Rebuilt vault index (%d articles)", len(articles))

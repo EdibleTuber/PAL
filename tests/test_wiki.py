@@ -91,3 +91,23 @@ def test_list_articles(wiki, vault):
     # System dirs should not appear
     for a in articles:
         assert not a["path"].startswith("_")
+
+
+def test_rebuild_index(wiki, vault):
+    wiki.init_vault()
+    wiki.write_article(path="Projects/alpha.md", title="Alpha", body="Alpha content.\n")
+    wiki.write_article(path="Disciplines/beta.md", title="Beta", body="Beta content.\n", tags=["science"])
+    wiki.rebuild_index()
+    index_content = (vault / "_index.md").read_text()
+    assert "Alpha" in index_content
+    assert "Beta" in index_content
+    assert "Projects/alpha.md" in index_content
+    assert "Disciplines/beta.md" in index_content
+
+
+def test_rebuild_index_empty_vault(wiki, vault):
+    wiki.init_vault()
+    wiki.rebuild_index()
+    index_content = (vault / "_index.md").read_text()
+    assert "Vault Index" in index_content
+    # Should not crash with no articles
