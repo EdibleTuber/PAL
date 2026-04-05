@@ -15,6 +15,8 @@ from pal.retrieval import RetrievalClient
 from pal.profile import ProfileManager
 from pal.wisdom import WisdomManager
 from pal.prompt_builder import SystemPromptBuilder
+from pal.allowlist import AllowlistManager
+from pal.websearch import WebSearchClient
 from pal.protocol import (
     ChatMessage,
     CommandMessage,
@@ -49,6 +51,12 @@ class Daemon:
         self.prompt_builder = SystemPromptBuilder(
             profile=self.profile,
             wisdom=self.wisdom,
+        )
+        self.allowlist = AllowlistManager(config.vault_path)
+        self.allowlist.seed()
+        self.websearch = WebSearchClient(
+            base_url=config.searxng_url,
+            timeout=config.fetch_timeout,
         )
 
     async def serve(self) -> None:
@@ -184,6 +192,8 @@ class Daemon:
             await self._handle_profile(msg.args, writer)
         elif msg.name == "wisdom":
             await self._handle_wisdom(msg.args, writer)
+        elif msg.name == "search-web":
+            await self._handle_search_web(msg.args, writer)
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
@@ -423,6 +433,47 @@ class Daemon:
             for e in entries:
                 lines.append(f"- **{e['title']}** ({e['slug']})")
             resp = ResponseMessage(text="\n".join(lines), command="wisdom")
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_search_web(self, query: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /search-web <query> — SearxNG query, return allowlisted results."""
+        query = query.strip()
+        if not query:
+            error = ErrorMessage(error="Usage: /search-web <query>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+        try:
+            results = await self.websearch.search(query)
+        except Exception as exc:
+            logger.exception("Web search failed: %s", exc)
+            error = ErrorMessage(error=f"Web search failed: {exc}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        # Filter through allowlist
+        allowed = [r for r in results if self.allowlist.is_allowed(r.url)]
+
+        if not allowed:
+            resp = ResponseMessage(
+                text=(
+                    "No allowlisted results. "
+                    "Edit `_config/allowlist.md` in the vault to add domains."
+                ),
+                command="search-web",
+            )
+        else:
+            lines = [f"Found {len(allowed)} allowed result(s) (of {len(results)} total):\n"]
+            for i, r in enumerate(allowed, 1):
+                lines.append(f"{i}. **{r.title}**")
+                lines.append(f"   {r.url}")
+                if r.snippet:
+                    lines.append(f"   {r.snippet}")
+            lines.append("\nUse `/fetch <url>` to save a page to the vault.")
+            resp = ResponseMessage(text="\n".join(lines), command="search-web")
+
         writer.write(encode_message(resp))
         await writer.drain()
 
