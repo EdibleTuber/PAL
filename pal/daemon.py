@@ -14,6 +14,7 @@ from pal.inference import InferenceClient
 from pal.retrieval import RetrievalClient
 from pal.profile import ProfileManager
 from pal.wisdom import WisdomManager
+from pal.learning import LearningManager
 from pal.prompt_builder import SystemPromptBuilder
 from pal.allowlist import AllowlistManager
 from pal.websearch import WebSearchClient
@@ -55,6 +56,7 @@ class Daemon:
             profile=self.profile,
             wisdom=self.wisdom,
         )
+        self.learning = LearningManager(config.vault_path)
         self.allowlist = AllowlistManager(config.vault_path)
         self.allowlist.seed()
         self.websearch = WebSearchClient(
@@ -207,6 +209,14 @@ class Daemon:
             await self._handle_summarize(msg.args, writer)
         elif msg.name == "compile":
             await self._handle_compile(msg.args, writer)
+        elif msg.name == "learn":
+            await self._handle_learn(conv, writer)
+        elif msg.name == "learnings":
+            await self._handle_learnings(writer)
+        elif msg.name == "promote":
+            await self._handle_promote(msg.args, writer)
+        elif msg.name == "rate":
+            await self._handle_rate(msg.args, writer)
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
@@ -792,6 +802,158 @@ class Daemon:
                 f"{article.strip()}"
             ),
             command="compile",
+        )
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_learn(
+        self,
+        conv: Conversation,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        """Handle /learn — extract lessons from the current conversation."""
+        messages = conv.messages
+        if not messages:
+            error = ErrorMessage(error="No conversation history to learn from.")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        conv_text = "\n".join(
+            f"{'User' if m['role'] == 'user' else 'PAL'}: {m['content']}"
+            for m in messages
+        )
+
+        prompt = (
+            "Review this conversation and extract actionable lessons or insights. "
+            "Each lesson should be a concise, reusable principle. "
+            "Format each lesson as: ## <title>\\n<body>\\n\\n "
+            "Extract 1-3 lessons. If the conversation has no useful lessons, "
+            "respond with exactly: NONE\n\n"
+            f"Conversation:\n{conv_text}"
+        )
+
+        api_messages = [
+            {"role": "system", "content": self.prompt_builder.build()},
+            {"role": "user", "content": prompt},
+        ]
+
+        try:
+            result = await self.inference.complete(api_messages)
+        except Exception as exc:
+            logger.exception("Learn inference failed: %s", exc)
+            error = ErrorMessage(error=f"Learn failed: {exc}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        if result.strip() == "NONE":
+            resp = ResponseMessage(
+                text="No actionable lessons found in this conversation.",
+                command="learn",
+            )
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
+
+        import re
+        sections = re.split(r"^## ", result, flags=re.MULTILINE)
+        added = []
+        for section in sections:
+            section = section.strip()
+            if not section:
+                continue
+            lines = section.split("\n", 1)
+            title = lines[0].strip()
+            body = lines[1].strip() if len(lines) > 1 else title
+            slug = self.learning.add(title=title, body=body, source="conversation")
+            added.append(slug)
+
+        if not added:
+            resp = ResponseMessage(
+                text="Could not parse lessons from model output.",
+                command="learn",
+            )
+        else:
+            lines_out = [f"Extracted {len(added)} learning(s):\n"]
+            for slug in added:
+                lines_out.append(f"- {slug}")
+            lines_out.append("\nUse `/learnings` to list, `/promote <slug>` to promote to wisdom.")
+            resp = ResponseMessage(text="\n".join(lines_out), command="learn")
+
+        self.wiki.git_init()
+        self.wiki.git_commit(f"learn: extracted {len(added)} lesson(s)")
+
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_learnings(self, writer: asyncio.StreamWriter) -> None:
+        """Handle /learnings — list all extracted learnings."""
+        entries = self.learning.list()
+        if not entries:
+            resp = ResponseMessage(
+                text="No learnings yet. Use `/learn` after a conversation to extract lessons.",
+                command="learnings",
+            )
+        else:
+            lines = [f"{len(entries)} learning(s):\n"]
+            for e in entries:
+                status_marker = " (promoted)" if e["status"] == "promoted" else ""
+                lines.append(f"- **{e['title']}** ({e['slug']}){status_marker}")
+            resp = ResponseMessage(text="\n".join(lines), command="learnings")
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_promote(self, slug: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /promote <slug> — promote a learning to wisdom."""
+        slug = slug.strip()
+        if not slug:
+            error = ErrorMessage(error="Usage: /promote <slug>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+        try:
+            body = self.learning.get(slug)
+            meta_path = self.learning.learning_dir / f"{slug}.md"
+            from pal.frontmatter import parse_frontmatter
+            meta, _ = parse_frontmatter(meta_path.read_text())
+            title = meta.get("title", slug)
+        except FileNotFoundError:
+            error = ErrorMessage(error=f"Learning not found: {slug}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        self.wisdom.add(title=title, body=body)
+        self.learning.mark_promoted(slug)
+
+        self.wiki.git_init()
+        self.wiki.git_commit(f"promote: {slug} → wisdom")
+
+        resp = ResponseMessage(
+            text=f"Promoted **{title}** to wisdom.",
+            command="promote",
+        )
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_rate(self, args: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /rate <good|bad> [comment] — record session feedback."""
+        args = args.strip()
+        if not args:
+            error = ErrorMessage(error="Usage: /rate <good|bad> [comment]")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+        parts = args.split(None, 1)
+        rating = parts[0].lower()
+        comment = parts[1] if len(parts) > 1 else ""
+
+        self.learning.add_rating(rating, comment)
+
+        resp = ResponseMessage(
+            text=f"Rated: **{rating}**" + (f" — {comment}" if comment else ""),
+            command="rate",
         )
         writer.write(encode_message(resp))
         await writer.drain()
