@@ -6,6 +6,7 @@ import pytest
 from pal.client import PalClient
 from pal.config import Config
 from pal.daemon import Daemon
+from pal.inference import CompletionResult
 
 
 @pytest.fixture()
@@ -54,8 +55,8 @@ def _write_summary_file(vault, path: str, body: str) -> None:
 async def test_compile_creates_research_article(compile_daemon, socket_path, monkeypatch):
     daemon, vault = compile_daemon
 
-    async def fake_complete(messages):
-        return "# Quantum Computing Basics\n\nQuantum computers use qubits..."
+    async def fake_complete(messages, **kwargs):
+        return CompletionResult(type="text", content="# Quantum Computing Basics\n\nQuantum computers use qubits...")
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     _write_summary_file(
@@ -82,8 +83,8 @@ async def test_compile_creates_research_article(compile_daemon, socket_path, mon
 async def test_compile_preserves_provenance_chain(compile_daemon, socket_path, monkeypatch):
     daemon, vault = compile_daemon
 
-    async def fake_complete(messages):
-        return "# Topic\n\nContent based on summary."
+    async def fake_complete(messages, **kwargs):
+        return CompletionResult(type="text", content="# Topic\n\nContent based on summary.")
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     _write_summary_file(vault, "raw/summaries/foo.md", "Summary body text.")
@@ -108,8 +109,8 @@ async def test_compile_refuses_when_model_says_insufficient(compile_daemon, sock
     """If the model returns INSUFFICIENT:, nothing is saved."""
     daemon, vault = compile_daemon
 
-    async def fake_complete(messages):
-        return "INSUFFICIENT: The summary does not contain enough detail."
+    async def fake_complete(messages, **kwargs):
+        return CompletionResult(type="text", content="INSUFFICIENT: The summary does not contain enough detail.")
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     _write_summary_file(vault, "raw/summaries/thin.md", "Too brief.")

@@ -6,6 +6,7 @@ import pytest
 from pal.client import PalClient
 from pal.config import Config
 from pal.daemon import Daemon
+from pal.inference import CompletionResult
 
 
 @pytest.fixture()
@@ -35,8 +36,8 @@ async def test_note_refuses_when_model_returns_unknown(strict_daemon, socket_pat
     """If the model returns 'UNKNOWN: ...', /note does not save anything."""
     daemon, vault = strict_daemon
 
-    async def fake_complete(messages):
-        return "UNKNOWN: No reliable information on this topic."
+    async def fake_complete(messages, **kwargs):
+        return CompletionResult(type="text", content="UNKNOWN: No reliable information on this topic.")
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     client = PalClient(socket_path)
@@ -54,8 +55,8 @@ async def test_note_saves_when_model_responds_normally(strict_daemon, socket_pat
     """If the model returns actual content, /note saves normally."""
     daemon, vault = strict_daemon
 
-    async def fake_complete(messages):
-        return "# Known Topic\n\nThis is confident content about a known topic."
+    async def fake_complete(messages, **kwargs):
+        return CompletionResult(type="text", content="# Known Topic\n\nThis is confident content about a known topic.")
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     client = PalClient(socket_path)
