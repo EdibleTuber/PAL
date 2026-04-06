@@ -4,7 +4,10 @@ import json
 
 import pytest
 
-from pal.protocol import ChatMessage, StreamChunkMessage, ResponseMessage, encode_message, decode_message
+from pal.protocol import (
+    ChatMessage, StreamChunkMessage, ResponseMessage,
+    ToolProgressMessage, ErrorMessage, encode_message, decode_message,
+)
 
 
 @pytest.mark.asyncio
@@ -69,3 +72,32 @@ async def test_daemon_multiple_messages_share_history(running_daemon, socket_pat
 
     writer.close()
     await writer.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_daemon_chat_tool_use(running_daemon, socket_path):
+    """Chat message that triggers tool use sends progress + final response."""
+    reader, writer = await asyncio.open_unix_connection(str(socket_path))
+
+    msg = ChatMessage(text="TOOLCALL:read_file")
+    writer.write(encode_message(msg))
+    await writer.drain()
+
+    received = []
+    while True:
+        line = await asyncio.wait_for(reader.readline(), timeout=5.0)
+        if not line:
+            break
+        decoded = decode_message(line.strip())
+        received.append(decoded)
+        if isinstance(decoded, (ResponseMessage, ErrorMessage)):
+            break
+
+    writer.close()
+    await writer.wait_closed()
+
+    progress_msgs = [m for m in received if isinstance(m, ToolProgressMessage)]
+    response_msgs = [m for m in received if isinstance(m, ResponseMessage)]
+    assert len(progress_msgs) >= 1
+    assert progress_msgs[0].tool == "read_file"
+    assert len(response_msgs) == 1

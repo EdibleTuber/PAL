@@ -6,6 +6,7 @@ Message types:
     stream_chunk    — single streaming token from daemon
     response        — complete response (non-streaming commands)
     error           — error message
+    tool_progress   — tool execution progress indicator
 
 All messages are serialized as a single JSON line terminated by newline.
 """
@@ -45,15 +46,23 @@ class ErrorMessage:
     type: str = "error"
 
 
+@dataclass
+class ToolProgressMessage:
+    tool: str
+    arguments: dict
+    type: str = "tool_progress"
+
+
 _MESSAGE_TYPES: dict[str, type] = {
     "chat": ChatMessage,
     "command": CommandMessage,
     "stream_chunk": StreamChunkMessage,
     "response": ResponseMessage,
     "error": ErrorMessage,
+    "tool_progress": ToolProgressMessage,
 }
 
-Message = ChatMessage | CommandMessage | StreamChunkMessage | ResponseMessage | ErrorMessage
+Message = ChatMessage | CommandMessage | StreamChunkMessage | ResponseMessage | ErrorMessage | ToolProgressMessage
 
 
 def encode_message(msg: Message) -> bytes:

@@ -12,6 +12,7 @@ from pal.protocol import (
     StreamChunkMessage,
     ResponseMessage,
     ErrorMessage,
+    ToolProgressMessage,
     Message,
     encode_message,
     decode_message,

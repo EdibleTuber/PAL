@@ -6,6 +6,7 @@ import pytest
 from pal.client import PalClient
 from pal.config import Config
 from pal.daemon import Daemon
+from pal.inference import CompletionResult
 from pal.learning import LearningManager
 from pal.wisdom import WisdomManager
 
@@ -50,13 +51,13 @@ async def test_learn_extracts_from_conversation(learn_daemon, socket_path, monke
             break
 
     # Now mock inference for the /learn extraction
-    async def fake_complete(messages):
-        return (
+    async def fake_complete(messages, **kwargs):
+        return CompletionResult(type="text", content=(
             "## Always handle specific exceptions\n"
             "Catch specific exception types rather than bare except.\n\n"
             "## Use try/finally for cleanup\n"
             "Ensure resources are released even when exceptions occur."
-        )
+        ))
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     resp = await client.command("learn")

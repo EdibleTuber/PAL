@@ -4,6 +4,7 @@ Accepts connections from CLI clients, manages conversation state per connection,
 dispatches chat messages to the inference server, and streams responses back.
 """
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from pal.protocol import (
     StreamChunkMessage,
     ResponseMessage,
     ErrorMessage,
+    ToolProgressMessage,
     Message,
     encode_message,
     decode_message,
@@ -55,6 +57,11 @@ class Daemon:
         self.prompt_builder = SystemPromptBuilder(
             profile=self.profile,
             wisdom=self.wisdom,
+        )
+        from pal.tools import ToolExecutor
+        self.tool_executor = ToolExecutor(
+            vault_path=config.vault_path,
+            retrieval=self.retrieval,
         )
         self.learning = LearningManager(config.vault_path)
         self.allowlist = AllowlistManager(config.vault_path)
@@ -138,30 +145,92 @@ class Daemon:
         conv: Conversation,
         writer: asyncio.StreamWriter,
     ) -> None:
-        """Process a chat message: add to history, stream inference, send response."""
+        """Process a chat message with optional tool use.
+
+        First call uses streaming. If the model returns tool calls instead of
+        text, enters a non-streaming loop: execute tools, show progress, feed
+        results back, repeat until the model returns text or the loop cap is hit.
+        """
+        from pal.inference import ToolCall
+        from pal.tools import TOOL_DEFINITIONS
+
         conv.add_user(msg.text)
         messages = conv.get_messages_for_api(system_prompt=self.prompt_builder.build())
+        max_tool_rounds = 10
 
-        full_response = []
         try:
-            async for token in self.inference.stream(messages):
-                chunk = StreamChunkMessage(token=token)
-                writer.write(encode_message(chunk))
+            full_response = []
+            tool_calls: list[ToolCall] | None = None
+
+            async for item in self.inference.stream(messages, tools=TOOL_DEFINITIONS):
+                if isinstance(item, list):
+                    tool_calls = item
+                    break
+                else:
+                    chunk = StreamChunkMessage(token=item)
+                    writer.write(encode_message(chunk))
+                    await writer.drain()
+                    full_response.append(item)
+
+            # If we got text, we're done
+            if tool_calls is None:
+                response_text = "".join(full_response)
+                conv.add_assistant(response_text)
+                done = ResponseMessage(text=response_text)
+                writer.write(encode_message(done))
                 await writer.drain()
-                full_response.append(token)
+                return
+
+            # Tool-use loop
+            for _round in range(max_tool_rounds):
+                raw_calls = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments),
+                        },
+                    }
+                    for tc in tool_calls
+                ]
+                conv.add_assistant_tool_calls(raw_calls)
+
+                for tc in tool_calls:
+                    progress = ToolProgressMessage(tool=tc.name, arguments=tc.arguments)
+                    writer.write(encode_message(progress))
+                    await writer.drain()
+
+                    result = await self.tool_executor.run_async(tc.name, tc.arguments)
+                    conv.add_tool_result(tc.id, result)
+
+                messages = conv.get_messages_for_api(
+                    system_prompt=self.prompt_builder.build()
+                )
+                completion = await self.inference.complete(messages, tools=TOOL_DEFINITIONS)
+
+                if completion.type == "text":
+                    response_text = completion.content or ""
+                    conv.add_assistant(response_text)
+                    done = ResponseMessage(text=response_text)
+                    writer.write(encode_message(done))
+                    await writer.drain()
+                    return
+
+                tool_calls = completion.tool_calls
+
+            # Hit the loop cap
+            cap_msg = "I've reached the limit of tool calls for this turn. Here's what I found so far."
+            conv.add_assistant(cap_msg)
+            done = ResponseMessage(text=cap_msg)
+            writer.write(encode_message(done))
+            await writer.drain()
+
         except Exception as exc:
-            logger.exception("Inference error: %s", exc)
-            error = ErrorMessage(error=f"Inference error: {exc}")
+            logger.exception("Chat error: %s", exc)
+            error = ErrorMessage(error=f"Chat error: {exc}")
             writer.write(encode_message(error))
             await writer.drain()
-            return
-
-        response_text = "".join(full_response)
-        conv.add_assistant(response_text)
-
-        done = ResponseMessage(text=response_text)
-        writer.write(encode_message(done))
-        await writer.drain()
 
     async def _handle_command(
         self,
@@ -316,7 +385,8 @@ class Daemon:
         ]
 
         try:
-            body = await self.inference.complete(messages)
+            result = await self.inference.complete(messages)
+            body = result.content or ""
         except Exception as exc:
             logger.exception("Inference error during /note: %s", exc)
             error = ErrorMessage(error=f"Inference error: {exc}")
@@ -659,7 +729,8 @@ class Daemon:
         ]
 
         try:
-            summary = await self.inference.complete(messages)
+            result = await self.inference.complete(messages)
+            summary = result.content or ""
         except Exception as exc:
             logger.exception("Summarize inference failed: %s", exc)
             error = ErrorMessage(error=f"Summarize failed: {exc}")
@@ -771,7 +842,8 @@ class Daemon:
         ]
 
         try:
-            article = await self.inference.complete(messages)
+            result = await self.inference.complete(messages)
+            article = result.content or ""
         except Exception as exc:
             logger.exception("Compile inference failed: %s", exc)
             error = ErrorMessage(error=f"Compile failed: {exc}")
@@ -866,7 +938,8 @@ class Daemon:
         ]
 
         try:
-            result = await self.inference.complete(api_messages)
+            completion = await self.inference.complete(api_messages)
+            result = completion.content or ""
         except Exception as exc:
             logger.exception("Learn inference failed: %s", exc)
             error = ErrorMessage(error=f"Learn failed: {exc}")
