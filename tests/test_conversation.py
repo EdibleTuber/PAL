@@ -67,6 +67,31 @@ def test_add_tool_call_and_result():
     assert "Qubits" in messages[2]["content"]
 
 
+def test_truncation_drops_orphaned_tool_messages():
+    """Truncation should not leave orphaned tool result messages at the start."""
+    conv = Conversation(history_depth=4)
+    # user -> assistant(tool_calls) -> tool result -> assistant text = 4 msgs
+    conv.add_user("first question")
+    conv.add_assistant_tool_calls([{
+        "id": "call_001",
+        "type": "function",
+        "function": {"name": "read_file", "arguments": "{}"},
+    }])
+    conv.add_tool_result("call_001", "file contents")
+    conv.add_assistant("here's what I found")
+    # Now add more to trigger truncation
+    conv.add_user("second question")
+    conv.add_assistant("second answer")
+    # depth=4 keeps last 4: tool_result, assistant, user, assistant
+    # But tool_result is orphaned — should be dropped
+    messages = conv.messages
+    assert all(m.get("role") != "tool" for m in messages)
+    # Should not start with an orphaned assistant tool_calls either
+    if messages:
+        first = messages[0]
+        assert not (first.get("role") == "assistant" and first.get("tool_calls"))
+
+
 def test_clear():
     conv = Conversation(history_depth=10)
     conv.add_user("hello")

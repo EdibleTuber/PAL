@@ -52,3 +52,19 @@ class Conversation:
     def _truncate(self) -> None:
         if len(self._messages) > self.history_depth:
             self._messages = self._messages[-self.history_depth:]
+            # Don't start with orphaned tool messages that lost their
+            # matching counterpart during truncation. Drop leading
+            # assistant(tool_calls) and tool result messages.
+            changed = True
+            while changed:
+                changed = False
+                if self._messages and self._messages[0].get("role") == "tool":
+                    self._messages.pop(0)
+                    changed = True
+                elif (
+                    self._messages
+                    and self._messages[0].get("role") == "assistant"
+                    and self._messages[0].get("tool_calls")
+                ):
+                    self._messages.pop(0)
+                    changed = True
