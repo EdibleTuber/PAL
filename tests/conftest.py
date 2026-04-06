@@ -26,6 +26,93 @@ async def mock_chat_completions(request: Request):
         "",
     )
 
+    # If the messages contain a tool result, respond with text (loop completion)
+    has_tool_result = any(m.get("role") == "tool" for m in messages)
+    if has_tool_result:
+        tool_content = next(
+            (m["content"] for m in messages if m.get("role") == "tool"), ""
+        )
+        summary = tool_content[:50] if tool_content else "no content"
+        if not stream:
+            return JSONResponse({
+                "choices": [{"message": {"role": "assistant", "content": f"Tool result: {summary}"}}]
+            })
+        async def generate_after_tool():
+            text = f"Tool result: {summary}"
+            tokens = text.split(" ")
+            for i, token in enumerate(tokens):
+                prefix = "" if i == 0 else " "
+                chunk = {
+                    "choices": [{
+                        "delta": {"content": prefix + token},
+                        "finish_reason": None,
+                    }]
+                }
+                yield f"data: {json.dumps(chunk)}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(generate_after_tool(), media_type="text/event-stream")
+
+    # If tools are provided and message starts with TOOLCALL:, return a tool call
+    tools = body.get("tools", [])
+    if tools and last_user.startswith("TOOLCALL:"):
+        tool_name = last_user.split(":", 1)[1].strip()
+        if not stream:
+            return JSONResponse({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": "call_001",
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": '{"path": "Research/quantum.md"}',
+                            },
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }]
+            })
+        async def generate_tool():
+            chunk = {
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call_001",
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": '{"path": "Res',
+                            },
+                        }]
+                    },
+                    "finish_reason": None,
+                }]
+            }
+            yield f"data: {json.dumps(chunk)}\n\n"
+            chunk2 = {
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "function": {
+                                "arguments": 'earch/quantum.md"}',
+                            },
+                        }]
+                    },
+                    "finish_reason": None,
+                }]
+            }
+            yield f"data: {json.dumps(chunk2)}\n\n"
+            done_chunk = {
+                "choices": [{"delta": {}, "finish_reason": "tool_calls"}]
+            }
+            yield f"data: {json.dumps(done_chunk)}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(generate_tool(), media_type="text/event-stream")
+
     if not stream:
         return JSONResponse({
             "choices": [{"message": {"role": "assistant", "content": f"echo: {last_user}"}}]
