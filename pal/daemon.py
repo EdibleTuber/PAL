@@ -170,7 +170,34 @@ class Daemon:
         writer: asyncio.StreamWriter,
     ) -> None:
         """Handle a slash command."""
-        if msg.name in ("quit", "exit"):
+        if msg.name == "help":
+            resp = ResponseMessage(
+                text=(
+                    "Available commands:\n"
+                    "  /help          — Show this message\n"
+                    "  /status        — Show daemon status (model, vault, etc.)\n"
+                    "  /read <title>  — Read a wiki article\n"
+                    "  /search <q>    — Search wiki articles\n"
+                    "  /get <title>   — Get article by exact title\n"
+                    "  /note <text>   — Save a quick note\n"
+                    "  /lint          — Lint wiki articles\n"
+                    "  /profile <q>   — Query your profile\n"
+                    "  /wisdom <q>    — Search wisdom entries\n"
+                    "  /search-web <q> — Web search via SearxNG\n"
+                    "  /fetch <url>   — Fetch and summarize a URL\n"
+                    "  /summarize <t> — Summarize a wiki article\n"
+                    "  /compile <t>   — Compile a wiki article\n"
+                    "  /learn         — Extract learnings from conversation\n"
+                    "  /learnings     — List saved learnings\n"
+                    "  /promote <id>  — Promote a learning to wisdom\n"
+                    "  /rate <id> <n> — Rate a learning (1-5)\n"
+                    "  /quit          — End the session"
+                ),
+                command="help",
+            )
+            writer.write(encode_message(resp))
+            await writer.drain()
+        elif msg.name in ("quit", "exit"):
             resp = ResponseMessage(text="Goodbye.", command="quit")
             writer.write(encode_message(resp))
             await writer.drain()

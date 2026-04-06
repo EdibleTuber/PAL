@@ -4,7 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 -m pal.daemon_main
+WorkingDirectory=/mnt/secondary/PAL
+ExecStart=/mnt/secondary/PAL/.venv/bin/python -m pal.daemon_main
 Restart=on-failure
 RestartSec=5
 Environment=PAL_INFERENCE_URL=http://192.168.1.14:11434
