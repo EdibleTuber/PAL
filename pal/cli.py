@@ -34,7 +34,8 @@ async def run_repl() -> None:
         sys.exit(1)
 
     console.print("[dim]PAL — Personal Agentic Librarian[/dim]")
-    console.print("[dim]Commands: /note /read /search /get /search-web /fetch /summarize /compile /profile /wisdom /lint /status /quit[/dim]\n")
+    console.print("[dim]Commands: /note /read /search /get /search-web /fetch /summarize /compile[/dim]")
+    console.print("[dim]          /learn /learnings /promote /rate /profile /wisdom /lint /status /quit[/dim]\n")
 
     try:
         while True:
