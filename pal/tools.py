@@ -115,7 +115,7 @@ class ToolExecutor:
     def _resolve_safe(self, path: str) -> Path | None:
         """Resolve a path within the vault. Returns None if it escapes."""
         full = (self.vault_path / path).resolve()
-        if not str(full).startswith(str(self.vault_path) + "/") and full != self.vault_path:
+        if not full.is_relative_to(self.vault_path):
             return None
         return full
 
@@ -166,7 +166,7 @@ class ToolExecutor:
         matches = []
         for md_file in sorted(self.vault_path.rglob("*.md")):
             rel = md_file.relative_to(self.vault_path)
-            if any(part.startswith("_") for part in rel.parts):
+            if any(part.startswith("_") or part.startswith(".") for part in rel.parts):
                 continue
             try:
                 content = md_file.read_text(errors="replace")
