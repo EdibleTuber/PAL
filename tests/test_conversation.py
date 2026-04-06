@@ -44,6 +44,29 @@ def test_get_messages_for_api():
     assert messages[2] == {"role": "assistant", "content": "hi"}
 
 
+def test_add_tool_call_and_result():
+    """Conversation stores assistant tool_calls and tool results."""
+    conv = Conversation(history_depth=50)
+    conv.add_user("look at quantum.md")
+
+    conv.add_assistant_tool_calls([{
+        "id": "call_001",
+        "type": "function",
+        "function": {"name": "read_file", "arguments": '{"path": "Research/quantum.md"}'},
+    }])
+
+    conv.add_tool_result("call_001", "# Quantum Computing\n\nQubits are neat.")
+
+    messages = conv.messages
+    assert len(messages) == 3
+    assert messages[0]["role"] == "user"
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["tool_calls"][0]["id"] == "call_001"
+    assert messages[2]["role"] == "tool"
+    assert messages[2]["tool_call_id"] == "call_001"
+    assert "Qubits" in messages[2]["content"]
+
+
 def test_clear():
     conv = Conversation(history_depth=10)
     conv.add_user("hello")

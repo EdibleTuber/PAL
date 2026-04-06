@@ -10,10 +10,10 @@ from dataclasses import dataclass, field
 @dataclass
 class Conversation:
     history_depth: int
-    _messages: list[dict[str, str]] = field(default_factory=list)
+    _messages: list[dict] = field(default_factory=list)
 
     @property
-    def messages(self) -> list[dict[str, str]]:
+    def messages(self) -> list[dict]:
         return list(self._messages)
 
     def add_user(self, text: str) -> None:
@@ -24,7 +24,25 @@ class Conversation:
         self._messages.append({"role": "assistant", "content": text})
         self._truncate()
 
-    def get_messages_for_api(self, system_prompt: str) -> list[dict[str, str]]:
+    def add_assistant_tool_calls(self, tool_calls: list[dict]) -> None:
+        """Record an assistant message that contains tool calls (no text content)."""
+        self._messages.append({
+            "role": "assistant",
+            "content": None,
+            "tool_calls": tool_calls,
+        })
+        self._truncate()
+
+    def add_tool_result(self, tool_call_id: str, content: str) -> None:
+        """Record a tool result message."""
+        self._messages.append({
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": content,
+        })
+        self._truncate()
+
+    def get_messages_for_api(self, system_prompt: str) -> list[dict]:
         """Return message list for the inference API: system + history."""
         return [{"role": "system", "content": system_prompt}] + self.messages
 
