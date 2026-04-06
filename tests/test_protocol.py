@@ -7,6 +7,7 @@ from pal.protocol import (
     StreamChunkMessage,
     ResponseMessage,
     ErrorMessage,
+    ToolProgressMessage,
     encode_message,
     decode_message,
 )
@@ -72,6 +73,16 @@ def test_encode_produces_single_line_json():
     assert len(lines) == 1
     parsed = json.loads(lines[0])
     assert parsed["text"] == "line one\nline two"
+
+
+def test_tool_progress_roundtrip():
+    msg = ToolProgressMessage(tool="read_file", arguments={"path": "Research/quantum.md"})
+    encoded = encode_message(msg)
+    decoded = decode_message(encoded.strip())
+    assert isinstance(decoded, ToolProgressMessage)
+    assert decoded.tool == "read_file"
+    assert decoded.arguments == {"path": "Research/quantum.md"}
+    assert decoded.type == "tool_progress"
 
 
 def test_decode_unknown_type_raises():
