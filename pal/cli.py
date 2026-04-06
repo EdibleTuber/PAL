@@ -14,7 +14,21 @@ from rich.markdown import Markdown
 
 from pal.client import PalClient
 from pal.config import load_config
-from pal.protocol import StreamChunkMessage, ResponseMessage, ErrorMessage
+from pal.protocol import StreamChunkMessage, ResponseMessage, ErrorMessage, ToolProgressMessage
+
+
+def _tool_progress_label(tool: str, arguments: dict) -> str:
+    """Format a brief progress label for a tool call."""
+    if tool == "read_file":
+        return f"[reading {arguments.get('path', '?')}...]"
+    if tool == "list_directory":
+        path = arguments.get("path", "")
+        return f"[listing {path or 'vault'}...]"
+    if tool == "search_content":
+        return f"[searching for \"{arguments.get('query', '?')}\"...]"
+    if tool == "search_vault":
+        return f"[searching vault for \"{arguments.get('query', '?')}\"...]"
+    return f"[{tool}...]"
 
 
 async def run_repl() -> None:
@@ -68,14 +82,31 @@ async def run_repl() -> None:
             # Stream chat response with live markdown rendering
             accumulated = ""
             console.print()
-            with Live(Markdown(""), console=console, refresh_per_second=10) as live:
+            live = None
+            try:
                 async for msg in client.chat(text):
-                    if isinstance(msg, StreamChunkMessage):
+                    if isinstance(msg, ToolProgressMessage):
+                        if live is not None:
+                            live.stop()
+                            live = None
+                        label = _tool_progress_label(msg.tool, msg.arguments)
+                        console.print(f"  [dim]{label}[/dim]")
+                    elif isinstance(msg, StreamChunkMessage):
+                        if live is None:
+                            live = Live(Markdown(""), console=console, refresh_per_second=10)
+                            live.start()
                         accumulated += msg.token
                         live.update(Markdown(accumulated))
+                    elif isinstance(msg, ResponseMessage):
+                        if not accumulated and msg.text:
+                            console.print(Markdown(msg.text))
+                        break
                     elif isinstance(msg, ErrorMessage):
                         console.print(f"[red]{msg.error}[/red]")
                         break
+            finally:
+                if live is not None:
+                    live.stop()
             console.print()
 
     finally:
