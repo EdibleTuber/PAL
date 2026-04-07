@@ -31,6 +31,11 @@ class PalClient:
             str(self.socket_path)
         )
 
+    @property
+    def is_connected(self) -> bool:
+        """Check if the connection to the daemon is alive."""
+        return self._writer is not None and not self._writer.is_closing()
+
     async def close(self) -> None:
         """Close the connection."""
         if self._writer:

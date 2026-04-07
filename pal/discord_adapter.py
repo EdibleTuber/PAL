@@ -34,7 +34,7 @@ class UserConnectionManager:
         """Get or create a PalClient for a Discord user."""
         if user_id in self._clients:
             client = self._clients[user_id]
-            if client._writer and not client._writer.is_closing():
+            if client.is_connected:
                 return client
             del self._clients[user_id]
 
