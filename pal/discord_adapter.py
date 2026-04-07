@@ -4,8 +4,48 @@ Bridges Discord messages to the PAL daemon via unix socket.
 Each allowed Discord user gets their own daemon connection.
 """
 import logging
+from pathlib import Path
+
+from pal.client import PalClient
+from pal.protocol import (
+    StreamChunkMessage,
+    ResponseMessage,
+    ErrorMessage,
+    ToolProgressMessage,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class UserConnectionManager:
+    """Manages per-user PalClient connections to the daemon."""
+
+    def __init__(self, allowed_users: set[str], socket_path: str | Path) -> None:
+        self.allowed_users = allowed_users
+        self.socket_path = Path(socket_path)
+        self._clients: dict[str, PalClient] = {}
+
+    def is_allowed(self, user_id: str) -> bool:
+        return user_id in self.allowed_users
+
+    async def get_client(self, user_id: str) -> PalClient:
+        """Get or create a PalClient for a Discord user."""
+        if user_id in self._clients:
+            client = self._clients[user_id]
+            if client._writer and not client._writer.is_closing():
+                return client
+            del self._clients[user_id]
+
+        client = PalClient(self.socket_path)
+        await client.connect()
+        self._clients[user_id] = client
+        return client
+
+    async def close_all(self) -> None:
+        """Close all daemon connections."""
+        for client in self._clients.values():
+            await client.close()
+        self._clients.clear()
 
 _DISCORD_MSG_LIMIT = 2000
 

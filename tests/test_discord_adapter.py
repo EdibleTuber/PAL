@@ -82,3 +82,28 @@ def test_split_message_exact_limit():
     text = "A" * 2000
     result = split_message(text, limit=2000)
     assert result == [text]
+
+
+# --- Task 2: UserConnectionManager ---
+
+from pal.discord_adapter import UserConnectionManager
+
+
+@pytest.mark.asyncio
+async def test_allowlist_blocks_unknown_user():
+    mgr = UserConnectionManager(
+        allowed_users={"111", "222"},
+        socket_path="/tmp/fake.sock",
+    )
+    assert mgr.is_allowed("111")
+    assert mgr.is_allowed("222")
+    assert not mgr.is_allowed("999")
+
+
+@pytest.mark.asyncio
+async def test_allowlist_empty_blocks_all():
+    mgr = UserConnectionManager(
+        allowed_users=set(),
+        socket_path="/tmp/fake.sock",
+    )
+    assert not mgr.is_allowed("111")
