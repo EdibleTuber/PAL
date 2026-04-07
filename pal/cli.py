@@ -28,6 +28,10 @@ def _tool_progress_label(tool: str, arguments: dict) -> str:
         return f"[searching for \"{arguments.get('query', '?')}\"...]"
     if tool == "search_vault":
         return f"[searching vault for \"{arguments.get('query', '?')}\"...]"
+    if tool == "edit_file":
+        return f"[editing {arguments.get('path', '?')}...]"
+    if tool == "create_file":
+        return f"[creating {arguments.get('path', '?')}...]"
     return f"[{tool}...]"
 
 
