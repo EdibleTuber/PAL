@@ -47,6 +47,37 @@ class UserConnectionManager:
             await client.close()
         self._clients.clear()
 
+
+from collections.abc import AsyncGenerator
+from pal.protocol import Message
+
+
+async def collect_response(
+    message_stream: AsyncGenerator[Message, None],
+) -> tuple[list[ToolProgressMessage], str]:
+    """Collect all messages from a daemon response stream.
+
+    Returns (tool_progress_list, final_text).
+    """
+    progress: list[ToolProgressMessage] = []
+    accumulated: list[str] = []
+    final_text = ""
+
+    async for msg in message_stream:
+        if isinstance(msg, ToolProgressMessage):
+            progress.append(msg)
+        elif isinstance(msg, StreamChunkMessage):
+            accumulated.append(msg.token)
+        elif isinstance(msg, ResponseMessage):
+            final_text = "".join(accumulated) if accumulated else msg.text
+            break
+        elif isinstance(msg, ErrorMessage):
+            final_text = f"Error: {msg.error}"
+            break
+
+    return progress, final_text
+
+
 _DISCORD_MSG_LIMIT = 2000
 
 

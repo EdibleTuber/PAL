@@ -107,3 +107,42 @@ async def test_allowlist_empty_blocks_all():
         socket_path="/tmp/fake.sock",
     )
     assert not mgr.is_allowed("111")
+
+
+# --- Task 3: collect_response helper ---
+
+from pal.protocol import StreamChunkMessage, ResponseMessage, ToolProgressMessage, ErrorMessage
+from pal.discord_adapter import collect_response
+
+
+@pytest.mark.asyncio
+async def test_collect_response_text_only():
+    async def fake_chat(text):
+        yield StreamChunkMessage(token="Hello ")
+        yield StreamChunkMessage(token="world")
+        yield ResponseMessage(text="Hello world")
+
+    progress, text = await collect_response(fake_chat("hi"))
+    assert progress == []
+    assert text == "Hello world"
+
+
+@pytest.mark.asyncio
+async def test_collect_response_with_tools():
+    async def fake_chat(text):
+        yield ToolProgressMessage(tool="read_file", arguments={"path": "Research/quantum.md"})
+        yield ResponseMessage(text="Here is the file content.")
+
+    progress, text = await collect_response(fake_chat("read it"))
+    assert len(progress) == 1
+    assert progress[0].tool == "read_file"
+    assert text == "Here is the file content."
+
+
+@pytest.mark.asyncio
+async def test_collect_response_error():
+    async def fake_chat(text):
+        yield ErrorMessage(error="Inference error: timeout")
+
+    progress, text = await collect_response(fake_chat("hi"))
+    assert "error" in text.lower() or "Error" in text
