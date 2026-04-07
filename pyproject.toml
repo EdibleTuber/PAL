@@ -18,13 +18,18 @@ dependencies = [
 [project.scripts]
 pal = "pal.cli:main"
 pal-daemon = "pal.daemon_main:main"
+pal-discord = "pal.discord_main:main"
 
 [project.optional-dependencies]
+discord = [
+    "discord.py>=2.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "starlette>=0.37.0",
     "uvicorn[standard]>=0.29.0",
+    "discord.py>=2.0",
 ]
 
 [tool.pytest.ini_options]
