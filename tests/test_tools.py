@@ -173,3 +173,58 @@ def test_edit_file_git_commits(wiki_executor, vault):
         cwd=vault, capture_output=True, text=True,
     )
     assert "edit" in result.stdout.lower()
+
+
+def test_create_file(wiki_executor, vault):
+    result = wiki_executor.run("create_file", {
+        "path": "Research/newtons-laws.md",
+        "title": "Newton's Laws",
+        "content": "# Newton's Laws\n\nThree laws of motion.\n",
+        "tags": ["physics"],
+    })
+    assert "created" in result.lower()
+    text = (vault / "Research" / "newtons-laws.md").read_text()
+    assert "Newton's Laws" in text
+    assert "Three laws" in text
+    assert "physics" in text
+
+
+def test_create_file_already_exists(wiki_executor):
+    result = wiki_executor.run("create_file", {
+        "path": "Research/quantum.md",
+        "title": "Quantum",
+        "content": "duplicate",
+    })
+    assert "already exists" in result.lower()
+
+
+def test_create_file_system_dir(wiki_executor):
+    result = wiki_executor.run("create_file", {
+        "path": "_wisdom/new-wisdom.md",
+        "title": "New Wisdom",
+        "content": "some wisdom",
+    })
+    assert "not allowed" in result.lower()
+
+
+def test_create_file_creates_parent_dirs(wiki_executor, vault):
+    result = wiki_executor.run("create_file", {
+        "path": "NewTopic/subtopic/article.md",
+        "title": "Deep Article",
+        "content": "# Deep Article\n\nNested content.\n",
+    })
+    assert "created" in result.lower()
+    assert (vault / "NewTopic" / "subtopic" / "article.md").exists()
+
+
+def test_create_file_git_commits(wiki_executor, vault):
+    wiki_executor.run("create_file", {
+        "path": "Research/new-article.md",
+        "title": "New Article",
+        "content": "# New\n\nContent.\n",
+    })
+    result = subprocess.run(
+        ["git", "log", "--oneline", "-1"],
+        cwd=vault, capture_output=True, text=True,
+    )
+    assert "create" in result.stdout.lower()

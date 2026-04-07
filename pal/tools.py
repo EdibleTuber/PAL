@@ -101,6 +101,36 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_file",
+            "description": "Create a new file in the vault with proper frontmatter. Use for writing new notes or articles.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to vault root (e.g. 'Research/new-topic.md'). Must not already exist.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Article title for frontmatter.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Body content for the file (markdown, without frontmatter).",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tags for frontmatter.",
+                    },
+                },
+                "required": ["path", "title", "content"],
+            },
+        },
+    },
 ]
 
 
@@ -123,6 +153,7 @@ class ToolExecutor:
             "list_directory": self._list_directory,
             "search_content": self._search_content,
             "edit_file": self._edit_file,
+            "create_file": self._create_file,
         }.get(name)
         if handler is not None:
             return handler(arguments)
@@ -234,6 +265,30 @@ class ToolExecutor:
         self.wiki.write_article(path, title, content, tags=tags)
         self.wiki.git_commit(f"Edit {path} via chat")
         return f"Updated: {path}"
+
+    def _create_file(self, arguments: dict) -> str:
+        path = arguments.get("path", "")
+        title = arguments.get("title", "")
+        content = arguments.get("content", "")
+        tags = arguments.get("tags")
+        if not path:
+            return "Error: 'path' parameter is required."
+        if not title:
+            return "Error: 'title' parameter is required."
+        if not content:
+            return "Error: 'content' parameter is required."
+        if self._is_system_path(path):
+            return f"Error: writing to system directories is not allowed: {path}"
+        resolved = self._resolve_safe(path)
+        if resolved is None:
+            return f"Error: path escapes outside vault: {path}"
+        if resolved.exists():
+            return f"Error: file already exists: {path} (use edit_file to modify)"
+        if self.wiki is None:
+            return "Error: write operations are not available (no wiki manager)."
+        self.wiki.write_article(path, title, content, tags=tags)
+        self.wiki.git_commit(f"Create {path} via chat")
+        return f"Created: {path}"
 
     async def _search_vault(self, arguments: dict) -> str:
         query = arguments.get("query", "")
