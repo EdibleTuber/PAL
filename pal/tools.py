@@ -80,6 +80,27 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": "Rewrite the body of an existing vault file. Preserves frontmatter (title, tags). Use for restructuring, reformatting, or updating content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to vault root (e.g. 'Research/quantum.md'). Must already exist.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "New body content for the file (markdown, without frontmatter).",
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
 ]
 
 
@@ -101,6 +122,7 @@ class ToolExecutor:
             "read_file": self._read_file,
             "list_directory": self._list_directory,
             "search_content": self._search_content,
+            "edit_file": self._edit_file,
         }.get(name)
         if handler is not None:
             return handler(arguments)
@@ -120,6 +142,10 @@ class ToolExecutor:
         if not full.is_relative_to(self.vault_path):
             return None
         return full
+
+    def _is_system_path(self, path: str) -> bool:
+        """Check if a path targets a system directory (_-prefixed)."""
+        return any(part.startswith("_") for part in Path(path).parts)
 
     def _read_file(self, arguments: dict) -> str:
         path = arguments.get("path", "")
@@ -185,6 +211,29 @@ class ToolExecutor:
         if not matches:
             return f"No results for: {query}"
         return f"Found {len(matches)} match(es) for '{query}':\n" + "\n".join(matches)
+
+    def _edit_file(self, arguments: dict) -> str:
+        path = arguments.get("path", "")
+        content = arguments.get("content", "")
+        if not path:
+            return "Error: 'path' parameter is required."
+        if not content:
+            return "Error: 'content' parameter is required."
+        if self._is_system_path(path):
+            return f"Error: writing to system directories is not allowed: {path}"
+        resolved = self._resolve_safe(path)
+        if resolved is None:
+            return f"Error: path escapes outside vault: {path}"
+        if not resolved.exists():
+            return f"Error: file does not exist: {path} (use create_file for new files)"
+        if self.wiki is None:
+            return "Error: write operations are not available (no wiki manager)."
+        meta, _ = self.wiki.read_article(path)
+        title = meta.get("title", Path(path).stem)
+        tags = meta.get("tags")
+        self.wiki.write_article(path, title, content, tags=tags)
+        self.wiki.git_commit(f"Edit {path} via chat")
+        return f"Updated: {path}"
 
     async def _search_vault(self, arguments: dict) -> str:
         query = arguments.get("query", "")
