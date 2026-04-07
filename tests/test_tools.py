@@ -228,3 +228,24 @@ def test_create_file_git_commits(wiki_executor, vault):
         cwd=vault, capture_output=True, text=True,
     )
     assert "create" in result.stdout.lower()
+
+
+def test_edit_file_no_wiki(vault):
+    executor = ToolExecutor(vault_path=vault, retrieval=None)
+    result = executor.run("edit_file", {"path": "Research/quantum.md", "content": "x"})
+    assert "not available" in result.lower()
+
+
+def test_create_file_no_wiki(vault):
+    executor = ToolExecutor(vault_path=vault, retrieval=None)
+    result = executor.run("create_file", {"path": "Research/new.md", "title": "T", "content": "x"})
+    assert "not available" in result.lower()
+
+
+def test_create_file_path_traversal(wiki_executor):
+    result = wiki_executor.run("create_file", {
+        "path": "../../etc/evil.md",
+        "title": "Evil",
+        "content": "hacked",
+    })
+    assert "escapes" in result.lower() or "outside vault" in result.lower()
