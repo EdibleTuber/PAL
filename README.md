@@ -180,6 +180,35 @@ PAL can research topics from the web with a controlled pipeline:
 3. `/summarize <path>` produces a cleaned summary in `raw/summaries/`.
 4. `/compile <path>` turns the summary into a grounded wiki article.
 
+## Security
+
+PAL is an agentic system that processes untrusted content and executes LLM-directed tool calls. Several layers of defense keep the vault and host safe.
+
+### Prompt Injection
+
+Fetched web content is wrapped in GUID-tagged `<untrusted-content>` boundaries with a per-request random UUID the attacker cannot predict. A sanitizer runs defense-in-depth before wrapping: Unicode NFC normalization, zero-width and bidirectional character stripping, model special-token removal, and token-budget truncation.
+
+### Path Traversal
+
+All file operations resolve paths through a safe-path check that rejects `..` components, leading `/`, and any resolved path outside the vault root. System directories (underscore-prefixed like `_wisdom/`, `_profile/`) are additionally blocked from write operations. The same guards apply to chat tools, slash commands, and the retrieval client.
+
+### Web Fetch
+
+- Domain allowlist (`_config/allowlist.md`) gates both `/search-web` results and `/fetch` targets
+- Only `http` and `https` schemes are accepted
+- Redirects are not followed (prevents SSRF via open redirects to internal hosts)
+- Content-Type is validated and response size is capped
+
+### Access Control
+
+- The daemon listens on a Unix socket (filesystem permissions)
+- Discord access is restricted to an explicit user ID allowlist (`PAL_DISCORD_ALLOWED_USERS`)
+- Each Discord user gets an isolated daemon connection
+
+### Git Safety Net
+
+Every vault write is automatically git-committed, so any unwanted change can be reviewed and reverted.
+
 ## Development
 
 ```bash
