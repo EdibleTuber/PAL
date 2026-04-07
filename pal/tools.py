@@ -1,4 +1,4 @@
-"""Vault tools for chat — read-only access to wiki content.
+"""Vault tools for chat — read and write access to wiki content.
 
 Defines tool schemas (OpenAI function-calling format) and a ToolExecutor
 that runs tool calls against the vault.
@@ -6,6 +6,7 @@ that runs tool calls against the vault.
 from pathlib import Path
 
 from pal.retrieval import RetrievalClient
+from pal.wiki import WikiManager
 
 # Maximum characters to return from a file read (~8000 tokens ≈ 32000 chars).
 _READ_LIMIT = 32_000
@@ -79,15 +80,67 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": "Rewrite the body of an existing vault file. Preserves frontmatter (title, tags). Use for restructuring, reformatting, or updating content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to vault root (e.g. 'Research/quantum.md'). Must already exist.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "New body content for the file (markdown, without frontmatter).",
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_file",
+            "description": "Create a new file in the vault with proper frontmatter. Use for writing new notes or articles.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to vault root (e.g. 'Research/new-topic.md'). Must not already exist.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Article title for frontmatter.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Body content for the file (markdown, without frontmatter).",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tags for frontmatter.",
+                    },
+                },
+                "required": ["path", "title", "content"],
+            },
+        },
+    },
 ]
 
 
 class ToolExecutor:
-    """Executes tool calls against the vault. All operations are read-only."""
+    """Executes tool calls against the vault."""
 
-    def __init__(self, vault_path: Path, retrieval: RetrievalClient | None) -> None:
+    def __init__(self, vault_path: Path, retrieval: RetrievalClient | None, wiki: WikiManager | None = None) -> None:
         self.vault_path = vault_path.resolve()
         self.retrieval = retrieval
+        self.wiki = wiki
 
     def run(self, name: str, arguments: dict) -> str:
         """Dispatch a tool call and return the result as a string.
@@ -99,6 +152,8 @@ class ToolExecutor:
             "read_file": self._read_file,
             "list_directory": self._list_directory,
             "search_content": self._search_content,
+            "edit_file": self._edit_file,
+            "create_file": self._create_file,
         }.get(name)
         if handler is not None:
             return handler(arguments)
@@ -118,6 +173,10 @@ class ToolExecutor:
         if not full.is_relative_to(self.vault_path):
             return None
         return full
+
+    def _is_system_path(self, path: str) -> bool:
+        """Check if a path targets a system directory (_-prefixed)."""
+        return any(part.startswith("_") for part in Path(path).parts)
 
     def _read_file(self, arguments: dict) -> str:
         path = arguments.get("path", "")
@@ -183,6 +242,53 @@ class ToolExecutor:
         if not matches:
             return f"No results for: {query}"
         return f"Found {len(matches)} match(es) for '{query}':\n" + "\n".join(matches)
+
+    def _edit_file(self, arguments: dict) -> str:
+        path = arguments.get("path", "")
+        content = arguments.get("content", "")
+        if not path:
+            return "Error: 'path' parameter is required."
+        if not content:
+            return "Error: 'content' parameter is required."
+        if self._is_system_path(path):
+            return f"Error: writing to system directories is not allowed: {path}"
+        resolved = self._resolve_safe(path)
+        if resolved is None:
+            return f"Error: path escapes outside vault: {path}"
+        if not resolved.exists():
+            return f"Error: file does not exist: {path} (use create_file for new files)"
+        if self.wiki is None:
+            return "Error: write operations are not available (no wiki manager)."
+        meta, _ = self.wiki.read_article(path)
+        title = meta.get("title", Path(path).stem)
+        tags = meta.get("tags")
+        self.wiki.write_article(path, title, content, tags=tags)
+        self.wiki.git_commit(f"Edit {path} via chat")
+        return f"Updated: {path}"
+
+    def _create_file(self, arguments: dict) -> str:
+        path = arguments.get("path", "")
+        title = arguments.get("title", "")
+        content = arguments.get("content", "")
+        tags = arguments.get("tags")
+        if not path:
+            return "Error: 'path' parameter is required."
+        if not title:
+            return "Error: 'title' parameter is required."
+        if not content:
+            return "Error: 'content' parameter is required."
+        if self._is_system_path(path):
+            return f"Error: writing to system directories is not allowed: {path}"
+        resolved = self._resolve_safe(path)
+        if resolved is None:
+            return f"Error: path escapes outside vault: {path}"
+        if resolved.exists():
+            return f"Error: file already exists: {path} (use edit_file to modify)"
+        if self.wiki is None:
+            return "Error: write operations are not available (no wiki manager)."
+        self.wiki.write_article(path, title, content, tags=tags)
+        self.wiki.git_commit(f"Create {path} via chat")
+        return f"Created: {path}"
 
     async def _search_vault(self, arguments: dict) -> str:
         query = arguments.get("query", "")

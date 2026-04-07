@@ -1,8 +1,11 @@
 """Tests for vault tool execution."""
+import subprocess
+import os
 import pytest
 from pathlib import Path
 
 from pal.tools import ToolExecutor
+from pal.wiki import WikiManager
 
 
 @pytest.fixture()
@@ -12,7 +15,7 @@ def vault(tmp_path) -> Path:
     research = tmp_path / "Research"
     research.mkdir()
     (research / "quantum.md").write_text(
-        "---\ntitle: Quantum Computing\n---\n\n# Quantum Computing\n\nQubits are neat.\n"
+        "---\ntitle: Quantum Computing\ntags:\n- physics\n---\n\n# Quantum Computing\n\nQubits are neat.\n"
     )
     (research / "ml.md").write_text(
         "---\ntitle: Machine Learning\n---\n\n# Machine Learning\n\nNeural nets.\n"
@@ -27,7 +30,22 @@ def vault(tmp_path) -> Path:
     wisdom = tmp_path / "_wisdom"
     wisdom.mkdir()
     (wisdom / "be-kind.md").write_text("---\ntitle: Be Kind\n---\n\nBe kind.\n")
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Initial vault"],
+        cwd=tmp_path, capture_output=True, check=True,
+        env={**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@test",
+             "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@test"},
+    )
     return tmp_path
+
+
+@pytest.fixture()
+def wiki_executor(vault) -> ToolExecutor:
+    """ToolExecutor with a WikiManager for write tests."""
+    wiki = WikiManager(vault)
+    return ToolExecutor(vault_path=vault, retrieval=None, wiki=wiki)
 
 
 def test_read_file(vault):
@@ -107,3 +125,127 @@ async def test_search_vault_no_retrieval(vault):
     executor = ToolExecutor(vault_path=vault, retrieval=None)
     result = await executor.run_async("search_vault", {"query": "quantum"})
     assert "not available" in result.lower()
+
+
+def test_edit_file(wiki_executor, vault):
+    result = wiki_executor.run("edit_file", {
+        "path": "Research/quantum.md",
+        "content": "# Quantum Computing\n\n## Overview\n\nQubits are the building blocks.\n",
+    })
+    assert "updated" in result.lower()
+    text = (vault / "Research" / "quantum.md").read_text()
+    assert "building blocks" in text
+    assert "title: Quantum Computing" in text
+    assert "physics" in text
+
+
+def test_edit_file_not_found(wiki_executor):
+    result = wiki_executor.run("edit_file", {
+        "path": "Research/nonexistent.md",
+        "content": "new content",
+    })
+    assert "does not exist" in result.lower()
+
+
+def test_edit_file_system_dir(wiki_executor):
+    result = wiki_executor.run("edit_file", {
+        "path": "_wisdom/be-kind.md",
+        "content": "new content",
+    })
+    assert "not allowed" in result.lower()
+
+
+def test_edit_file_path_traversal(wiki_executor):
+    result = wiki_executor.run("edit_file", {
+        "path": "../../etc/passwd",
+        "content": "hacked",
+    })
+    assert "escapes" in result.lower() or "outside vault" in result.lower()
+
+
+def test_edit_file_git_commits(wiki_executor, vault):
+    wiki_executor.run("edit_file", {
+        "path": "Research/quantum.md",
+        "content": "# Quantum\n\nRewritten.\n",
+    })
+    result = subprocess.run(
+        ["git", "log", "--oneline", "-1"],
+        cwd=vault, capture_output=True, text=True,
+    )
+    assert "edit" in result.stdout.lower()
+
+
+def test_create_file(wiki_executor, vault):
+    result = wiki_executor.run("create_file", {
+        "path": "Research/newtons-laws.md",
+        "title": "Newton's Laws",
+        "content": "# Newton's Laws\n\nThree laws of motion.\n",
+        "tags": ["physics"],
+    })
+    assert "created" in result.lower()
+    text = (vault / "Research" / "newtons-laws.md").read_text()
+    assert "Newton's Laws" in text
+    assert "Three laws" in text
+    assert "physics" in text
+
+
+def test_create_file_already_exists(wiki_executor):
+    result = wiki_executor.run("create_file", {
+        "path": "Research/quantum.md",
+        "title": "Quantum",
+        "content": "duplicate",
+    })
+    assert "already exists" in result.lower()
+
+
+def test_create_file_system_dir(wiki_executor):
+    result = wiki_executor.run("create_file", {
+        "path": "_wisdom/new-wisdom.md",
+        "title": "New Wisdom",
+        "content": "some wisdom",
+    })
+    assert "not allowed" in result.lower()
+
+
+def test_create_file_creates_parent_dirs(wiki_executor, vault):
+    result = wiki_executor.run("create_file", {
+        "path": "NewTopic/subtopic/article.md",
+        "title": "Deep Article",
+        "content": "# Deep Article\n\nNested content.\n",
+    })
+    assert "created" in result.lower()
+    assert (vault / "NewTopic" / "subtopic" / "article.md").exists()
+
+
+def test_create_file_git_commits(wiki_executor, vault):
+    wiki_executor.run("create_file", {
+        "path": "Research/new-article.md",
+        "title": "New Article",
+        "content": "# New\n\nContent.\n",
+    })
+    result = subprocess.run(
+        ["git", "log", "--oneline", "-1"],
+        cwd=vault, capture_output=True, text=True,
+    )
+    assert "create" in result.stdout.lower()
+
+
+def test_edit_file_no_wiki(vault):
+    executor = ToolExecutor(vault_path=vault, retrieval=None)
+    result = executor.run("edit_file", {"path": "Research/quantum.md", "content": "x"})
+    assert "not available" in result.lower()
+
+
+def test_create_file_no_wiki(vault):
+    executor = ToolExecutor(vault_path=vault, retrieval=None)
+    result = executor.run("create_file", {"path": "Research/new.md", "title": "T", "content": "x"})
+    assert "not available" in result.lower()
+
+
+def test_create_file_path_traversal(wiki_executor):
+    result = wiki_executor.run("create_file", {
+        "path": "../../etc/evil.md",
+        "title": "Evil",
+        "content": "hacked",
+    })
+    assert "escapes" in result.lower() or "outside vault" in result.lower()
