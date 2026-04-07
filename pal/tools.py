@@ -1,4 +1,4 @@
-"""Vault tools for chat — read-only access to wiki content.
+"""Vault tools for chat — read and write access to wiki content.
 
 Defines tool schemas (OpenAI function-calling format) and a ToolExecutor
 that runs tool calls against the vault.
@@ -6,6 +6,7 @@ that runs tool calls against the vault.
 from pathlib import Path
 
 from pal.retrieval import RetrievalClient
+from pal.wiki import WikiManager
 
 # Maximum characters to return from a file read (~8000 tokens ≈ 32000 chars).
 _READ_LIMIT = 32_000
@@ -83,11 +84,12 @@ TOOL_DEFINITIONS = [
 
 
 class ToolExecutor:
-    """Executes tool calls against the vault. All operations are read-only."""
+    """Executes tool calls against the vault."""
 
-    def __init__(self, vault_path: Path, retrieval: RetrievalClient | None) -> None:
+    def __init__(self, vault_path: Path, retrieval: RetrievalClient | None, wiki: WikiManager | None = None) -> None:
         self.vault_path = vault_path.resolve()
         self.retrieval = retrieval
+        self.wiki = wiki
 
     def run(self, name: str, arguments: dict) -> str:
         """Dispatch a tool call and return the result as a string.

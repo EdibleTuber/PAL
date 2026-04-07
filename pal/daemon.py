@@ -62,6 +62,7 @@ class Daemon:
         self.tool_executor = ToolExecutor(
             vault_path=config.vault_path,
             retrieval=self.retrieval,
+            wiki=self.wiki,
         )
         self.learning = LearningManager(config.vault_path)
         self.allowlist = AllowlistManager(config.vault_path)
