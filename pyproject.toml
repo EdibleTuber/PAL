@@ -13,11 +13,13 @@ dependencies = [
     "rich>=13.0.0",
     "pyyaml>=6.0",
     "trafilatura>=1.12.0",
+    "discord.py>=2.0",
 ]
 
 [project.scripts]
 pal = "pal.cli:main"
 pal-daemon = "pal.daemon_main:main"
+pal-discord = "pal.discord_main:main"
 
 [project.optional-dependencies]
 dev = [

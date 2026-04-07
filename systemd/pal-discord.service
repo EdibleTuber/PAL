@@ -1,0 +1,15 @@
+[Unit]
+Description=PAL Discord Adapter
+After=network.target pal-daemon.service
+Requires=pal-daemon.service
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/secondary/PAL
+ExecStart=/mnt/secondary/PAL/.venv/bin/python -m pal.discord_main
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/etc/pal/discord.env
+
+[Install]
+WantedBy=default.target
