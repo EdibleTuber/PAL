@@ -27,12 +27,14 @@ Every write is git-committed automatically, so you can always review or revert c
 ```
 CLI (pal)  ----unix socket---->  Daemon (pal-daemon)  ----HTTP---->  Inference Server
                                       |                              (Ollama-compatible)
+Discord (pal-discord)  --unix socket--+
                                       |
                                       v
                                   ~/vault (Obsidian wiki, git-tracked)
 ```
 
 - **CLI**: thin REPL client with streaming markdown rendering
+- **Discord**: bot that bridges Discord DMs and mentions to the daemon for mobile access
 - **Daemon**: always-on process that manages conversations, tools, and the vault
 - **Inference Server**: local LLM (Qwen 3.5 35B by default) via OpenAI-compatible API
 
@@ -66,6 +68,8 @@ All settings use environment variables with a `PAL_` prefix:
 | `PAL_SEARXNG_URL` | `http://192.168.1.14:8080` | SearxNG instance for web search |
 | `PAL_FETCH_MAX_BYTES` | `2000000` | Max bytes when fetching URLs |
 | `PAL_FETCH_TIMEOUT` | `30` | Fetch timeout in seconds |
+| `PAL_DISCORD_TOKEN` | - | Discord bot token (required for Discord) |
+| `PAL_DISCORD_ALLOWED_USERS` | - | Comma-separated Discord user IDs |
 
 ### Run
 
@@ -77,7 +81,22 @@ pal-daemon
 pal
 ```
 
-A systemd service file is included at `systemd/pal-daemon.service` for running the daemon as a background service.
+Systemd service files are included in `systemd/` for running as background services.
+
+### Discord
+
+PAL can also be accessed through Discord for mobile use. The Discord bot connects to the same daemon over a Unix socket.
+
+```bash
+# Start the Discord bot (requires PAL_DISCORD_TOKEN)
+python -m pal.discord_main
+```
+
+- Responds to DMs and @mentions in channels
+- Supports slash commands via `!command` syntax (e.g. `!note`, `!search`)
+- Shows tool progress as the daemon works
+- Access is restricted to user IDs listed in `PAL_DISCORD_ALLOWED_USERS`
+- A systemd service (`pal-discord.service`) is included, configured to start after the daemon
 
 ## Usage
 
