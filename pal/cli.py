@@ -11,6 +11,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.text import Text
 
 from pal.client import PalClient
 from pal.config import load_config
@@ -94,7 +95,7 @@ async def run_repl() -> None:
                             live.stop()
                             live = None
                         label = _tool_progress_label(msg.tool, msg.arguments)
-                        console.print(f"  [dim]{label}[/dim]")
+                        console.print(Text(f"  {label}", style="dim"))
                     elif isinstance(msg, StreamChunkMessage):
                         if live is None:
                             live = Live(Markdown(""), console=console, refresh_per_second=10)
