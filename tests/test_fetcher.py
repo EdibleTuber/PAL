@@ -4,6 +4,13 @@ import pytest
 from pal.fetcher import URLFetcher, FetchResult, FetchError
 
 
+def test_fetcher_has_user_agent():
+    """URLFetcher should configure a User-Agent header."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    assert fetcher.headers.get("User-Agent")
+    assert "PAL" in fetcher.headers["User-Agent"]
+
+
 @pytest.mark.asyncio
 async def test_fetch_extracts_main_content(mock_inference_server):
     fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
