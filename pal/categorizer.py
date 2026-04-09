@@ -18,7 +18,8 @@ CATEGORIZATION_SYSTEM_PROMPT = (
     "ONLY the directory path (e.g., \"Research\" or \"Projects/tools\"). "
     "If no existing directory fits, suggest a short, descriptive new one. "
     "Never use underscore-prefixed directories (those are system directories). "
-    "Never use the raw/ directory. Respond with nothing but the directory path."
+    "Never use the raw/ directory. Use hyphens instead of spaces in directory names. "
+    "Respond with nothing but the directory path."
 )
 
 PREVIEW_WORD_LIMIT = 200
