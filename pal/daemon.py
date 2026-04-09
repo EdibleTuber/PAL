@@ -458,7 +458,7 @@ class Daemon:
             await writer.drain()
             return
 
-        slug = topic.lower().replace(" ", "-")
+        slug = topic.lower().replace("_", "-").replace(" ", "-")
         slug = "".join(c for c in slug if c.isalnum() or c == "-")
         slug = slug.strip("-")
         if not slug:
@@ -925,7 +925,7 @@ class Daemon:
         # Derive slug from summary title
         from datetime import datetime, timezone
         title = summary_meta.get("title", full_path.stem)
-        slug = title.lower().replace(" ", "-")
+        slug = title.lower().replace("_", "-").replace(" ", "-")
         slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-") or "untitled"
 
         # Auto-categorize
@@ -1127,7 +1127,7 @@ class Daemon:
         writer.write(encode_message(progress))
         await writer.drain()
 
-        slug = title.lower().replace(" ", "-")
+        slug = title.lower().replace("_", "-").replace(" ", "-")
         slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-") or "untitled"
 
         category = await self.categorizer.categorize(

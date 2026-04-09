@@ -158,3 +158,37 @@ async def test_import_path_traversal(import_daemon, socket_path):
     with pytest.raises(RuntimeError, match="Invalid"):
         await client.command("import", "raw/../../etc/passwd")
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_import_converts_underscores_to_hyphens_in_slug(import_daemon, socket_path, monkeypatch):
+    """Filenames with underscores should produce hyphenated slugs."""
+    daemon, vault = import_daemon
+
+    call_count = 0
+
+    async def fake_complete(messages, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return CompletionResult(type="text", content="Summary of design patterns.")
+        elif call_count == 2:
+            return CompletionResult(type="text", content="# Agentic Design Patterns\n\nContent about patterns...")
+        else:
+            return CompletionResult(type="text", content="Research")
+
+    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
+
+    rel_path = _place_csv_in_raw(
+        vault, "Agentic_Design_Patterns.csv",
+        "Pattern,Description\nReAct,Reasoning and Acting\n"
+    )
+
+    client = PalClient(socket_path)
+    await client.connect()
+    resp = await client.command("import", rel_path)
+    await client.close()
+
+    articles = list((vault / "Research").glob("*.md"))
+    assert len(articles) == 1
+    assert "agentic-design-patterns" in articles[0].name
