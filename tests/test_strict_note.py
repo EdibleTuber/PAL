@@ -55,8 +55,16 @@ async def test_note_saves_when_model_responds_normally(strict_daemon, socket_pat
     """If the model returns actual content, /note saves normally."""
     daemon, vault = strict_daemon
 
+    call_count = 0
+
     async def fake_complete(messages, **kwargs):
-        return CompletionResult(type="text", content="# Known Topic\n\nThis is confident content about a known topic.")
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return CompletionResult(type="text", content="# Known Topic\n\nThis is confident content about a known topic.")
+        else:
+            return CompletionResult(type="text", content="Research")
+
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     client = PalClient(socket_path)
@@ -64,6 +72,32 @@ async def test_note_saves_when_model_responds_normally(strict_daemon, socket_pat
 
     resp = await client.command("note", "known topic")
     assert "Created article:" in resp.text
-    assert (vault / "known-topic.md").exists()
+    assert "Research/" in resp.text
+    assert (vault / "Research" / "known-topic.md").exists()
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_note_uses_auto_categorization(strict_daemon, socket_path, monkeypatch):
+    daemon, vault = strict_daemon
+
+    call_count = 0
+
+    async def fake_complete(messages, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return CompletionResult(type="text", content="# Quantum Computing\n\nQuantum computers use qubits.")
+        else:
+            return CompletionResult(type="text", content="Science")
+
+    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
+
+    client = PalClient(socket_path)
+    await client.connect()
+    resp = await client.command("note", "quantum computing")
+    assert "Science/" in resp.text
+    await client.close()
+
+    assert (vault / "Science").exists()

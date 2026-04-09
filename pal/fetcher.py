@@ -42,6 +42,7 @@ class URLFetcher:
     def __init__(self, max_bytes: int, timeout: int) -> None:
         self.max_bytes = max_bytes
         self.timeout = timeout
+        self.headers = {"User-Agent": "PAL/1.0 (+personal knowledge base)"}
 
     async def fetch(self, url: str) -> FetchResult:
         """Fetch a URL and return extracted main content.
@@ -51,7 +52,11 @@ class URLFetcher:
         different host (SSRF risk). If the server returns a redirect, fetch
         fails and the caller can explicitly fetch the redirect target.
         """
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=self.timeout,
+            follow_redirects=False,
+            headers=self.headers,
+        ) as client:
             async with client.stream("GET", url) as resp:
                 if resp.status_code in (301, 302, 303, 307, 308):
                     location = resp.headers.get("location", "")
