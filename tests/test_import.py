@@ -192,3 +192,122 @@ async def test_import_converts_underscores_to_hyphens_in_slug(import_daemon, soc
     articles = list((vault / "Research").glob("*.md"))
     assert len(articles) == 1
     assert "agentic-design-patterns" in articles[0].name
+
+
+@pytest.mark.asyncio
+async def test_import_splits_multi_heading_document(import_daemon, socket_path, monkeypatch):
+    """A document with multiple H1 headings should produce multiple articles."""
+    daemon, vault = import_daemon
+
+    call_count = 0
+
+    async def fake_complete(messages, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        # Each chunk goes through summarize + compile + categorize = 3 calls per chunk
+        # 2 chunks = 6 calls total
+        phase = (call_count - 1) % 3
+        chunk_num = (call_count - 1) // 3 + 1
+        if phase == 0:
+            return CompletionResult(type="text", content=f"Summary of chapter {chunk_num}.")
+        elif phase == 1:
+            return CompletionResult(type="text", content=f"# Chapter {chunk_num}\n\nArticle content for chapter {chunk_num}.")
+        else:
+            return CompletionResult(type="text", content="Research")
+
+    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
+
+    # Create a markdown file with two H1 headings
+    raw_dir = vault / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    md_file = raw_dir / "multi-chapter.html"
+    md_file.write_text(
+        "<html><body>"
+        "<h1>Chapter One</h1><p>First chapter content with enough text to extract.</p>"
+        "<h1>Chapter Two</h1><p>Second chapter content with enough text to extract.</p>"
+        "</body></html>"
+    )
+
+    client = PalClient(socket_path)
+    await client.connect()
+    resp = await client.command("import", "raw/multi-chapter.html")
+    await client.close()
+
+    # Should have created 2 articles
+    articles = list((vault / "Research").glob("*.md"))
+    assert len(articles) == 2
+    assert "2 articles" in resp.text or "chapter" in resp.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_import_single_chunk_still_works(import_daemon, socket_path, monkeypatch):
+    """A document with no headings still produces a single article."""
+    daemon, vault = import_daemon
+
+    call_count = 0
+
+    async def fake_complete(messages, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return CompletionResult(type="text", content="Summary of data.")
+        elif call_count == 2:
+            return CompletionResult(type="text", content="# Report\n\nContent.")
+        else:
+            return CompletionResult(type="text", content="Research")
+
+    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
+
+    rel_path = _place_csv_in_raw(vault, "simple.csv", "A,B\n1,2\n3,4\n")
+
+    client = PalClient(socket_path)
+    await client.connect()
+    resp = await client.command("import", rel_path)
+    await client.close()
+
+    articles = list((vault / "Research").glob("*.md"))
+    assert len(articles) == 1
+
+
+@pytest.mark.asyncio
+async def test_import_skips_failed_chunks(import_daemon, socket_path, monkeypatch):
+    """If one chunk fails, the others should still be processed."""
+    daemon, vault = import_daemon
+
+    call_count = 0
+
+    async def fake_complete(messages, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        phase = (call_count - 1) % 3
+        chunk_num = (call_count - 1) // 3 + 1
+        if chunk_num == 1 and phase == 0:
+            raise RuntimeError("LLM error on chunk 1")
+        if phase == 0:
+            return CompletionResult(type="text", content=f"Summary of chunk {chunk_num}.")
+        elif phase == 1:
+            return CompletionResult(type="text", content=f"# Chunk {chunk_num}\n\nContent.")
+        else:
+            return CompletionResult(type="text", content="Research")
+
+    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
+
+    raw_dir = vault / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    md_file = raw_dir / "two-chapters.html"
+    md_file.write_text(
+        "<html><body>"
+        "<h1>Chapter One</h1><p>First chapter content here.</p>"
+        "<h1>Chapter Two</h1><p>Second chapter content here.</p>"
+        "</body></html>"
+    )
+
+    client = PalClient(socket_path)
+    await client.connect()
+    resp = await client.command("import", "raw/two-chapters.html")
+    await client.close()
+
+    # Only 1 article (chunk 2), chunk 1 failed
+    articles = list((vault / "Research").glob("*.md"))
+    assert len(articles) == 1
+    assert "skipped" in resp.text.lower() or "failed" in resp.text.lower()
