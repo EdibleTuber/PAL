@@ -458,7 +458,14 @@ class Daemon:
         slug = slug.strip("-")
         if not slug:
             slug = "untitled"
-        path = f"{slug}.md"
+
+        # Auto-categorize
+        category = await self.categorizer.categorize(
+            title=topic,
+            body=body,
+            vault_path=self.config.vault_path,
+        )
+        path = f"{category}/{slug}.md"
 
         self.wiki.write_article(path=path, title=topic, body=body + "\n")
         self.wiki.rebuild_index()

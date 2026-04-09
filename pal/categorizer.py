@@ -44,9 +44,19 @@ def parse_category_response(response: str) -> str:
 
     Returns the directory path, or FALLBACK_DIRECTORY if invalid.
     """
-    category = response.strip().strip("/")
+    # Only consider the first line -- a valid directory has no newlines
+    first_line = response.strip().splitlines()[0] if response.strip() else ""
+    category = first_line.strip().strip("/")
 
     if not category:
+        return FALLBACK_DIRECTORY
+
+    # Reject anything suspiciously long (directory names should be short)
+    if len(category) > 64:
+        return FALLBACK_DIRECTORY
+
+    # Reject paths containing spaces (not a valid directory path)
+    if " " in category:
         return FALLBACK_DIRECTORY
 
     if category.startswith("_"):
