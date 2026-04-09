@@ -48,17 +48,9 @@ def _place_csv_in_raw(vault: Path, name: str, content: str) -> str:
 async def test_import_csv_creates_article(import_daemon, socket_path, monkeypatch):
     daemon, vault = import_daemon
 
-    call_count = 0
-
     async def fake_complete(messages, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            # Cleanup
-            return CompletionResult(type="text", content="# Employee Directory\n\nThe team consists of three members...")
-        else:
-            # Categorization
-            return CompletionResult(type="text", content="Research")
+        # Only call: categorization
+        return CompletionResult(type="text", content="Research")
 
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
@@ -75,21 +67,17 @@ async def test_import_csv_creates_article(import_daemon, socket_path, monkeypatc
 
     articles = list((vault / "Research").glob("*.md"))
     assert len(articles) == 1
+    # Content should be the raw MarkItDown output
+    content = articles[0].read_text()
+    assert "Alice" in content
 
 
 @pytest.mark.asyncio
 async def test_import_archives_source(import_daemon, socket_path, monkeypatch):
     daemon, vault = import_daemon
 
-    call_count = 0
-
     async def fake_complete(messages, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return CompletionResult(type="text", content="# Data Report\n\nContent.")
-        else:
-            return CompletionResult(type="text", content="Research")
+        return CompletionResult(type="text", content="Research")
 
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
@@ -159,17 +147,8 @@ async def test_import_converts_underscores_to_hyphens_in_slug(import_daemon, soc
     """Filenames with underscores should produce hyphenated slugs."""
     daemon, vault = import_daemon
 
-    call_count = 0
-
     async def fake_complete(messages, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            # Cleanup
-            return CompletionResult(type="text", content="# Agentic Design Patterns\n\nContent about patterns...")
-        else:
-            # Categorization
-            return CompletionResult(type="text", content="Research")
+        return CompletionResult(type="text", content="Research")
 
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
@@ -193,25 +172,13 @@ async def test_import_splits_multi_heading_document(import_daemon, socket_path, 
     """A document with multiple H1 headings should produce multiple articles."""
     daemon, vault = import_daemon
 
-    call_count = 0
-
     async def fake_complete(messages, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        # Each chunk goes through cleanup + categorize = 2 calls per chunk
-        # 2 chunks = 4 calls total
-        phase = (call_count - 1) % 2
-        chunk_num = (call_count - 1) // 2 + 1
-        if phase == 0:
-            # Cleanup
-            return CompletionResult(type="text", content=f"# Chapter {chunk_num}\n\nArticle content for chapter {chunk_num}.")
-        else:
-            # Categorization
-            return CompletionResult(type="text", content="Research")
+        # Single categorization call for the whole document
+        return CompletionResult(type="text", content="Research")
 
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
-    # Create a markdown file with two H1 headings
+    # Create an HTML file with two H1 headings
     raw_dir = vault / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
     md_file = raw_dir / "multi-chapter.html"
@@ -230,7 +197,7 @@ async def test_import_splits_multi_heading_document(import_daemon, socket_path, 
     # Should have created 2 articles
     articles = list((vault / "Research").glob("*.md"))
     assert len(articles) == 2
-    assert "2 articles" in resp.text or "chapter" in resp.text.lower()
+    assert "2 articles" in resp.text
 
 
 @pytest.mark.asyncio
@@ -238,17 +205,8 @@ async def test_import_single_chunk_still_works(import_daemon, socket_path, monke
     """A document with no headings still produces a single article."""
     daemon, vault = import_daemon
 
-    call_count = 0
-
     async def fake_complete(messages, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            # Cleanup
-            return CompletionResult(type="text", content="# Report\n\nContent.")
-        else:
-            # Categorization
-            return CompletionResult(type="text", content="Research")
+        return CompletionResult(type="text", content="Research")
 
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
@@ -261,45 +219,3 @@ async def test_import_single_chunk_still_works(import_daemon, socket_path, monke
 
     articles = list((vault / "Research").glob("*.md"))
     assert len(articles) == 1
-
-
-@pytest.mark.asyncio
-async def test_import_uses_raw_content_on_cleanup_failure(import_daemon, socket_path, monkeypatch):
-    """If cleanup fails for a chunk, the raw content is used instead."""
-    daemon, vault = import_daemon
-
-    call_count = 0
-
-    async def fake_complete(messages, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        # 2 chunks, each with cleanup + categorize = 4 calls
-        phase = (call_count - 1) % 2
-        chunk_num = (call_count - 1) // 2 + 1
-        if chunk_num == 1 and phase == 0:
-            raise RuntimeError("LLM error on chunk 1 cleanup")
-        if phase == 0:
-            return CompletionResult(type="text", content=f"# Chunk {chunk_num}\n\nCleaned content.")
-        else:
-            return CompletionResult(type="text", content="Research")
-
-    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
-
-    raw_dir = vault / "raw"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    md_file = raw_dir / "two-chapters.html"
-    md_file.write_text(
-        "<html><body>"
-        "<h1>Chapter One</h1><p>First chapter content here.</p>"
-        "<h1>Chapter Two</h1><p>Second chapter content here.</p>"
-        "</body></html>"
-    )
-
-    client = PalClient(socket_path)
-    await client.connect()
-    resp = await client.command("import", "raw/two-chapters.html")
-    await client.close()
-
-    # Both chunks should produce articles (chunk 1 uses raw content)
-    articles = list((vault / "Research").glob("*.md"))
-    assert len(articles) == 2
