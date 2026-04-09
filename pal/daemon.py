@@ -205,7 +205,7 @@ class Daemon:
 
         conv.add_user(msg.text)
         messages = conv.get_messages_for_api(system_prompt=self.prompt_builder.build())
-        max_tool_rounds = 10
+        max_tool_rounds = 50
 
         try:
             full_response = []
