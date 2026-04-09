@@ -1057,7 +1057,7 @@ class Daemon:
             chunk_label = f"{idx}/{total}: {chunk.title}" if total > 1 else chunk.title
 
             # Step 3: Sanitize + boundary-wrap
-            progress = ToolProgressMessage(tool="import", arguments={"status": f"Processing {chunk_label} - sanitizing..."})
+            progress = ToolProgressMessage(tool="import", arguments={"status": f"Processing {chunk_label} - sanitizing...", "current": idx, "total": total, "step": "sanitize", "title": chunk.title})
             writer.write(encode_message(progress))
             await writer.drain()
 
@@ -1066,7 +1066,7 @@ class Daemon:
             wrapped = wrap_untrusted(sanitization.text, guid)
 
             # Step 4: Summarize
-            progress = ToolProgressMessage(tool="import", arguments={"status": f"Processing {chunk_label} - summarizing..."})
+            progress = ToolProgressMessage(tool="import", arguments={"status": f"Processing {chunk_label} - summarizing...", "current": idx, "total": total, "step": "summarize", "title": chunk.title})
             writer.write(encode_message(progress))
             await writer.drain()
 
@@ -1089,7 +1089,7 @@ class Daemon:
                 continue
 
             # Step 5: Compile
-            progress = ToolProgressMessage(tool="import", arguments={"status": f"Processing {chunk_label} - compiling..."})
+            progress = ToolProgressMessage(tool="import", arguments={"status": f"Processing {chunk_label} - compiling...", "current": idx, "total": total, "step": "compile", "title": chunk.title})
             writer.write(encode_message(progress))
             await writer.drain()
 
@@ -1131,7 +1131,7 @@ class Daemon:
                 continue
 
             # Step 6: Categorize
-            progress = ToolProgressMessage(tool="import", arguments={"status": f"Processing {chunk_label} - categorizing..."})
+            progress = ToolProgressMessage(tool="import", arguments={"status": f"Processing {chunk_label} - categorizing...", "current": idx, "total": total, "step": "categorize", "title": chunk.title})
             writer.write(encode_message(progress))
             await writer.drain()
 

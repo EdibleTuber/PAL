@@ -11,11 +11,12 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
 from rich.text import Text
 
 from pal.client import PalClient
 from pal.config import load_config
-from pal.protocol import StreamChunkMessage, ResponseMessage, ErrorMessage, ToolProgressMessage
+from pal.protocol import StreamChunkMessage, ResponseMessage, ErrorMessage, ToolProgressMessage, Message
 
 
 def _tool_progress_label(tool: str, arguments: dict) -> str:
@@ -36,6 +37,61 @@ def _tool_progress_label(tool: str, arguments: dict) -> str:
     return f"[{tool}...]"
 
 
+async def _run_command(
+    client: PalClient,
+    name: str,
+    args: str,
+    console: Console,
+) -> ResponseMessage:
+    """Run a command with progress display."""
+    progress_bar = None
+    task_id = None
+    last_status = ""
+
+    async for msg in client.command_stream(name, args):
+        if isinstance(msg, ToolProgressMessage):
+            current = msg.arguments.get("current")
+            total = msg.arguments.get("total")
+            status = msg.arguments.get("status", "")
+            title = msg.arguments.get("title", "")
+            step = msg.arguments.get("step", "")
+
+            if current and total and int(total) > 1:
+                # Multi-chunk: show progress bar
+                if progress_bar is None:
+                    progress_bar = Progress(
+                        SpinnerColumn(),
+                        TextColumn("[dim]{task.fields[step]}[/dim]"),
+                        BarColumn(),
+                        MofNCompleteColumn(),
+                        TextColumn("[dim]{task.fields[title]}[/dim]"),
+                        console=console,
+                    )
+                    progress_bar.start()
+                    task_id = progress_bar.add_task("import", total=int(total), step=step, title=title)
+                progress_bar.update(task_id, completed=int(current) - 1, step=step, title=title)
+            else:
+                # Single chunk or no structured progress: dim text
+                if status and status != last_status:
+                    console.print(Text(f"  {status}", style="dim"))
+                    last_status = status
+
+        elif isinstance(msg, ResponseMessage):
+            if progress_bar is not None:
+                progress_bar.update(task_id, completed=progress_bar.tasks[task_id].total)
+                progress_bar.stop()
+            return msg
+
+        elif isinstance(msg, ErrorMessage):
+            if progress_bar is not None:
+                progress_bar.stop()
+            raise RuntimeError(msg.error)
+
+    if progress_bar is not None:
+        progress_bar.stop()
+    raise ConnectionError("Connection closed")
+
+
 async def run_repl() -> None:
     """Main REPL loop."""
     config = load_config()
@@ -53,7 +109,7 @@ async def run_repl() -> None:
         sys.exit(1)
 
     console.print("[dim]PAL — Personal Agentic Librarian[/dim]")
-    console.print("[dim]Commands: /note /read /search /get /search-web /fetch /summarize /compile[/dim]")
+    console.print("[dim]Commands: /note /read /search /get /search-web /fetch /import /summarize /compile[/dim]")
     console.print("[dim]          /learn /learnings /promote /rate /profile /wisdom /lint /status /quit[/dim]\n")
 
     try:
@@ -78,7 +134,7 @@ async def run_repl() -> None:
                     break
 
                 try:
-                    resp = await client.command(cmd_name, cmd_args)
+                    resp = await _run_command(client, cmd_name, cmd_args, console)
                     console.print(f"\n{resp.text}\n")
                 except RuntimeError as exc:
                     console.print(f"\n[red]{exc}[/red]\n")
