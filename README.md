@@ -114,6 +114,7 @@ Type naturally. PAL streams responses with live markdown rendering. During conve
 | `/get <title>` | Fetch article by exact title |
 | `/search-web <query>` | Web search via SearxNG |
 | `/fetch <url>` | Fetch a URL into raw/ for processing |
+| `/import <path>` | Import a local document (PDF, DOCX, etc.) |
 | `/summarize <path>` | Summarize fetched content |
 | `/compile <path>` | Compile a summary into a wiki article |
 | `/learn` | Extract learnings from the conversation |
@@ -179,6 +180,16 @@ PAL can research topics from the web with a controlled pipeline:
 2. `/fetch <url>` downloads content into `raw/web/` with prompt injection defenses (GUID-boundary wrapping, content sanitization).
 3. `/summarize <path>` produces a cleaned summary in `raw/summaries/`.
 4. `/compile <path>` turns the summary into a grounded wiki article.
+
+## Document Import
+
+PAL can import local documents into the vault:
+
+1. Place a file (PDF, DOCX, XLSX, PPTX, HTML, EPUB, CSV) in `raw/` in your vault.
+2. `/import raw/filename.pdf` converts, summarizes, compiles, and auto-categorizes the article.
+3. The source file is archived to `raw/archived/` and cleaned up after 30 days.
+
+Articles are automatically placed in the best-fitting vault directory based on their content.
 
 ## Security
 
