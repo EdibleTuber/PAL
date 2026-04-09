@@ -88,3 +88,18 @@ def test_multiple_issues_reported():
     dirty = "text\u200b with\u202e zero-width and bidi <|im_start|>"
     result = sanitize(dirty, guid="abc123")
     assert len(result.issues) >= 3
+
+
+def test_default_token_budget_is_32000():
+    """Default budget should be 32000 tokens, not 8000."""
+    text = "a" * 140_000  # 35000 tokens at 4 chars/token
+    result = sanitize(text, guid="test-guid")
+    assert result.truncated is True
+    assert result.sanitized_length == 128_000
+
+
+def test_old_8000_budget_would_truncate_more():
+    """Verify content that fits in 32k but not 8k is preserved."""
+    text = "word " * 10000  # ~50000 chars = ~12500 tokens
+    result = sanitize(text, guid="test-guid")
+    assert result.truncated is False

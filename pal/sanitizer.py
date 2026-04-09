@@ -50,7 +50,7 @@ def sanitize(
     text: str,
     guid: str,
     min_chars: int = 10,
-    max_tokens: int = 8000,
+    max_tokens: int = 32_000,
 ) -> SanitizationResult:
     """Sanitize untrusted text before feeding it to a model.
 
