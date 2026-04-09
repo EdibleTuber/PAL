@@ -1044,79 +1044,45 @@ class Daemon:
             await writer.drain()
             return
 
-        total = len(chunks)
-        saved_articles: list[str] = []
-        skipped_chunks: list[str] = []
+        # Step 3: Categorize (one LLM call for the whole document)
+        progress = ToolProgressMessage(tool="import", arguments={"status": "Categorizing..."})
+        writer.write(encode_message(progress))
+        await writer.drain()
 
+        # Use the first chunk's content for categorization
+        category = await self.categorizer.categorize(
+            title=convert_result.title,
+            body=chunks[0].body,
+            vault_path=self.config.vault_path,
+        )
+
+        # Step 4: Save all chunks directly
         from datetime import datetime, timezone
         from pal.frontmatter import serialize_frontmatter
 
-        for idx, chunk in enumerate(chunks, 1):
-            chunk_label = f"{idx}/{total}: {chunk.title}" if total > 1 else chunk.title
+        target_dir = self.config.vault_path / category
+        target_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-            # Step 3: Clean up formatting
-            progress = ToolProgressMessage(tool="import", arguments={"status": f"Processing {chunk_label} - cleaning up...", "current": idx, "total": total, "step": "cleanup", "title": chunk.title})
-            writer.write(encode_message(progress))
-            await writer.drain()
-
-            cleanup_messages = [
-                {"role": "system", "content": (
-                    "You are cleaning up markdown converted from a document. "
-                    "Fix formatting issues, broken tables, and conversion artifacts. "
-                    "Ensure proper heading hierarchy, clean up whitespace, and make the content readable. "
-                    "Preserve ALL original content and meaning. Do NOT summarize, rewrite, or add information. "
-                    "Output only the cleaned markdown, nothing else."
-                )},
-                {"role": "user", "content": chunk.body},
-            ]
-
-            try:
-                result = await self.inference.complete(cleanup_messages)
-                article = result.content or chunk.body
-            except Exception as exc:
-                logger.warning("Cleanup failed for chunk '%s', using raw content: %s", chunk.title, exc)
-                article = chunk.body
-
-            # Step 6: Categorize
-            progress = ToolProgressMessage(tool="import", arguments={"status": f"Processing {chunk_label} - categorizing...", "current": idx, "total": total, "step": "categorize", "title": chunk.title})
-            writer.write(encode_message(progress))
-            await writer.drain()
-
+        saved_articles: list[str] = []
+        for chunk in chunks:
             slug = chunk.title.lower().replace("_", "-").replace(" ", "-")
             slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-") or "untitled"
 
-            category = await self.categorizer.categorize(
-                title=chunk.title,
-                body=article,
-                vault_path=self.config.vault_path,
-            )
-
-            # Step 7: Save article
-            target_dir = self.config.vault_path / category
-            target_dir.mkdir(parents=True, exist_ok=True)
             article_path_rel = f"{category}/{slug}.md"
             article_full_path = target_dir / f"{slug}.md"
 
-            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
             article_meta = {
                 "title": chunk.title,
                 "created": now,
                 "updated": now,
-                "compiled_at": now,
                 "source_file": file_path,
-                "status": "compiled",
+                "status": "imported",
             }
 
-            article_full_path.write_text(serialize_frontmatter(article_meta, article.strip() + "\n"))
+            article_full_path.write_text(serialize_frontmatter(article_meta, chunk.body.strip() + "\n"))
             saved_articles.append(article_path_rel)
             logger.info("Imported chunk '%s' -> %s", chunk.title, article_path_rel)
-
-        # After all chunks processed
-        if not saved_articles:
-            error = ErrorMessage(error="All chunks failed or were insufficient. No articles saved.")
-            writer.write(encode_message(error))
-            await writer.drain()
-            return
 
         # Rebuild index and commit
         self.wiki.rebuild_index()
@@ -1129,14 +1095,10 @@ class Daemon:
 
         # Build response
         article_list = "\n".join(f"- {a}" for a in saved_articles)
-        skip_text = ""
-        if skipped_chunks:
-            skip_text = "\n\nSkipped/failed:\n" + "\n".join(f"- {s}" for s in skipped_chunks)
 
         resp = ResponseMessage(
             text=(
                 f"Imported {len(saved_articles)} articles from {full_path.name}:\n{article_list}"
-                f"{skip_text}"
             ),
             command="import",
         )
