@@ -22,6 +22,7 @@ from pal.prompt_builder import SystemPromptBuilder
 from pal.allowlist import AllowlistManager
 from pal.websearch import WebSearchClient
 from pal.fetcher import URLFetcher, FetchError
+from pal.categorizer import Categorizer
 from pal.sanitizer import sanitize
 from pal.boundary import generate_guid, wrap_untrusted, SANITIZATION_SYSTEM_PROMPT
 from pal.protocol import (
@@ -117,6 +118,7 @@ class Daemon:
             max_bytes=config.fetch_max_bytes,
             timeout=config.fetch_timeout,
         )
+        self.categorizer = Categorizer(self.inference)
         cleanup_archived(config.vault_path)
 
     async def serve(self) -> None:
@@ -914,10 +916,16 @@ class Daemon:
         slug = title.lower().replace(" ", "-")
         slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-") or "untitled"
 
-        research_dir = self.config.vault_path / "Research"
-        research_dir.mkdir(parents=True, exist_ok=True)
-        article_path_rel = f"Research/{slug}.md"
-        article_full_path = research_dir / f"{slug}.md"
+        # Auto-categorize
+        category = await self.categorizer.categorize(
+            title=title,
+            body=article,
+            vault_path=self.config.vault_path,
+        )
+        target_dir = self.config.vault_path / category
+        target_dir.mkdir(parents=True, exist_ok=True)
+        article_path_rel = f"{category}/{slug}.md"
+        article_full_path = target_dir / f"{slug}.md"
 
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         article_meta = {
@@ -938,6 +946,11 @@ class Daemon:
         self.wiki.rebuild_index()
         self.wiki.git_init()
         self.wiki.git_commit(f"compile: {title}")
+
+        # Archive raw intermediates
+        source_raw = summary_meta.get("source_raw", "")
+        archive_raw_files(self.config.vault_path, raw_path=source_raw, summary_path=summary_path)
+        self.wiki.git_commit(f"archive: {title}")
 
         resp = ResponseMessage(
             text=(
