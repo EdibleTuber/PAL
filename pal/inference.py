@@ -29,7 +29,7 @@ class InferenceClient:
     def __init__(self, base_url: str, model: str) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self._client = httpx.AsyncClient(timeout=120.0)
+        self._client = httpx.AsyncClient(timeout=600.0)
 
     async def close(self) -> None:
         await self._client.aclose()
