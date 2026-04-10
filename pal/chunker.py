@@ -7,6 +7,46 @@ import re
 from dataclasses import dataclass
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+_FENCE_RE = re.compile(r"^(`{3,}|~{3,})", re.MULTILINE)
+
+
+def _fenced_ranges(text: str) -> list[tuple[int, int]]:
+    """Return (start, end) byte ranges covering fenced code blocks.
+
+    A fence opens on a line starting with three or more backticks or tildes
+    and closes on the next line starting with the same fence character
+    (length greater than or equal to the opener). An unterminated fence
+    extends to end of text.
+    """
+    ranges: list[tuple[int, int]] = []
+    pos = 0
+    while True:
+        opener = _FENCE_RE.search(text, pos)
+        if not opener:
+            return ranges
+        fence = opener.group(1)
+        char = fence[0]
+        min_len = len(fence)
+        start = opener.start()
+        search_from = text.find("\n", opener.end())
+        if search_from == -1:
+            ranges.append((start, len(text)))
+            return ranges
+        search_from += 1
+        closer_re = re.compile(rf"^{re.escape(char)}{{{min_len},}}\s*$", re.MULTILINE)
+        closer = closer_re.search(text, search_from)
+        if not closer:
+            ranges.append((start, len(text)))
+            return ranges
+        ranges.append((start, closer.end()))
+        pos = closer.end()
+
+
+def _in_any_range(pos: int, ranges: list[tuple[int, int]]) -> bool:
+    for start, end in ranges:
+        if start <= pos < end:
+            return True
+    return False
 
 
 @dataclass
@@ -29,8 +69,14 @@ def chunk_markdown(text: str, fallback_title: str) -> list[Chunk]:
     if not text or not text.strip():
         return []
 
-    # Find all headings and their levels
-    headings = [(m.start(), len(m.group(1)), m.group(2).strip()) for m in _HEADING_RE.finditer(text)]
+    fenced = _fenced_ranges(text)
+
+    # Find all headings, ignoring any whose `#` lives inside a fenced code block
+    headings = [
+        (m.start(), len(m.group(1)), m.group(2).strip())
+        for m in _HEADING_RE.finditer(text)
+        if not _in_any_range(m.start(), fenced)
+    ]
 
     if not headings:
         return [Chunk(title=fallback_title, body=text.strip())]
