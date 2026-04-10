@@ -4,11 +4,20 @@ Supports both streaming (SSE) and non-streaming completions via
 POST /v1/chat/completions. Tool-aware: can pass tool definitions
 and parse tool-call responses.
 """
+import asyncio
 import json
+import logging
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
+_MAX_RETRIES = 5
+_INITIAL_BACKOFF = 2.0
+_MAX_BACKOFF = 30.0
 
 
 @dataclass
@@ -34,6 +43,53 @@ class InferenceClient:
     async def close(self) -> None:
         await self._client.aclose()
 
+    @asynccontextmanager
+    async def _stream_with_retry(
+        self, url: str, payload: dict
+    ) -> AsyncGenerator[httpx.Response, None]:
+        """Open a streaming POST, retrying on 503 before yielding."""
+        backoff = _INITIAL_BACKOFF
+        for attempt in range(_MAX_RETRIES):
+            async with self._client.stream("POST", url, json=payload) as resp:
+                if resp.status_code != 503:
+                    resp.raise_for_status()
+                    yield resp
+                    return
+                retry_after = resp.headers.get("Retry-After")
+            wait = min(float(retry_after) if retry_after else backoff, _MAX_BACKOFF)
+            logger.warning(
+                "503 from inference server on stream (attempt %d/%d), retrying in %.1fs",
+                attempt + 1, _MAX_RETRIES, wait,
+            )
+            await asyncio.sleep(wait)
+            backoff = min(backoff * 2, _MAX_BACKOFF)
+        # Final attempt
+        async with self._client.stream("POST", url, json=payload) as resp:
+            resp.raise_for_status()
+            yield resp
+
+    async def _post_with_retry(self, payload: dict) -> httpx.Response:
+        """POST to /v1/chat/completions with exponential backoff on 503."""
+        url = f"{self.base_url}/v1/chat/completions"
+        backoff = _INITIAL_BACKOFF
+        for attempt in range(_MAX_RETRIES):
+            resp = await self._client.post(url, json=payload)
+            if resp.status_code != 503:
+                resp.raise_for_status()
+                return resp
+            retry_after = float(resp.headers.get("Retry-After", backoff))
+            wait = min(retry_after, _MAX_BACKOFF)
+            logger.warning(
+                "503 from inference server (attempt %d/%d), retrying in %.1fs",
+                attempt + 1, _MAX_RETRIES, wait,
+            )
+            await asyncio.sleep(wait)
+            backoff = min(backoff * 2, _MAX_BACKOFF)
+        # Final attempt - let it raise on any error
+        resp = await self._client.post(url, json=payload)
+        resp.raise_for_status()
+        return resp
+
     async def complete(
         self,
         messages: list[dict],
@@ -48,11 +104,8 @@ class InferenceClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        resp = await self._client.post(
-            f"{self.base_url}/v1/chat/completions",
-            json=payload,
-        )
-        resp.raise_for_status()
+
+        resp = await self._post_with_retry(payload)
         data = resp.json()
         message = data["choices"][0]["message"]
 
@@ -92,13 +145,9 @@ class InferenceClient:
         # Accumulators for tool-call deltas
         tool_call_acc: dict[int, dict] = {}  # index -> {id, name, arguments_str}
         is_tool_response = False
+        url = f"{self.base_url}/v1/chat/completions"
 
-        async with self._client.stream(
-            "POST",
-            f"{self.base_url}/v1/chat/completions",
-            json=payload,
-        ) as resp:
-            resp.raise_for_status()
+        async with self._stream_with_retry(url, payload) as resp:
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
                     continue
