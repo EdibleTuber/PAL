@@ -71,6 +71,14 @@ async def test_fetch_rejects_ftp_scheme():
 
 
 @pytest.mark.asyncio
+async def test_fetch_rejects_zero_ip():
+    """Fetcher must reject 0.0.0.0 (commonly used SSRF bypass)."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    with pytest.raises(FetchError, match="blocked"):
+        await fetcher.fetch("http://0.0.0.0:8080/secret")
+
+
+@pytest.mark.asyncio
 async def test_fetch_rejects_dns_rebinding():
     """Fetcher must reject hostnames that resolve to private IPs."""
     fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)

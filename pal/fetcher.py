@@ -46,13 +46,16 @@ def _is_private_ip(ip_str: str) -> bool:
         addr = ipaddress.ip_address(ip_str)
     except ValueError:
         return False
-    return any(addr in net for net in _PRIVATE_NETWORKS)
+    return addr.is_private or addr.is_reserved or any(addr in net for net in _PRIVATE_NETWORKS)
 
 
 def check_url_safety(url: str) -> None:
     """Raise FetchError if URL targets a private/reserved address or bad scheme.
 
     Resolves hostname via DNS to catch rebinding attacks.
+    Note: TOCTOU gap exists between this DNS check and httpx's connection.
+    A short-TTL record could return a public IP here and private IP at
+    connect time. This is defense-in-depth, not a complete solution.
     """
     parsed = urlparse(url)
     if parsed.scheme not in _ALLOWED_SCHEMES:
@@ -65,7 +68,7 @@ def check_url_safety(url: str) -> None:
     # Check if hostname is already a literal IP
     try:
         addr = ipaddress.ip_address(hostname)
-        if any(addr in net for net in _PRIVATE_NETWORKS):
+        if _is_private_ip(hostname):
             raise FetchError(f"blocked: {hostname} is a private/reserved address")
         return
     except ValueError:
