@@ -10,6 +10,7 @@ from pathlib import Path
 
 from pal.boundary import generate_guid, wrap_untrusted, SANITIZATION_SYSTEM_PROMPT
 from pal.frontmatter import parse_frontmatter, serialize_frontmatter
+from pal.model_output import clean_model_output
 from pal.sanitizer import sanitize
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ async def summarize_raw_file(
     ]
 
     result = await inference.complete(messages, reasoning="off")
-    summary = result.content or ""
+    summary = clean_model_output(result.content or "")
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     raw_stem = raw_path.stem
