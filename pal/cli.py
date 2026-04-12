@@ -18,6 +18,8 @@ from pal.client import PalClient
 from pal.config import load_config
 from pal.protocol import StreamChunkMessage, ResponseMessage, ErrorMessage, ToolProgressMessage, Message
 
+_reasoning_display: str = "show"
+
 
 def _tool_progress_label(tool: str, arguments: dict) -> str:
     """Format a brief progress label for a tool call."""
@@ -133,8 +135,22 @@ async def run_repl() -> None:
                 if cmd_name in ("quit", "exit"):
                     break
 
+                # Handle display prefs client-side
+                if cmd_name == "think" and cmd_args.strip() in ("show", "hide"):
+                    global _reasoning_display
+                    _reasoning_display = cmd_args.strip()
+                    console.print(f"\nReasoning display: {_reasoning_display}\n")
+                    continue
+
                 try:
                     resp = await _run_command(client, cmd_name, cmd_args, console)
+                    if resp.reasoning and _reasoning_display == "show":
+                        reasoning_lines = resp.reasoning.splitlines()
+                        if len(reasoning_lines) > 20:
+                            reasoning_lines = reasoning_lines[:20]
+                            reasoning_lines.append("... (full reasoning in debug log)")
+                        console.print(Text("\n".join(reasoning_lines), style="dim italic"))
+                        console.print()
                     console.print(f"\n{resp.text}\n")
                 except RuntimeError as exc:
                     console.print(f"\n[red]{exc}[/red]\n")
@@ -159,6 +175,13 @@ async def run_repl() -> None:
                         accumulated += msg.token
                         live.update(Markdown(accumulated))
                     elif isinstance(msg, ResponseMessage):
+                        if msg.reasoning and _reasoning_display == "show":
+                            reasoning_lines = msg.reasoning.splitlines()
+                            if len(reasoning_lines) > 20:
+                                reasoning_lines = reasoning_lines[:20]
+                                reasoning_lines.append("... (full reasoning in debug log)")
+                            console.print(Text("\n".join(reasoning_lines), style="dim italic"))
+                            console.print()
                         if not accumulated and msg.text:
                             console.print(Markdown(msg.text))
                         break

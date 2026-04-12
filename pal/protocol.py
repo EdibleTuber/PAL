@@ -37,6 +37,7 @@ class StreamChunkMessage:
 class ResponseMessage:
     text: str
     command: str = ""
+    reasoning: str = ""
     type: str = "response"
 
 

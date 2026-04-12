@@ -268,7 +268,10 @@ class Daemon:
                     if completion.reasoning:
                         logger.debug("reasoning_content: %.500s", completion.reasoning)
                     conv.add_assistant(response_text)
-                    done = ResponseMessage(text=response_text)
+                    done = ResponseMessage(
+                        text=response_text,
+                        reasoning=completion.reasoning or "",
+                    )
                     writer.write(encode_message(done))
                     await writer.drain()
                     return
