@@ -4,13 +4,18 @@ Maintains a rolling window of messages, truncated to history_depth.
 No persistence — memorable content goes into the wiki or learning system,
 not a chat log.
 """
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+from typing import Literal
 
 
 @dataclass
 class Conversation:
     history_depth: int
     _messages: list[dict] = field(default_factory=list)
+    model_override: str | None = None
+    reasoning_override: Literal["on", "off"] | None = None
 
     @property
     def messages(self) -> list[dict]:

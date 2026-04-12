@@ -97,3 +97,27 @@ def test_clear():
     conv.add_user("hello")
     conv.clear()
     assert conv.messages == []
+
+
+def test_conversation_overrides_default_none():
+    conv = Conversation(history_depth=10)
+    assert conv.model_override is None
+    assert conv.reasoning_override is None
+
+
+def test_conversation_overrides_settable():
+    conv = Conversation(history_depth=10)
+    conv.model_override = "gemma-4-26b-a4b-it-q4_k_m"
+    conv.reasoning_override = "on"
+    assert conv.model_override == "gemma-4-26b-a4b-it-q4_k_m"
+    assert conv.reasoning_override == "on"
+
+
+def test_conversation_overrides_clearable():
+    conv = Conversation(history_depth=10)
+    conv.model_override = "gemma-4-26b"
+    conv.reasoning_override = "on"
+    conv.model_override = None
+    conv.reasoning_override = None
+    assert conv.model_override is None
+    assert conv.reasoning_override is None
