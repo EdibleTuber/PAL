@@ -106,3 +106,39 @@ async def test_stream_detects_tool_calls(mock_inference_server):
     assert len(items[0]) == 1
     assert items[0][0].name == "read_file"
     assert items[0][0].arguments == {"path": "Research/quantum.md"}
+
+
+@pytest.mark.asyncio
+async def test_complete_extracts_reasoning(mock_inference_server):
+    client = InferenceClient(base_url=mock_inference_server, model="test-model")
+    result = await client.complete(
+        messages=[{"role": "user", "content": "REASON:deep question"}],
+    )
+    assert result.type == "text"
+    assert result.content == "answer: deep question"
+    assert result.reasoning == "thinking about deep question"
+
+
+@pytest.mark.asyncio
+async def test_complete_no_reasoning_returns_none(mock_inference_server):
+    client = InferenceClient(base_url=mock_inference_server, model="test-model")
+    result = await client.complete(
+        messages=[{"role": "user", "content": "hello"}],
+    )
+    assert result.reasoning is None
+
+
+@pytest.mark.asyncio
+async def test_complete_uses_override_model(mock_inference_server):
+    client = InferenceClient(base_url=mock_inference_server, model="default-model")
+    result = await client.complete(
+        messages=[{"role": "user", "content": "hello"}],
+        model="override-model",
+    )
+    assert result.type == "text"
+
+
+@pytest.mark.asyncio
+async def test_default_model_attribute(mock_inference_server):
+    client = InferenceClient(base_url=mock_inference_server, model="my-model")
+    assert client.default_model == "my-model"

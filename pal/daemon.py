@@ -324,7 +324,7 @@ class Daemon:
             articles = self.wiki.list_articles()
             resp = ResponseMessage(
                 text=(
-                    f"Model: {self.inference.model}\n"
+                    f"Model: {self.inference.default_model}\n"
                     f"Server: {self.inference.base_url}\n"
                     f"Vault: {self.wiki.vault_path} ({len(articles)} articles)\n"
                     f"Collection: {self.retrieval.collection_id}"

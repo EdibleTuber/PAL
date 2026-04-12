@@ -10,8 +10,11 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Literal
 
 import httpx
+
+from pal.reasoning import shape_request, extract_reasoning
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +35,13 @@ class CompletionResult:
     type: str  # "text" or "tool_calls"
     content: str | None = None
     tool_calls: list[ToolCall] | None = None
+    reasoning: str | None = None
 
 
 class InferenceClient:
     def __init__(self, base_url: str, model: str) -> None:
         self.base_url = base_url.rstrip("/")
-        self.model = model
+        self.default_model = model
         self._client = httpx.AsyncClient(timeout=600.0)
 
     async def close(self) -> None:
@@ -94,16 +98,23 @@ class InferenceClient:
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
+        model: str | None = None,
+        reasoning: Literal["on", "off"] | None = None,
     ) -> CompletionResult:
         """Send a non-streaming completion request.
 
         Returns a CompletionResult indicating either a text response
         or a list of tool calls the model wants to make.
         """
-        payload: dict = {"model": self.model, "messages": messages, "stream": False}
+        resolved_model = model or self.default_model
+        payload: dict = {"model": resolved_model, "messages": messages, "stream": False}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        if reasoning is not None:
+            payload = shape_request(payload, resolved_model, reasoning)
+            if reasoning == "on" and "chat_template_kwargs" not in payload:
+                logger.debug("reasoning control requested but no-op for model %s", resolved_model)
 
         resp = await self._post_with_retry(payload)
         data = resp.json()
@@ -124,12 +135,19 @@ class InferenceClient:
                 ))
             return CompletionResult(type="tool_calls", tool_calls=parsed)
 
-        return CompletionResult(type="text", content=message.get("content", ""))
+        reasoning_text = extract_reasoning(data)
+        return CompletionResult(
+            type="text",
+            content=message.get("content", ""),
+            reasoning=reasoning_text,
+        )
 
     async def stream(
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
+        model: str | None = None,
+        reasoning: Literal["on", "off"] | None = None,
     ) -> AsyncGenerator[str | list[ToolCall], None]:
         """Send a streaming completion request.
 
@@ -137,10 +155,15 @@ class InferenceClient:
         instead, accumulates all tool-call deltas and yields a single
         list[ToolCall] as the only item.
         """
-        payload: dict = {"model": self.model, "messages": messages, "stream": True}
+        resolved_model = model or self.default_model
+        payload: dict = {"model": resolved_model, "messages": messages, "stream": True}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        if reasoning is not None:
+            payload = shape_request(payload, resolved_model, reasoning)
+            if reasoning == "on" and "chat_template_kwargs" not in payload:
+                logger.debug("reasoning control requested but no-op for model %s", resolved_model)
 
         # Accumulators for tool-call deltas
         tool_call_acc: dict[int, dict] = {}  # index -> {id, name, arguments_str}

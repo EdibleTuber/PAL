@@ -113,6 +113,21 @@ async def mock_chat_completions(request: Request):
             yield "data: [DONE]\n\n"
         return StreamingResponse(generate_tool(), media_type="text/event-stream")
 
+    # If message starts with REASON:, return a response with reasoning_content
+    if last_user.startswith("REASON:"):
+        actual_query = last_user.split(":", 1)[1].strip()
+        if not stream:
+            return JSONResponse({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": f"answer: {actual_query}",
+                        "reasoning_content": f"thinking about {actual_query}",
+                    },
+                    "finish_reason": "stop",
+                }]
+            })
+
     if not stream:
         return JSONResponse({
             "choices": [{"message": {"role": "assistant", "content": f"echo: {last_user}"}}]
