@@ -6,6 +6,7 @@ Every compiled wiki article has two zones separated by a marker:
 
 The model writes compiled truth prose. Code builds timeline entries.
 """
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,3 +62,67 @@ def serialize_article(article: Article) -> str:
         body += f"\n{timeline_text}\n"
 
     return serialize_frontmatter(article.meta, body)
+
+
+_ENTRY_HEADER_RE = re.compile(r"^### (\d{4}-\d{2}-\d{2}) - (.+)$", re.MULTILINE)
+
+
+def _parse_timeline_entries(timeline_text: str) -> list[TimelineEntry]:
+    """Parse the timeline section into a list of TimelineEntry objects."""
+    entries = []
+    parts = _ENTRY_HEADER_RE.split(timeline_text)
+    # parts[0] is text before first header (usually empty/whitespace)
+    # then triples: (date, label, body)
+    i = 1
+    while i + 2 <= len(parts) - 1:
+        date = parts[i]
+        label = parts[i + 1]
+        body = parts[i + 2].strip()
+
+        source_url = ""
+        source_hash = ""
+        added = ""
+        summary_lines = []
+
+        for line in body.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("**Source:**"):
+                source_url = stripped.replace("**Source:**", "").strip()
+            elif stripped.startswith("**Added:**"):
+                added = stripped.replace("**Added:**", "").strip()
+            elif stripped.startswith("**Source hash:**"):
+                source_hash = stripped.replace("**Source hash:**", "").strip()
+            elif stripped:
+                summary_lines.append(stripped)
+
+        entries.append(TimelineEntry(
+            date=date,
+            source_label=label,
+            source_url=source_url,
+            source_hash=source_hash,
+            added=added,
+            summary="\n".join(summary_lines),
+        ))
+        i += 3
+
+    return entries
+
+
+def parse_article(text: str) -> Article:
+    """Parse a markdown article into an Article with compiled truth and timeline.
+
+    If no TIMELINE marker exists (legacy article), the entire body is
+    compiled truth and timeline is empty.
+    """
+    meta, body = parse_frontmatter(text)
+
+    if TIMELINE_MARKER in body:
+        parts = body.split(TIMELINE_MARKER, 1)
+        compiled_truth = parts[0].strip() + "\n"
+        timeline_text = parts[1]
+        timeline = _parse_timeline_entries(timeline_text)
+    else:
+        compiled_truth = body
+        timeline = []
+
+    return Article(meta=meta, compiled_truth=compiled_truth, timeline=timeline)
