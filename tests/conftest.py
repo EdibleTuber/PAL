@@ -277,6 +277,24 @@ async def mock_list_models(request: Request):
     })
 
 
+async def mock_page_with_code(request: Request):
+    """Return an HTML page containing a code block."""
+    return Response(
+        "<html><head><title>Code Example</title></head>"
+        "<body>"
+        "<article>"
+        "<h1>Code Tutorial</h1>"
+        "<p>This tutorial shows a simple function. Here is example code for a greeting function.</p>"
+        "<p>The function below demonstrates basic Python syntax and string formatting.</p>"
+        "<pre><code>def hello(name):\n    return f\"Hello, {name}!\"\n\nprint(hello(\"world\"))</code></pre>"
+        "<p>This function takes a name parameter and returns a formatted greeting string.</p>"
+        "<p>You can call it with any name to get a personalized greeting message.</p>"
+        "</article>"
+        "</body></html>",
+        media_type="text/html",
+    )
+
+
 mock_app = Starlette(routes=[
     Route("/v1/chat/completions", mock_chat_completions, methods=["POST"]),
     Route("/v1/models", mock_list_models, methods=["GET"]),
@@ -289,6 +307,7 @@ mock_app = Starlette(routes=[
     Route("/missing", mock_page_404, methods=["GET"]),
     Route("/redirect", mock_page_redirect, methods=["GET"]),
     Route("/no-content-type", mock_page_no_content_type, methods=["GET"]),
+    Route("/page-with-code.html", mock_page_with_code, methods=["GET"]),
 ])
 
 

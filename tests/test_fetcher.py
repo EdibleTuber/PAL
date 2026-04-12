@@ -158,3 +158,11 @@ async def test_fetch_rejects_missing_content_type(mock_inference_server):
     fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
     with pytest.raises(FetchError, match="Content-Type"):
         await fetcher.fetch(f"{mock_inference_server}/no-content-type")
+
+
+@pytest.mark.asyncio
+async def test_fetch_preserves_code_blocks(mock_inference_server):
+    """Trafilatura markdown output should preserve code fences."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    result = await fetcher.fetch(f"{mock_inference_server}/page-with-code.html")
+    assert "```" in result.text or "def hello" in result.text

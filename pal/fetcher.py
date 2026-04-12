@@ -159,7 +159,7 @@ class URLFetcher:
         except Exception as exc:
             raise FetchError(f"decode error: {exc}")
 
-        text = trafilatura.extract(html) or ""
+        text = trafilatura.extract(html, output_format="markdown") or ""
 
         # Prefer the HTML <title> tag; fall back to trafilatura metadata (h1, og:title, etc.)
         m = _TITLE_RE.search(html)
