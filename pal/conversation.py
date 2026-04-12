@@ -14,7 +14,6 @@ from typing import Literal
 class Conversation:
     history_depth: int
     _messages: list[dict] = field(default_factory=list)
-    model_override: str | None = None
     reasoning_override: Literal["on", "off"] | None = None
 
     @property

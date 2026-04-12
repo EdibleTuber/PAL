@@ -211,7 +211,6 @@ class Daemon:
         from pal.tools import TOOL_DEFINITIONS
 
         conv.add_user(msg.text)
-        model = conv.model_override or self.inference.default_model
         mode = decide_mode(conv)
         messages = conv.get_messages_for_api(system_prompt=self.prompt_builder.build())
         max_tool_rounds = 50
@@ -222,7 +221,7 @@ class Daemon:
 
             if mode == "on":
                 completion = await self.inference.complete(
-                    messages, tools=TOOL_DEFINITIONS, model=model, reasoning=mode,
+                    messages, tools=TOOL_DEFINITIONS, reasoning=mode,
                 )
                 if completion.type == "text":
                     response_text = completion.content or ""
@@ -239,7 +238,7 @@ class Daemon:
                 tool_calls = completion.tool_calls
             else:
                 async for item in self.inference.stream(
-                    messages, tools=TOOL_DEFINITIONS, model=model, reasoning=mode,
+                    messages, tools=TOOL_DEFINITIONS, reasoning=mode,
                 ):
                     if isinstance(item, list):
                         tool_calls = item
@@ -284,7 +283,7 @@ class Daemon:
                 messages = conv.get_messages_for_api(
                     system_prompt=self.prompt_builder.build()
                 )
-                completion = await self.inference.complete(messages, tools=TOOL_DEFINITIONS, model=model, reasoning=mode)
+                completion = await self.inference.complete(messages, tools=TOOL_DEFINITIONS, reasoning=mode)
 
                 if completion.type == "text":
                     response_text = completion.content or ""
@@ -359,14 +358,12 @@ class Daemon:
             await writer.drain()
         elif msg.name == "status":
             articles = self.wiki.list_articles()
-            active_model = conv.model_override or self.inference.default_model
-            model_source = "override" if conv.model_override else "default"
             reasoning_mode = decide_mode(conv)
             reasoning_label = conv.reasoning_override or "auto"
             resp = ResponseMessage(
                 text=(
-                    f"Model: {active_model} ({model_source})\n"
-                    f"Default model: {self.inference.default_model}\n"
+                    f"Model: {self.inference.default_model}\n"
+                    f"Config default: {self.config.model}\n"
                     f"Reasoning: {reasoning_label} (effective: {reasoning_mode})\n"
                     f"Server: {self.inference.base_url}\n"
                     f"Vault: {self.wiki.vault_path} ({len(articles)} articles)\n"
@@ -411,7 +408,7 @@ class Daemon:
         elif msg.name == "rate":
             await self._handle_rate(msg.args, writer)
         elif msg.name == "model":
-            await self._handle_model(msg.args, conv, writer)
+            await self._handle_model(msg.args, writer)
         elif msg.name == "think":
             await self._handle_think(msg.args, conv, writer)
         elif msg.name == "research":
@@ -1489,17 +1486,18 @@ class Daemon:
     async def _handle_model(
         self,
         args: str,
-        conv: Conversation,
         writer: asyncio.StreamWriter,
     ) -> None:
-        """Handle /model -- show or switch the active model."""
+        """Handle /model -- show or switch the active model.
+
+        The active model is a single global setting. Changing it affects
+        every inference call: chat, research, summarize, compile, etc.
+        """
         arg = args.strip()
 
         if arg == "":
-            current = conv.model_override or self.inference.default_model
-            source = "override" if conv.model_override else "default"
             resp = ResponseMessage(
-                text=f"Model: {current} ({source})",
+                text=f"Model: {self.inference.default_model}",
                 command="model",
             )
         elif arg == "list":
@@ -1512,7 +1510,7 @@ class Daemon:
                 if names:
                     lines = ["Available models:"]
                     for i, name in enumerate(names, 1):
-                        marker = " (active)" if name == (conv.model_override or self.inference.default_model) else ""
+                        marker = " (active)" if name == self.inference.default_model else ""
                         lines.append(f"  {i}. {name}{marker}")
                     resp = ResponseMessage(text="\n".join(lines), command="model")
                 else:
@@ -1524,9 +1522,9 @@ class Daemon:
                 await writer.drain()
                 return
         elif arg == "default":
-            conv.model_override = None
+            self.inference.default_model = self.config.model
             resp = ResponseMessage(
-                text=f"Model reset to default: {self.inference.default_model}",
+                text=f"Model reset to config default: {self.inference.default_model}",
                 command="model",
             )
         else:
@@ -1551,7 +1549,7 @@ class Daemon:
                 await writer.drain()
                 return
 
-            conv.model_override = arg
+            self.inference.default_model = arg
             resp = ResponseMessage(
                 text=f"Model set to: {arg}",
                 command="model",
