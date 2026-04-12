@@ -8,6 +8,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlparse
@@ -124,6 +125,21 @@ class Researcher:
                 status="fetch_failed",
                 error=str(exc),
             )
+        except Exception as exc:
+            return SourceResult(
+                url=url,
+                title="",
+                status="fetch_failed",
+                error=str(exc),
+            )
+
+        if not fetch_result.text.strip():
+            return SourceResult(
+                url=url,
+                title=fetch_result.title or "",
+                status="extract_empty",
+                error="trafilatura returned empty content",
+            )
 
         url_slug = _url_slug(url)
         hash8 = fetch_result.content_hash[:8]
@@ -133,9 +149,11 @@ class Researcher:
         raw_dir.mkdir(parents=True, exist_ok=True)
         raw_path = raw_dir / filename
 
+        fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         meta = {
-            "title": fetch_result.title or url_slug,
             "source_url": url,
+            "title": fetch_result.title or url_slug,
+            "fetched_at": fetched_at,
             "content_hash": fetch_result.content_hash,
             "byte_size": fetch_result.byte_size,
             "status": "raw",
@@ -162,7 +180,7 @@ class Researcher:
             source.summary_path = result.summary_path
         except Exception as exc:
             logger.warning("Summarize failed for %s: %s", source.url, exc)
-            source.status = "summarize_error"
+            source.status = "summarize_failed"
             source.error = str(exc)
         return source
 
