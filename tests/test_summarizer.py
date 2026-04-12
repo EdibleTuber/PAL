@@ -1,0 +1,100 @@
+"""Tests for extracted summarize logic."""
+from pathlib import Path
+from unittest.mock import AsyncMock
+from dataclasses import dataclass
+
+import pytest
+
+from pal.summarizer import summarize_raw_file, SummarizeResult
+
+
+@dataclass
+class MockInferenceResult:
+    content: str
+    reasoning: str = ""
+
+
+@pytest.fixture
+def mock_inference():
+    inference = AsyncMock()
+    inference.complete.return_value = MockInferenceResult(
+        content="This is a summary of the article about testing."
+    )
+    return inference
+
+
+@pytest.fixture
+def raw_file(tmp_path):
+    """Create a raw file with frontmatter in a vault-like structure."""
+    vault = tmp_path / "vault"
+    raw_dir = vault / "raw" / "web"
+    raw_dir.mkdir(parents=True)
+    raw_file = raw_dir / "test-article-abc12345.md"
+    raw_file.write_text(
+        "---\n"
+        "title: Test Article\n"
+        "source_url: https://example.com/test\n"
+        "content_hash: abc12345\n"
+        "status: raw\n"
+        "---\n"
+        "# Test Article\n\n"
+        "This is some content about testing that should be summarized.\n"
+    )
+    return vault, raw_file
+
+
+@pytest.mark.asyncio
+async def test_summarize_returns_result(mock_inference, raw_file):
+    vault, path = raw_file
+    result = await summarize_raw_file(
+        raw_path=path,
+        vault_path=vault,
+        inference=mock_inference,
+    )
+    assert isinstance(result, SummarizeResult)
+    assert result.summary_path.exists()
+    assert "summary" in result.summary_path.read_text().lower() or "testing" in result.summary_path.read_text().lower()
+
+
+@pytest.mark.asyncio
+async def test_summarize_preserves_source_metadata(mock_inference, raw_file):
+    vault, path = raw_file
+    result = await summarize_raw_file(
+        raw_path=path,
+        vault_path=vault,
+        inference=mock_inference,
+    )
+    from pal.frontmatter import parse_frontmatter
+    meta, body = parse_frontmatter(result.summary_path.read_text())
+    assert meta["source_url"] == "https://example.com/test"
+    assert meta["source_hash"] == "abc12345"
+    assert meta["status"] == "summary"
+
+
+@pytest.mark.asyncio
+async def test_summarize_calls_inference_with_sanitized_content(mock_inference, raw_file):
+    vault, path = raw_file
+    await summarize_raw_file(
+        raw_path=path,
+        vault_path=vault,
+        inference=mock_inference,
+    )
+    mock_inference.complete.assert_called_once()
+    call_args = mock_inference.complete.call_args
+    messages = call_args[0][0]
+    assert len(messages) == 2
+    assert messages[0]["role"] == "system"
+    assert "BEGIN UNTRUSTED" in messages[1]["content"] or "UNTRUSTED" in messages[1]["content"].upper()
+
+
+@pytest.mark.asyncio
+async def test_summarize_handles_inference_error(raw_file):
+    vault, path = raw_file
+    inference = AsyncMock()
+    inference.complete.side_effect = RuntimeError("model offline")
+    with pytest.raises(RuntimeError, match="model offline"):
+        await summarize_raw_file(
+            raw_path=path,
+            vault_path=vault,
+            inference=inference,
+        )
