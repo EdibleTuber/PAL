@@ -1,5 +1,6 @@
 """Tests for article module -- compiled truth + timeline format."""
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -12,6 +13,12 @@ from pal.article import (
     append_timeline_entry,
     validate_compiled_truth,
 )
+
+
+class _MockResult:
+    def __init__(self, content):
+        self.content = content
+        self.reasoning = ""
 
 
 def _make_entry(date="2026-04-12", label="example.com", url="https://example.com/page",
@@ -235,3 +242,62 @@ def test_validate_compiled_truth_allows_optional_sections():
     )
     issues = validate_compiled_truth(text)
     assert issues == []
+
+
+@pytest.mark.asyncio
+async def test_find_existing_article_match():
+    """Should find a matching article when model confirms a match."""
+    from pal.article import find_existing_article
+    inference = AsyncMock()
+    inference.complete.return_value = _MockResult(content="sqlite-vec-search.md")
+
+    articles = [
+        {"path": "Research/sqlite-vec-search.md", "title": "SQLite-vec Similarity Search"},
+        {"path": "Research/faiss-indexing.md", "title": "FAISS Indexing Strategies"},
+    ]
+    result = await find_existing_article(
+        summary_title="SQLite Vec Search Queries",
+        summary_preview="How to query vectors in SQLite-vec...",
+        category="Research",
+        articles=articles,
+        inference=inference,
+    )
+    assert result is not None
+    assert "sqlite-vec" in result["path"]
+
+
+@pytest.mark.asyncio
+async def test_find_existing_article_no_match():
+    """Should return None when model says no match."""
+    from pal.article import find_existing_article
+    inference = AsyncMock()
+    inference.complete.return_value = _MockResult(content="NONE")
+
+    articles = [
+        {"path": "Research/faiss-indexing.md", "title": "FAISS Indexing Strategies"},
+    ]
+    result = await find_existing_article(
+        summary_title="Quantum Computing Basics",
+        summary_preview="Quantum computers use qubits...",
+        category="Research",
+        articles=articles,
+        inference=inference,
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_find_existing_article_empty_category():
+    """Should return None if there are no articles in the category."""
+    from pal.article import find_existing_article
+    inference = AsyncMock()
+
+    result = await find_existing_article(
+        summary_title="New Topic",
+        summary_preview="Content...",
+        category="Research",
+        articles=[],
+        inference=inference,
+    )
+    assert result is None
+    inference.complete.assert_not_called()

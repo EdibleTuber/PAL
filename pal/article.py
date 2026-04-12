@@ -173,6 +173,72 @@ def append_timeline_entry(
     )
 
 
+TOPIC_MATCH_PROMPT = (
+    "You are checking if a new source covers the same topic as an existing "
+    "wiki article. Below is the new source title and preview, followed by a "
+    "list of existing articles in this category.\n\n"
+    "If an existing article covers the same topic (even with different "
+    "phrasing), respond with ONLY the filename (e.g., 'sqlite-vec-search.md').\n"
+    "If no existing article matches, respond with exactly: NONE"
+)
+
+
+async def find_existing_article(
+    summary_title: str,
+    summary_preview: str,
+    category: str,
+    articles: list[dict],
+    inference,
+) -> dict | None:
+    """Check if an existing article covers the same topic as the new source.
+
+    Args:
+        summary_title: title of the summary being compiled
+        summary_preview: first ~400 chars of the summary
+        category: target category directory
+        articles: list of dicts with 'path' and 'title' keys
+        inference: InferenceClient
+
+    Returns:
+        The matching article dict, or None if no match.
+    """
+    category_articles = [a for a in articles if a["path"].startswith(f"{category}/")]
+    if not category_articles:
+        return None
+
+    article_list = "\n".join(
+        f"- {a['path'].split('/')[-1]}: {a['title']}" for a in category_articles
+    )
+
+    user_prompt = (
+        f"New source title: {summary_title}\n"
+        f"New source preview: {summary_preview[:400]}\n\n"
+        f"Existing articles in {category}/:\n{article_list}"
+    )
+
+    messages = [
+        {"role": "system", "content": TOPIC_MATCH_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    try:
+        result = await inference.complete(messages, reasoning="off")
+        response = (result.content or "").strip()
+    except Exception:
+        return None
+
+    if not response or response.upper() == "NONE":
+        return None
+
+    response_clean = response.strip().strip("'\"")
+    for a in category_articles:
+        filename = a["path"].split("/")[-1]
+        if filename == response_clean or filename.replace(".md", "") == response_clean.replace(".md", ""):
+            return a
+
+    return None
+
+
 _REQUIRED_SECTIONS = ["## Overview", "## Key Concepts"]
 
 
