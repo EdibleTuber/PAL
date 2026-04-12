@@ -27,6 +27,8 @@ def _identify_family(model: str) -> str | None:
 
 def shape_request(body: dict, model: str, mode: Literal["on", "off"]) -> dict:
     body = dict(body)
+    if "chat_template_kwargs" in body:
+        body["chat_template_kwargs"] = dict(body["chat_template_kwargs"])
     match _identify_family(model):
         case "gemma":
             body.setdefault("chat_template_kwargs", {})["enable_thinking"] = (mode == "on")

@@ -216,24 +216,43 @@ class Daemon:
             full_response = []
             tool_calls: list[ToolCall] | None = None
 
-            async for item in self.inference.stream(messages, tools=TOOL_DEFINITIONS, model=model, reasoning=mode):
-                if isinstance(item, list):
-                    tool_calls = item
-                    break
-                else:
-                    chunk = StreamChunkMessage(token=item)
-                    writer.write(encode_message(chunk))
+            if mode == "on":
+                completion = await self.inference.complete(
+                    messages, tools=TOOL_DEFINITIONS, model=model, reasoning=mode,
+                )
+                if completion.type == "text":
+                    response_text = completion.content or ""
+                    if completion.reasoning:
+                        logger.debug("reasoning_content: %.500s", completion.reasoning)
+                    conv.add_assistant(response_text)
+                    done = ResponseMessage(
+                        text=response_text,
+                        reasoning=completion.reasoning or "",
+                    )
+                    writer.write(encode_message(done))
                     await writer.drain()
-                    full_response.append(item)
+                    return
+                tool_calls = completion.tool_calls
+            else:
+                async for item in self.inference.stream(
+                    messages, tools=TOOL_DEFINITIONS, model=model, reasoning=mode,
+                ):
+                    if isinstance(item, list):
+                        tool_calls = item
+                        break
+                    else:
+                        chunk = StreamChunkMessage(token=item)
+                        writer.write(encode_message(chunk))
+                        await writer.drain()
+                        full_response.append(item)
 
-            # If we got text, we're done
-            if tool_calls is None:
-                response_text = "".join(full_response)
-                conv.add_assistant(response_text)
-                done = ResponseMessage(text=response_text)
-                writer.write(encode_message(done))
-                await writer.drain()
-                return
+                if tool_calls is None:
+                    response_text = "".join(full_response)
+                    conv.add_assistant(response_text)
+                    done = ResponseMessage(text=response_text)
+                    writer.write(encode_message(done))
+                    await writer.drain()
+                    return
 
             # Tool-use loop
             for _round in range(max_tool_rounds):
@@ -1397,24 +1416,27 @@ class Daemon:
         if arg == "on":
             conv.reasoning_override = "on"
             logger.info(
-                "reasoning_toggle conversation_id=%s action=on last_user_message=%.200s",
+                "reasoning_toggle conversation_id=%s turn_idx=%d action=on last_user_message=%.200s",
                 id(conv),
+                len(conv.messages),
                 conv.messages[-1]["content"] if conv.messages else "",
             )
             resp = ResponseMessage(text="Reasoning: on", command="think")
         elif arg == "off":
             conv.reasoning_override = "off"
             logger.info(
-                "reasoning_toggle conversation_id=%s action=off last_user_message=%.200s",
+                "reasoning_toggle conversation_id=%s turn_idx=%d action=off last_user_message=%.200s",
                 id(conv),
+                len(conv.messages),
                 conv.messages[-1]["content"] if conv.messages else "",
             )
             resp = ResponseMessage(text="Reasoning: off", command="think")
         elif arg == "auto":
             conv.reasoning_override = None
             logger.info(
-                "reasoning_toggle conversation_id=%s action=auto last_user_message=%.200s",
+                "reasoning_toggle conversation_id=%s turn_idx=%d action=auto last_user_message=%.200s",
                 id(conv),
+                len(conv.messages),
                 conv.messages[-1]["content"] if conv.messages else "",
             )
             resp = ResponseMessage(text="Reasoning: auto (off by default)", command="think")
