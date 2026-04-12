@@ -380,3 +380,104 @@ async def test_compile_merge_updates_existing_article(compile_daemon, socket_pat
     assert article.timeline[1].source_url == "https://new.com/quantum"
     assert article.meta["created"] == "2026-04-10T10:00:00+00:00"
     assert len(article.meta["sources"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_compile_batch_empty_directory(compile_daemon, socket_path):
+    """/compile-batch with no summaries should report no work to do."""
+    daemon, vault = compile_daemon
+    # Create the directory so the "no directory" error doesn't fire
+    (vault / "raw" / "summaries").mkdir(parents=True, exist_ok=True)
+
+    client = PalClient(socket_path)
+    await client.connect()
+    resp = await client.command("compile-batch", "")
+    await client.close()
+
+    assert "No summaries" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_compile_batch_processes_multiple_summaries(compile_daemon, socket_path, monkeypatch):
+    """/compile-batch should compile all summaries and report counts."""
+    daemon, vault = compile_daemon
+
+    _write_summary_file(
+        vault, "raw/summaries/topic-a.md",
+        "Content about topic A.",
+        title="Topic A", source_url="https://a.com/page", source_hash="aaa111",
+    )
+    _write_summary_file(
+        vault, "raw/summaries/topic-b.md",
+        "Content about topic B.",
+        title="Topic B", source_url="https://b.com/page", source_hash="bbb222",
+    )
+
+    call_count = 0
+
+    async def fake_complete(messages, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        # Pattern: categorize -> compile, repeated for each summary
+        # First summary: no articles exist, so topic match is skipped
+        # Second summary: Research/ now has 1 article, so topic match IS called
+        system = messages[0].get("content", "") if messages else ""
+        if "filing an article" in system or "choosing where to file" in system.lower():
+            return CompletionResult(type="text", content="Research")
+        if "same topic as" in system or "existing wiki article" in system.lower():
+            return CompletionResult(type="text", content="NONE")
+        # Compile
+        return CompletionResult(
+            type="text",
+            content=f"## Overview\n\nArticle {call_count}.\n\n## Key Concepts\n\n- Concept\n",
+        )
+
+    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
+
+    client = PalClient(socket_path)
+    await client.connect()
+    resp = await client.command("compile-batch", "")
+    await client.close()
+
+    assert "Batch compile complete" in resp.text
+    assert "2 summaries processed" in resp.text
+
+    # Both articles should be saved
+    research_files = list((vault / "Research").glob("*.md"))
+    assert len(research_files) == 2
+
+
+@pytest.mark.asyncio
+async def test_compile_batch_skips_dirty_backups(compile_daemon, socket_path, monkeypatch):
+    """/compile-batch should ignore .dirty and .md.dirty backup files."""
+    daemon, vault = compile_daemon
+
+    _write_summary_file(
+        vault, "raw/summaries/topic-x.md",
+        "Content about topic X.",
+        title="Topic X", source_url="https://x.com/page", source_hash="xxx111",
+    )
+    # Create a .md.dirty backup that should be ignored
+    (vault / "raw" / "summaries" / "old-topic.md.dirty").write_text(
+        "---\ntitle: Old\n---\nOld content.\n"
+    )
+
+    async def fake_complete(messages, **kwargs):
+        system = messages[0].get("content", "") if messages else ""
+        if "choosing where to file" in system.lower():
+            return CompletionResult(type="text", content="Research")
+        if "existing wiki article" in system.lower():
+            return CompletionResult(type="text", content="NONE")
+        return CompletionResult(
+            type="text",
+            content="## Overview\n\nContent.\n\n## Key Concepts\n\n- Concept\n",
+        )
+
+    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
+
+    client = PalClient(socket_path)
+    await client.connect()
+    resp = await client.command("compile-batch", "")
+    await client.close()
+
+    assert "1 summaries processed" in resp.text

@@ -338,6 +338,7 @@ class Daemon:
                     "  /fetch <url>   — Fetch and summarize a URL\n"
                     "  /summarize <t> — Summarize a wiki article\n"
                     "  /compile <t>   — Compile a wiki article\n"
+                    "  /compile-batch — Compile all summaries in raw/summaries/\n"
                     "  /import <path> — Import a local document into the vault\n"
                     "  /learn         — Extract learnings from conversation\n"
                     "  /learnings     — List saved learnings\n"
@@ -397,6 +398,8 @@ class Daemon:
             await self._handle_summarize(msg.args, writer)
         elif msg.name == "compile":
             await self._handle_compile(msg.args, writer)
+        elif msg.name == "compile-batch":
+            await self._handle_compile_batch(writer)
         elif msg.name == "import":
             await self._handle_import(msg.args, writer)
         elif msg.name == "learn":
@@ -844,43 +847,35 @@ class Daemon:
         writer.write(encode_message(resp))
         await writer.drain()
 
-    async def _handle_compile(self, summary_path: str, writer: asyncio.StreamWriter) -> None:
-        """Handle /compile <summary-path> — build a grounded wiki article from a summary."""
-        summary_path = summary_path.strip()
-        if not summary_path:
-            error = ErrorMessage(error="Usage: /compile <summary-path>")
-            writer.write(encode_message(error))
-            await writer.drain()
-            return
+    async def _compile_one(self, summary_path: str) -> dict:
+        """Core compile logic. Returns a dict with status and metadata.
 
+        Status values:
+          - "ok": new article saved
+          - "merged": existing article updated
+          - "insufficient": model refused (summary too thin)
+          - "not_found": summary file doesn't exist
+          - "invalid_path": path traversal / escapes vault
+          - "error": inference or other failure
+
+        Other fields: title, article_path_rel, compiled_truth, reason.
+        """
         # Path traversal guard
         if ".." in summary_path.split("/") or summary_path.startswith("/"):
-            error = ErrorMessage(error=f"Invalid path: {summary_path}")
-            writer.write(encode_message(error))
-            await writer.drain()
-            return
+            return {"status": "invalid_path", "reason": f"Invalid path: {summary_path}"}
 
         full_path = self.config.vault_path / summary_path
         if not full_path.exists():
-            error = ErrorMessage(error=f"File not found: {summary_path}")
-            writer.write(encode_message(error))
-            await writer.drain()
-            return
+            return {"status": "not_found", "reason": f"File not found: {summary_path}"}
 
         # Resolve + boundary check
         try:
             resolved = full_path.resolve()
             vault_resolved = self.config.vault_path.resolve()
             if not str(resolved).startswith(str(vault_resolved) + "/"):
-                error = ErrorMessage(error=f"Invalid path: {summary_path}")
-                writer.write(encode_message(error))
-                await writer.drain()
-                return
+                return {"status": "invalid_path", "reason": f"Invalid path: {summary_path}"}
         except Exception:
-            error = ErrorMessage(error=f"Invalid path: {summary_path}")
-            writer.write(encode_message(error))
-            await writer.drain()
-            return
+            return {"status": "invalid_path", "reason": f"Invalid path: {summary_path}"}
 
         from pal.frontmatter import parse_frontmatter
         summary_meta, summary_body = parse_frontmatter(full_path.read_text())
@@ -977,22 +972,14 @@ class Daemon:
             compiled_truth = result.content or ""
         except Exception as exc:
             logger.exception("Compile inference failed: %s", exc)
-            error = ErrorMessage(error=f"Compile failed: {exc}")
-            writer.write(encode_message(error))
-            await writer.drain()
-            return
+            return {"status": "error", "title": title, "reason": f"Compile failed: {exc}"}
 
         if compiled_truth.strip().startswith("INSUFFICIENT:"):
-            resp = ResponseMessage(
-                text=(
-                    f"{compiled_truth.strip()}\n\n"
-                    "No article saved. The source summary may need more detail."
-                ),
-                command="compile",
-            )
-            writer.write(encode_message(resp))
-            await writer.drain()
-            return
+            return {
+                "status": "insufficient",
+                "title": title,
+                "reason": compiled_truth.strip(),
+            }
 
         # Validate required sections
         issues = validate_compiled_truth(compiled_truth)
@@ -1058,13 +1045,129 @@ class Daemon:
         archive_raw_files(self.config.vault_path, raw_path=source_raw, summary_path=summary_path)
         self.wiki.git_commit(f"archive: {title}")
 
+        return {
+            "status": "merged" if existing_match else "ok",
+            "title": title,
+            "article_path_rel": article_path_rel,
+            "compiled_truth": compiled_truth.strip(),
+        }
+
+    async def _handle_compile(self, summary_path: str, writer: asyncio.StreamWriter) -> None:
+        """Handle /compile <summary-path> — build a grounded wiki article from a summary."""
+        summary_path = summary_path.strip()
+        if not summary_path:
+            error = ErrorMessage(error="Usage: /compile <summary-path>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        outcome = await self._compile_one(summary_path)
+
+        if outcome["status"] in ("invalid_path", "not_found", "error"):
+            error = ErrorMessage(error=outcome["reason"])
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        if outcome["status"] == "insufficient":
+            resp = ResponseMessage(
+                text=(
+                    f"{outcome['reason']}\n\n"
+                    "No article saved. The source summary may need more detail."
+                ),
+                command="compile",
+            )
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
+
+        verb = "Updated" if outcome["status"] == "merged" else "Saved to"
         resp = ResponseMessage(
             text=(
-                f"{'Updated' if existing_match else 'Saved to'} {article_path_rel}\n\n"
-                f"{compiled_truth.strip()}"
+                f"{verb} {outcome['article_path_rel']}\n\n"
+                f"{outcome['compiled_truth']}"
             ),
             command="compile",
         )
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_compile_batch(self, writer: asyncio.StreamWriter) -> None:
+        """Handle /compile-batch — compile all summaries in raw/summaries/."""
+        summaries_dir = self.config.vault_path / "raw" / "summaries"
+        if not summaries_dir.exists():
+            error = ErrorMessage(error=f"No summaries directory at {summaries_dir}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        summary_files = sorted(summaries_dir.glob("*.md"))
+        # Filter out .dirty backups
+        summary_files = [
+            p for p in summary_files
+            if not p.name.endswith(".dirty.md") and not p.name.endswith(".md.dirty")
+        ]
+
+        if not summary_files:
+            resp = ResponseMessage(
+                text="No summaries to compile in raw/summaries/",
+                command="compile-batch",
+            )
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
+
+        total = len(summary_files)
+        compiled_new = 0
+        merged = 0
+        insufficient = 0
+        errors = []
+
+        for i, path in enumerate(summary_files, 1):
+            rel = str(path.relative_to(self.config.vault_path))
+            title_preview = path.stem[:50]
+
+            progress = ToolProgressMessage(
+                tool="compile-batch",
+                arguments={"status": f"Compiling {i}/{total}: {title_preview}"},
+            )
+            writer.write(encode_message(progress))
+            await writer.drain()
+
+            try:
+                outcome = await self._compile_one(rel)
+            except Exception as exc:
+                logger.exception("Batch compile failed for %s: %s", rel, exc)
+                errors.append((rel, str(exc)))
+                continue
+
+            if outcome["status"] == "ok":
+                compiled_new += 1
+            elif outcome["status"] == "merged":
+                merged += 1
+            elif outcome["status"] == "insufficient":
+                insufficient += 1
+            else:
+                errors.append((rel, outcome.get("reason", outcome["status"])))
+
+        lines = [
+            f"Batch compile complete: {total} summaries processed",
+            "",
+            f"  + New articles: {compiled_new}",
+            f"  ~ Merged into existing: {merged}",
+            f"  ! Insufficient content: {insufficient}",
+            f"  x Errors: {len(errors)}",
+        ]
+
+        if errors:
+            lines.append("")
+            lines.append("Failed summaries:")
+            for rel, reason in errors[:20]:
+                lines.append(f"  - {rel}: {reason[:80]}")
+            if len(errors) > 20:
+                lines.append(f"  ... and {len(errors) - 20} more")
+
+        resp = ResponseMessage(text="\n".join(lines), command="compile-batch")
         writer.write(encode_message(resp))
         await writer.drain()
 
