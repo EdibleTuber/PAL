@@ -9,6 +9,8 @@ from pal.article import (
     serialize_article,
     parse_article,
     TIMELINE_MARKER,
+    append_timeline_entry,
+    validate_compiled_truth,
 )
 
 
@@ -145,3 +147,91 @@ def test_parse_roundtrip():
     parsed = parse_article(text1)
     text2 = serialize_article(parsed)
     assert text1 == text2
+
+
+def test_append_timeline_entry():
+    article = Article(
+        meta={"title": "Test", "status": "compiled", "sources": []},
+        compiled_truth="## Overview\n\nTest.\n\n## Key Concepts\n\n- A\n",
+        timeline=[],
+    )
+    updated = append_timeline_entry(
+        article=article,
+        source_url="https://new.com/doc",
+        source_hash="new123",
+        summary="New findings from this source.",
+    )
+    assert len(updated.timeline) == 1
+    assert updated.timeline[0].source_url == "https://new.com/doc"
+    assert updated.timeline[0].source_hash == "new123"
+    assert "New findings" in updated.timeline[0].summary
+    assert updated.timeline[0].date  # should have a date
+    assert updated.timeline[0].added  # should have a timestamp
+    assert len(updated.meta["sources"]) == 1
+    assert updated.meta["sources"][0]["url"] == "https://new.com/doc"
+
+
+def test_append_timeline_entry_preserves_existing():
+    existing = _make_entry(label="old.com", url="https://old.com/page", hash="old123")
+    article = Article(
+        meta={
+            "title": "Test", "status": "compiled",
+            "sources": [{"url": "https://old.com/page", "hash": "old123", "added": "2026-04-10T10:00:00+00:00"}],
+        },
+        compiled_truth="## Overview\n\nTest.\n\n## Key Concepts\n\n- A\n",
+        timeline=[existing],
+    )
+    updated = append_timeline_entry(
+        article=article,
+        source_url="https://new.com/doc",
+        source_hash="new456",
+        summary="New findings.",
+    )
+    assert len(updated.timeline) == 2
+    assert updated.timeline[0].source_label == "old.com"
+    assert updated.timeline[1].source_url == "https://new.com/doc"
+    assert len(updated.meta["sources"]) == 2
+
+
+def test_append_timeline_entry_extracts_hostname():
+    article = Article(
+        meta={"title": "Test", "status": "compiled", "sources": []},
+        compiled_truth="## Overview\n\nTest.\n\n## Key Concepts\n\n- A\n",
+        timeline=[],
+    )
+    updated = append_timeline_entry(
+        article=article,
+        source_url="https://docs.python.org/3/library/asyncio.html",
+        source_hash="xyz",
+        summary="Asyncio docs.",
+    )
+    assert updated.timeline[0].source_label == "docs.python.org"
+
+
+def test_validate_compiled_truth_valid():
+    text = "## Overview\n\nGood article.\n\n## Key Concepts\n\n- Concept\n"
+    issues = validate_compiled_truth(text)
+    assert issues == []
+
+
+def test_validate_compiled_truth_missing_overview():
+    text = "## Key Concepts\n\n- Something\n"
+    issues = validate_compiled_truth(text)
+    assert any("Overview" in i for i in issues)
+
+
+def test_validate_compiled_truth_missing_key_concepts():
+    text = "## Overview\n\nSomething.\n"
+    issues = validate_compiled_truth(text)
+    assert any("Key Concepts" in i for i in issues)
+
+
+def test_validate_compiled_truth_allows_optional_sections():
+    text = (
+        "## Overview\n\nGood.\n\n"
+        "## Key Concepts\n\n- A\n\n"
+        "## Usage\n\nSome usage.\n\n"
+        "## Gotchas\n\n- Watch out.\n"
+    )
+    issues = validate_compiled_truth(text)
+    assert issues == []

@@ -126,3 +126,64 @@ def parse_article(text: str) -> Article:
         timeline = []
 
     return Article(meta=meta, compiled_truth=compiled_truth, timeline=timeline)
+
+
+def append_timeline_entry(
+    article: Article,
+    source_url: str,
+    source_hash: str,
+    summary: str,
+) -> Article:
+    """Append a new timeline entry and update frontmatter sources list.
+
+    Returns a new Article with the entry appended (does not mutate input).
+    """
+    now = datetime.now(timezone.utc)
+    date_str = now.strftime("%Y-%m-%d")
+    added_str = now.isoformat(timespec="seconds")
+
+    parsed_url = urlparse(source_url)
+    label = parsed_url.hostname or source_url
+
+    entry = TimelineEntry(
+        date=date_str,
+        source_label=label,
+        source_url=source_url,
+        source_hash=source_hash,
+        added=added_str,
+        summary=summary.strip(),
+    )
+
+    new_timeline = list(article.timeline) + [entry]
+
+    new_sources = list(article.meta.get("sources", []))
+    new_sources.append({
+        "url": source_url,
+        "hash": source_hash,
+        "added": added_str,
+    })
+
+    new_meta = dict(article.meta)
+    new_meta["sources"] = new_sources
+
+    return Article(
+        meta=new_meta,
+        compiled_truth=article.compiled_truth,
+        timeline=new_timeline,
+    )
+
+
+_REQUIRED_SECTIONS = ["## Overview", "## Key Concepts"]
+
+
+def validate_compiled_truth(text: str) -> list[str]:
+    """Check compiled truth text for required sections.
+
+    Returns a list of issues. Empty list means valid.
+    """
+    issues = []
+    for section in _REQUIRED_SECTIONS:
+        if section not in text:
+            section_name = section.replace("## ", "")
+            issues.append(f"Missing required section: {section_name}")
+    return issues
