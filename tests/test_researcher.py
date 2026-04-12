@@ -147,7 +147,7 @@ async def test_research_handles_fetch_failure(mock_websearch, mock_fetcher, mock
 
     result = report.results[0]
     assert len(result.sources) == 2
-    assert all(s.status == "fetch_error" for s in result.sources)
+    assert all(s.status == "fetch_failed" for s in result.sources)
     assert report.total_failed == 2
     assert report.total_fetched == 0
 

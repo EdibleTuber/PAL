@@ -121,7 +121,7 @@ class Researcher:
             return SourceResult(
                 url=url,
                 title="",
-                status="fetch_error",
+                status="fetch_failed",
                 error=str(exc),
             )
 
