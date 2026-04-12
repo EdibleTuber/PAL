@@ -878,7 +878,11 @@ class Daemon:
             return {"status": "invalid_path", "reason": f"Invalid path: {summary_path}"}
 
         from pal.frontmatter import parse_frontmatter
-        summary_meta, summary_body = parse_frontmatter(full_path.read_text())
+        from pal.model_output import clean_model_output
+        summary_meta, raw_summary_body = parse_frontmatter(full_path.read_text())
+        # Clean any leaked tokens or reasoning from the summary body.
+        # Legacy summaries may contain these; new summaries are already clean.
+        summary_body = clean_model_output(raw_summary_body)
 
         title = summary_meta.get("title", full_path.stem)
         source_url = summary_meta.get("source_url", "")
@@ -969,7 +973,7 @@ class Daemon:
 
         try:
             result = await self.inference.complete(messages, reasoning="off")
-            compiled_truth = result.content or ""
+            compiled_truth = clean_model_output(result.content or "")
         except Exception as exc:
             logger.exception("Compile inference failed: %s", exc)
             return {"status": "error", "title": title, "reason": f"Compile failed: {exc}"}

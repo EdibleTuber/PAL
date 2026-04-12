@@ -39,6 +39,9 @@ _MULTIPLE_BLANK_LINES_RE = re.compile(r"\n{3,}")
 # Fragment of the summarization prompt that sometimes leaks back into output
 _PROMPT_LEAK_MARKER = "Summarize the following content concisely and factually"
 
+# Heading that typically starts a compiled article - used to detect duplicate articles
+_ARTICLE_START_RE = re.compile(r"^## Overview\b", re.MULTILINE)
+
 
 def clean_model_output(text: str) -> str:
     """Remove special tokens, reasoning blocks, and duplicate responses.
@@ -80,5 +83,11 @@ def clean_model_output(text: str) -> str:
 
     # Collapse multiple blank lines
     text = _MULTIPLE_BLANK_LINES_RE.sub("\n\n", text)
+
+    # Detect duplicate articles: if "## Overview" appears multiple times,
+    # the model produced the article twice. Keep the last (usually polished) copy.
+    overview_matches = list(_ARTICLE_START_RE.finditer(text))
+    if len(overview_matches) > 1:
+        text = text[overview_matches[-1].start():]
 
     return text.strip()

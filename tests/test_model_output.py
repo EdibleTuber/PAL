@@ -132,6 +132,34 @@ def test_real_world_example():
     assert "Access-Control List" in result
 
 
+def test_dedupes_duplicate_article():
+    """When model produces the full article twice, keep only the last copy."""
+    text = (
+        "<|think|>\nReasoning about content...\n<|/think|>\n\n"
+        "## Overview\n\nFirst version.\n\n"
+        "## Key Concepts\n\n- A\n\n"
+        "---\n\n"
+        "<|think|>\nLet me polish...\n<|/think|>\n\n"
+        "## Overview\n\nSecond polished version.\n\n"
+        "## Key Concepts\n\n- A refined\n- B added\n"
+    )
+    result = clean_model_output(text)
+    assert result.count("## Overview") == 1
+    assert "Second polished version" in result
+    assert "First version" not in result
+
+
+def test_single_overview_not_affected_by_dedup():
+    """A normal article with one ## Overview should pass through unchanged."""
+    text = (
+        "## Overview\n\nNormal article content.\n\n"
+        "## Key Concepts\n\n- Concept A\n- Concept B\n"
+    )
+    result = clean_model_output(text)
+    assert result.count("## Overview") == 1
+    assert "Normal article content" in result
+
+
 def test_real_world_duplicate_example():
     """Simulates the duplicate-response pattern."""
     text = (
