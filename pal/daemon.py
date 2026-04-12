@@ -207,6 +207,8 @@ class Daemon:
         from pal.tools import TOOL_DEFINITIONS
 
         conv.add_user(msg.text)
+        model = conv.model_override or self.inference.default_model
+        mode = decide_mode(conv)
         messages = conv.get_messages_for_api(system_prompt=self.prompt_builder.build())
         max_tool_rounds = 50
 
@@ -214,7 +216,7 @@ class Daemon:
             full_response = []
             tool_calls: list[ToolCall] | None = None
 
-            async for item in self.inference.stream(messages, tools=TOOL_DEFINITIONS):
+            async for item in self.inference.stream(messages, tools=TOOL_DEFINITIONS, model=model, reasoning=mode):
                 if isinstance(item, list):
                     tool_calls = item
                     break
@@ -259,10 +261,12 @@ class Daemon:
                 messages = conv.get_messages_for_api(
                     system_prompt=self.prompt_builder.build()
                 )
-                completion = await self.inference.complete(messages, tools=TOOL_DEFINITIONS)
+                completion = await self.inference.complete(messages, tools=TOOL_DEFINITIONS, model=model, reasoning=mode)
 
                 if completion.type == "text":
                     response_text = completion.content or ""
+                    if completion.reasoning:
+                        logger.debug("reasoning_content: %.500s", completion.reasoning)
                     conv.add_assistant(response_text)
                     done = ResponseMessage(text=response_text)
                     writer.write(encode_message(done))
@@ -452,7 +456,7 @@ class Daemon:
         ]
 
         try:
-            result = await self.inference.complete(messages)
+            result = await self.inference.complete(messages, reasoning="off")
             body = result.content or ""
         except Exception as exc:
             logger.exception("Inference error during /note: %s", exc)
@@ -803,7 +807,7 @@ class Daemon:
         ]
 
         try:
-            result = await self.inference.complete(messages)
+            result = await self.inference.complete(messages, reasoning="off")
             summary = result.content or ""
         except Exception as exc:
             logger.exception("Summarize inference failed: %s", exc)
@@ -916,7 +920,7 @@ class Daemon:
         ]
 
         try:
-            result = await self.inference.complete(messages)
+            result = await self.inference.complete(messages, reasoning="off")
             article = result.content or ""
         except Exception as exc:
             logger.exception("Compile inference failed: %s", exc)
@@ -1153,7 +1157,7 @@ class Daemon:
         ]
 
         try:
-            completion = await self.inference.complete(api_messages)
+            completion = await self.inference.complete(api_messages, reasoning="off")
             result = completion.content or ""
         except Exception as exc:
             logger.exception("Learn inference failed: %s", exc)
