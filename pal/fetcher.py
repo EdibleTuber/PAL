@@ -6,10 +6,14 @@ Performs:
   3. Content-Length header check where available
   4. trafilatura extraction (strips nav/footer/ads, keeps article body)
   5. SHA-256 hashing for provenance
+  6. Private IP / reserved address blocklist (SSRF defense-in-depth)
 """
 from dataclasses import dataclass
 import hashlib
+import ipaddress
 import re
+import socket as _socket
+from urllib.parse import urlparse
 
 import httpx
 import trafilatura
@@ -18,15 +22,71 @@ import trafilatura
 _TITLE_RE = re.compile(r"<title[^>]*>([^<]+)</title>", re.IGNORECASE)
 
 
+class FetchError(Exception):
+    """Raised when a URL can't be fetched for safety/correctness reasons."""
+
+
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+_ALLOWED_SCHEMES = ("http", "https")
+
+
+def _is_private_ip(ip_str: str) -> bool:
+    """Return True if ip_str falls in a private/reserved range."""
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    return any(addr in net for net in _PRIVATE_NETWORKS)
+
+
+def check_url_safety(url: str) -> None:
+    """Raise FetchError if URL targets a private/reserved address or bad scheme.
+
+    Resolves hostname via DNS to catch rebinding attacks.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        raise FetchError(f"blocked: scheme '{parsed.scheme}' not allowed")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise FetchError("blocked: no hostname in URL")
+
+    # Check if hostname is already a literal IP
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if any(addr in net for net in _PRIVATE_NETWORKS):
+            raise FetchError(f"blocked: {hostname} is a private/reserved address")
+        return
+    except ValueError:
+        pass  # Not a literal IP, resolve via DNS
+
+    # DNS resolution check
+    try:
+        results = _socket.getaddrinfo(hostname, None, _socket.AF_UNSPEC, _socket.SOCK_STREAM)
+        for family, _, _, _, sockaddr in results:
+            ip_str = sockaddr[0]
+            if _is_private_ip(ip_str):
+                raise FetchError(f"blocked: {hostname} resolves to private address {ip_str}")
+    except _socket.gaierror:
+        pass  # DNS failure — let httpx handle it with a proper timeout error
+
+
 ALLOWED_CONTENT_TYPES = (
     "text/html",
     "text/plain",
     "application/xhtml+xml",
 )
-
-
-class FetchError(Exception):
-    """Raised when a URL can't be fetched for safety/correctness reasons."""
 
 
 @dataclass
@@ -52,6 +112,7 @@ class URLFetcher:
         different host (SSRF risk). If the server returns a redirect, fetch
         fails and the caller can explicitly fetch the redirect target.
         """
+        check_url_safety(url)
         async with httpx.AsyncClient(
             timeout=self.timeout,
             follow_redirects=False,

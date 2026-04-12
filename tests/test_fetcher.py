@@ -4,6 +4,83 @@ import pytest
 from pal.fetcher import URLFetcher, FetchResult, FetchError
 
 
+@pytest.fixture(autouse=True)
+def _disable_blocklist_for_mock(monkeypatch, request):
+    """Disable blocklist for tests that use the mock server on 127.0.0.1."""
+    if "mock_inference_server" in request.fixturenames:
+        monkeypatch.setattr("pal.fetcher.check_url_safety", lambda url: None)
+
+
+# ---- Blocklist tests ----
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_private_ip_127():
+    """Fetcher must reject localhost URLs."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    with pytest.raises(FetchError, match="blocked"):
+        await fetcher.fetch("http://127.0.0.1:8080/secret")
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_private_ip_10():
+    """Fetcher must reject 10.x.x.x range."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    with pytest.raises(FetchError, match="blocked"):
+        await fetcher.fetch("http://10.0.0.1/internal")
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_private_ip_172():
+    """Fetcher must reject 172.16-31.x.x range."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    with pytest.raises(FetchError, match="blocked"):
+        await fetcher.fetch("http://172.16.0.1/internal")
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_private_ip_192_168():
+    """Fetcher must reject 192.168.x.x range."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    with pytest.raises(FetchError, match="blocked"):
+        await fetcher.fetch("http://192.168.1.1/admin")
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_ipv6_localhost():
+    """Fetcher must reject ::1."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    with pytest.raises(FetchError, match="blocked"):
+        await fetcher.fetch("http://[::1]:8080/secret")
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_file_scheme():
+    """Fetcher must reject file:// URLs."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    with pytest.raises(FetchError, match="blocked"):
+        await fetcher.fetch("file:///etc/passwd")
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_ftp_scheme():
+    """Fetcher must reject ftp:// URLs."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    with pytest.raises(FetchError, match="blocked"):
+        await fetcher.fetch("ftp://internal-server/files")
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_dns_rebinding():
+    """Fetcher must reject hostnames that resolve to private IPs."""
+    fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)
+    with pytest.raises(FetchError, match="blocked"):
+        await fetcher.fetch("http://localhost:9999/page")
+
+
+# ---- Existing tests ----
+
+
 def test_fetcher_has_user_agent():
     """URLFetcher should configure a User-Agent header."""
     fetcher = URLFetcher(max_bytes=2_000_000, timeout=10)

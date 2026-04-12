@@ -8,6 +8,12 @@ from pal.config import Config
 from pal.daemon import Daemon
 
 
+@pytest.fixture(autouse=True)
+def _disable_blocklist(monkeypatch):
+    """Tests use 127.0.0.1 mock server -- disable blocklist for test suite."""
+    monkeypatch.setattr("pal.fetcher.check_url_safety", lambda url: None)
+
+
 @pytest.fixture()
 async def web_daemon(socket_path, mock_inference_server, tmp_path):
     """Daemon using mock_inference_server as SearxNG endpoint too."""
