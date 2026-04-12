@@ -103,3 +103,9 @@ def test_decide_mode_override_off():
 def test_decide_mode_no_override():
     conv = Conversation(history_depth=10)
     assert decide_mode(conv) == "off"
+
+
+def test_shape_request_does_not_mutate_input():
+    body = {"model": "gemma-4-26b", "messages": []}
+    shape_request(body, "gemma-4-26b-a4b-it-q4_k_m", "on")
+    assert "chat_template_kwargs" not in body
