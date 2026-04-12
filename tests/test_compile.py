@@ -7,6 +7,7 @@ from pal.client import PalClient
 from pal.config import Config
 from pal.daemon import Daemon
 from pal.inference import CompletionResult
+from pal.article import parse_article, TIMELINE_MARKER
 
 
 @pytest.fixture()
@@ -34,16 +35,19 @@ async def compile_daemon(socket_path, mock_inference_server, tmp_path):
     await task
 
 
-def _write_summary_file(vault, path: str, body: str) -> None:
+def _write_summary_file(vault, path: str, body: str, title="Quantum Computing Basics",
+                        source_url="https://example.com/quantum",
+                        source_raw="raw/web/quantum-abc.md",
+                        source_hash="abc123") -> None:
     """Helper: write a raw/summaries/ file with frontmatter."""
     from pal.frontmatter import serialize_frontmatter
     full_path = vault / path
     full_path.parent.mkdir(parents=True, exist_ok=True)
     meta = {
-        "title": "Quantum Computing Basics",
-        "source_url": "https://example.com/quantum",
-        "source_raw": "raw/web/quantum-abc.md",
-        "source_hash": "abc123",
+        "title": title,
+        "source_url": source_url,
+        "source_raw": source_raw,
+        "source_hash": source_hash,
         "summarized_at": "2026-04-05T12:00:00+00:00",
         "sanitization_issues": [],
         "status": "summary",
@@ -54,26 +58,23 @@ def _write_summary_file(vault, path: str, body: str) -> None:
 @pytest.mark.asyncio
 async def test_compile_creates_research_article(compile_daemon, socket_path, monkeypatch):
     daemon, vault = compile_daemon
-
     call_count = 0
 
     async def fake_complete(messages, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            # First call: compilation
-            return CompletionResult(type="text", content="# Quantum Computing Basics\n\nQuantum computers use qubits...")
+            return CompletionResult(type="text", content="Research")  # categorize
+        # No topic match call -- no articles exist in category yet
         else:
-            # Second call: categorization
-            return CompletionResult(type="text", content="Research")
+            return CompletionResult(  # compile
+                type="text",
+                content="## Overview\n\nQuantum computers use qubits.\n\n## Key Concepts\n\n- Superposition\n",
+            )
 
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
-
-    _write_summary_file(
-        vault,
-        "raw/summaries/quantum-abc.md",
-        "Quantum computers use qubits instead of bits. They leverage superposition.",
-    )
+    _write_summary_file(vault, "raw/summaries/quantum-abc.md",
+                        "Quantum computers use qubits instead of bits.")
 
     client = PalClient(socket_path)
     await client.connect()
@@ -85,8 +86,7 @@ async def test_compile_creates_research_article(compile_daemon, socket_path, mon
     assert len(research_files) == 1
     content = research_files[0].read_text()
     assert "Quantum computers use qubits" in content
-    assert "source_url:" in content
-    assert "source_summary:" in content
+    assert TIMELINE_MARKER in content
 
 
 @pytest.mark.asyncio
@@ -99,9 +99,12 @@ async def test_compile_preserves_provenance_chain(compile_daemon, socket_path, m
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return CompletionResult(type="text", content="# Topic\n\nContent based on summary.")
+            return CompletionResult(type="text", content="Research")  # categorize
         else:
-            return CompletionResult(type="text", content="Research")
+            return CompletionResult(  # compile
+                type="text",
+                content="## Overview\n\nContent based on summary.\n\n## Key Concepts\n\n- Key point\n",
+            )
 
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
@@ -112,14 +115,11 @@ async def test_compile_preserves_provenance_chain(compile_daemon, socket_path, m
     await client.command("compile", "raw/summaries/foo.md")
     await client.close()
 
-    from pal.frontmatter import parse_frontmatter
     research_file = list((vault / "Research").glob("*.md"))[0]
-    meta, _ = parse_frontmatter(research_file.read_text())
-    assert meta["source_url"] == "https://example.com/quantum"
-    assert meta["source_summary"] == "raw/summaries/foo.md"
-    assert meta["source_raw"] == "raw/web/quantum-abc.md"
-    assert meta["source_hash"] == "abc123"
-    assert "compiled_at" in meta
+    article = parse_article(research_file.read_text())
+    assert article.meta["sources"][0]["url"] == "https://example.com/quantum"
+    assert article.meta["sources"][0]["hash"] == "abc123"
+    assert "compiled_at" in article.meta
 
 
 @pytest.mark.asyncio
@@ -127,8 +127,19 @@ async def test_compile_refuses_when_model_says_insufficient(compile_daemon, sock
     """If the model returns INSUFFICIENT:, nothing is saved."""
     daemon, vault = compile_daemon
 
+    call_count = 0
+
     async def fake_complete(messages, **kwargs):
-        return CompletionResult(type="text", content="INSUFFICIENT: The summary does not contain enough detail.")
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return CompletionResult(type="text", content="Research")  # categorize
+        else:
+            return CompletionResult(  # compile
+                type="text",
+                content="INSUFFICIENT: The summary does not contain enough detail.",
+            )
+
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     _write_summary_file(vault, "raw/summaries/thin.md", "Too brief.")
@@ -189,11 +200,12 @@ async def test_compile_uses_auto_categorization(compile_daemon, socket_path, mon
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            # First call: compilation
-            return CompletionResult(type="text", content="# Quantum Computing Basics\n\nQuantum computers use qubits...")
+            return CompletionResult(type="text", content="Science")  # categorize
         else:
-            # Second call: categorization
-            return CompletionResult(type="text", content="Science")
+            return CompletionResult(  # compile
+                type="text",
+                content="## Overview\n\nQuantum computers use qubits.\n\n## Key Concepts\n\n- Superposition\n",
+            )
 
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
@@ -225,9 +237,12 @@ async def test_compile_archives_raw_files(compile_daemon, socket_path, monkeypat
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return CompletionResult(type="text", content="# Topic\n\nArticle content.")
+            return CompletionResult(type="text", content="Research")  # categorize
         else:
-            return CompletionResult(type="text", content="Research")
+            return CompletionResult(  # compile
+                type="text",
+                content="## Overview\n\nArticle content.\n\n## Key Concepts\n\n- Topic point\n",
+            )
 
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
@@ -249,3 +264,119 @@ async def test_compile_archives_raw_files(compile_daemon, socket_path, monkeypat
     assert not (vault / "raw" / "summaries" / "quantum-abc.md").exists()
     assert (vault / "raw" / "archived" / "quantum-abc.md").exists()
     assert (vault / "raw" / "archived" / "quantum-abc.summary.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_compile_produces_timeline_format(compile_daemon, socket_path, monkeypatch):
+    """Compiled articles should have compiled truth + timeline sections."""
+    daemon, vault = compile_daemon
+    call_count = 0
+
+    async def fake_complete(messages, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return CompletionResult(type="text", content="Research")  # categorize
+        else:
+            return CompletionResult(  # compile
+                type="text",
+                content=(
+                    "## Overview\n\n"
+                    "Quantum computers use qubits instead of classical bits.\n\n"
+                    "## Key Concepts\n\n"
+                    "- **Superposition** - qubits can be in multiple states\n"
+                    "- **Entanglement** - qubits can be correlated\n"
+                ),
+            )
+
+    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
+    _write_summary_file(vault, "raw/summaries/quantum-abc.md",
+                        "Quantum computers use qubits instead of bits. They leverage superposition.")
+
+    client = PalClient(socket_path)
+    await client.connect()
+    resp = await client.command("compile", "raw/summaries/quantum-abc.md")
+    await client.close()
+
+    research_files = list((vault / "Research").glob("*.md"))
+    assert len(research_files) == 1
+    content = research_files[0].read_text()
+    assert TIMELINE_MARKER in content
+    assert "## Overview" in content
+    assert "## Key Concepts" in content
+    assert "**Source:** https://example.com/quantum" in content
+    assert "**Source hash:** abc123" in content
+
+
+@pytest.mark.asyncio
+async def test_compile_merge_updates_existing_article(compile_daemon, socket_path, monkeypatch):
+    """Compiling a source that matches an existing article should merge."""
+    daemon, vault = compile_daemon
+
+    # Create an existing article
+    from pal.article import Article, TimelineEntry, serialize_article as sa
+    existing = Article(
+        meta={
+            "title": "Quantum Computing Basics",
+            "created": "2026-04-10T10:00:00+00:00",
+            "updated": "2026-04-10T10:00:00+00:00",
+            "compiled_at": "2026-04-10T10:00:00+00:00",
+            "status": "compiled",
+            "sources": [{"url": "https://old.com/quantum", "hash": "old123", "added": "2026-04-10T10:00:00+00:00"}],
+        },
+        compiled_truth="## Overview\n\nOld quantum overview.\n\n## Key Concepts\n\n- Old concepts\n",
+        timeline=[TimelineEntry(
+            date="2026-04-10", source_label="old.com",
+            source_url="https://old.com/quantum", source_hash="old123",
+            added="2026-04-10T10:00:00+00:00", summary="Old source findings.",
+        )],
+    )
+    research_dir = vault / "Research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    (research_dir / "quantum-computing-basics.md").write_text(sa(existing))
+
+    daemon.wiki.rebuild_index()
+
+    call_count = 0
+
+    async def fake_complete(messages, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return CompletionResult(type="text", content="Research")  # categorize
+        elif call_count == 2:
+            return CompletionResult(type="text", content="quantum-computing-basics.md")  # topic match
+        else:
+            return CompletionResult(  # merge compile
+                type="text",
+                content=(
+                    "## Overview\n\n"
+                    "Merged quantum overview with new info.\n\n"
+                    "## Key Concepts\n\n"
+                    "- Old concepts\n- New concepts from new source\n"
+                ),
+            )
+
+    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
+
+    _write_summary_file(vault, "raw/summaries/quantum-new.md",
+                        "New quantum findings about error correction.",
+                        title="Quantum Computing Basics",
+                        source_url="https://new.com/quantum",
+                        source_hash="new456")
+
+    client = PalClient(socket_path)
+    await client.connect()
+    resp = await client.command("compile", "raw/summaries/quantum-new.md")
+    await client.close()
+
+    research_files = list(research_dir.glob("*.md"))
+    assert len(research_files) == 1
+
+    article = parse_article(research_files[0].read_text())
+    assert "Merged quantum overview" in article.compiled_truth
+    assert len(article.timeline) == 2
+    assert article.timeline[0].source_url == "https://old.com/quantum"
+    assert article.timeline[1].source_url == "https://new.com/quantum"
+    assert article.meta["created"] == "2026-04-10T10:00:00+00:00"
+    assert len(article.meta["sources"]) == 2
