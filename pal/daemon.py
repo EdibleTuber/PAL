@@ -27,6 +27,7 @@ from pal.categorizer import Categorizer
 from pal.sanitizer import sanitize
 from pal.boundary import generate_guid, wrap_untrusted, SANITIZATION_SYSTEM_PROMPT
 from pal.chunker import chunk_markdown
+from pal.reasoning import decide_mode
 from pal.protocol import (
     ChatMessage,
     CommandMessage,
@@ -310,6 +311,8 @@ class Daemon:
                     "  /learnings     — List saved learnings\n"
                     "  /promote <id>  — Promote a learning to wisdom\n"
                     "  /rate <id> <n> — Rate a learning (1-5)\n"
+                    "  /model [name]  -- Show or switch the active model\n"
+                    "  /think [mode]  -- Control reasoning (on/off/auto/show/hide)\n"
                     "  /quit          — End the session"
                 ),
                 command="help",
@@ -365,6 +368,8 @@ class Daemon:
             await self._handle_promote(msg.args, writer)
         elif msg.name == "rate":
             await self._handle_rate(msg.args, writer)
+        elif msg.name == "think":
+            await self._handle_think(msg.args, conv, writer)
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
@@ -1287,5 +1292,56 @@ class Daemon:
             )
         else:
             resp = ResponseMessage(text=body, command="profile")
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_think(
+        self,
+        args: str,
+        conv: Conversation,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        """Handle /think -- control reasoning mode for this conversation."""
+        arg = args.strip().lower()
+        if arg == "on":
+            conv.reasoning_override = "on"
+            logger.info(
+                "reasoning_toggle conversation_id=%s action=on last_user_message=%.200s",
+                id(conv),
+                conv.messages[-1]["content"] if conv.messages else "",
+            )
+            resp = ResponseMessage(text="Reasoning: on", command="think")
+        elif arg == "off":
+            conv.reasoning_override = "off"
+            logger.info(
+                "reasoning_toggle conversation_id=%s action=off last_user_message=%.200s",
+                id(conv),
+                conv.messages[-1]["content"] if conv.messages else "",
+            )
+            resp = ResponseMessage(text="Reasoning: off", command="think")
+        elif arg == "auto":
+            conv.reasoning_override = None
+            logger.info(
+                "reasoning_toggle conversation_id=%s action=auto last_user_message=%.200s",
+                id(conv),
+                conv.messages[-1]["content"] if conv.messages else "",
+            )
+            resp = ResponseMessage(text="Reasoning: auto (off by default)", command="think")
+        elif arg in ("show", "hide"):
+            resp = ResponseMessage(
+                text=f"Reasoning display: {arg} (CLI only -- Discord reasoning display is not yet available)",
+                command="think",
+            )
+        elif arg == "":
+            mode = decide_mode(conv)
+            resp = ResponseMessage(
+                text=f"Reasoning mode: {conv.reasoning_override or 'auto'} (effective: {mode})",
+                command="think",
+            )
+        else:
+            resp = ResponseMessage(
+                text="Usage: /think [on|off|auto|show|hide]",
+                command="think",
+            )
         writer.write(encode_message(resp))
         await writer.drain()
