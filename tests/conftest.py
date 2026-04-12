@@ -266,8 +266,20 @@ async def mock_page_no_content_type(request: Request):
     )
 
 
+async def mock_list_models(request: Request):
+    """Mock /v1/models endpoint."""
+    return JSONResponse({
+        "object": "list",
+        "data": [
+            {"id": "test-model", "object": "model", "created": 0, "owned_by": "local"},
+            {"id": "gemma-4-26b-a4b-it-q4_k_m", "object": "model", "created": 0, "owned_by": "local"},
+        ],
+    })
+
+
 mock_app = Starlette(routes=[
     Route("/v1/chat/completions", mock_chat_completions, methods=["POST"]),
+    Route("/v1/models", mock_list_models, methods=["GET"]),
     Route("/collections/{collection_id}/search", mock_collection_search, methods=["POST"]),
     Route("/collections/{collection_id}/docs/{doc_id:path}", mock_collection_get_doc, methods=["GET"]),
     Route("/search", mock_searxng_search, methods=["GET"]),

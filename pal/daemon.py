@@ -10,6 +10,8 @@ import os
 import time
 from pathlib import Path
 
+import httpx
+
 from pal.config import Config
 from pal.wiki import WikiManager
 from pal.conversation import Conversation
@@ -325,9 +327,15 @@ class Daemon:
             await writer.drain()
         elif msg.name == "status":
             articles = self.wiki.list_articles()
+            active_model = conv.model_override or self.inference.default_model
+            model_source = "override" if conv.model_override else "default"
+            reasoning_mode = decide_mode(conv)
+            reasoning_label = conv.reasoning_override or "auto"
             resp = ResponseMessage(
                 text=(
-                    f"Model: {self.inference.default_model}\n"
+                    f"Model: {active_model} ({model_source})\n"
+                    f"Default model: {self.inference.default_model}\n"
+                    f"Reasoning: {reasoning_label} (effective: {reasoning_mode})\n"
                     f"Server: {self.inference.base_url}\n"
                     f"Vault: {self.wiki.vault_path} ({len(articles)} articles)\n"
                     f"Collection: {self.retrieval.collection_id}"
@@ -368,6 +376,8 @@ class Daemon:
             await self._handle_promote(msg.args, writer)
         elif msg.name == "rate":
             await self._handle_rate(msg.args, writer)
+        elif msg.name == "model":
+            await self._handle_model(msg.args, conv, writer)
         elif msg.name == "think":
             await self._handle_think(msg.args, conv, writer)
         else:
@@ -1292,6 +1302,80 @@ class Daemon:
             )
         else:
             resp = ResponseMessage(text=body, command="profile")
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_model(
+        self,
+        args: str,
+        conv: Conversation,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        """Handle /model -- show or switch the active model."""
+        arg = args.strip()
+
+        if arg == "":
+            current = conv.model_override or self.inference.default_model
+            source = "override" if conv.model_override else "default"
+            resp = ResponseMessage(
+                text=f"Model: {current} ({source})",
+                command="model",
+            )
+        elif arg == "list":
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    r = await client.get(f"{self.inference.base_url}/v1/models")
+                    r.raise_for_status()
+                data = r.json()
+                names = [m["id"] for m in data.get("data", [])]
+                if names:
+                    lines = ["Available models:"]
+                    for i, name in enumerate(names, 1):
+                        marker = " (active)" if name == (conv.model_override or self.inference.default_model) else ""
+                        lines.append(f"  {i}. {name}{marker}")
+                    resp = ResponseMessage(text="\n".join(lines), command="model")
+                else:
+                    resp = ResponseMessage(text="No models available.", command="model")
+            except Exception as exc:
+                logger.warning("Failed to list models: %s", exc)
+                error = ErrorMessage(error=f"Could not reach inference server: {exc}")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+        elif arg == "default":
+            conv.model_override = None
+            resp = ResponseMessage(
+                text=f"Model reset to default: {self.inference.default_model}",
+                command="model",
+            )
+        else:
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    r = await client.get(f"{self.inference.base_url}/v1/models")
+                    r.raise_for_status()
+                data = r.json()
+                names = [m["id"] for m in data.get("data", [])]
+            except Exception as exc:
+                logger.warning("Failed to validate model: %s", exc)
+                error = ErrorMessage(error=f"Could not reach inference server: {exc}")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+
+            if arg not in names:
+                error = ErrorMessage(
+                    error=f"Model not found: {arg}. Use /model list to see available models.",
+                )
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+
+            conv.model_override = arg
+            resp = ResponseMessage(
+                text=f"Model set to: {arg}",
+                command="model",
+            )
+
         writer.write(encode_message(resp))
         await writer.drain()
 
