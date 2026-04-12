@@ -29,6 +29,7 @@ from pal.categorizer import Categorizer
 from pal.summarizer import summarize_raw_file
 from pal.chunker import chunk_markdown
 from pal.reasoning import decide_mode
+from pal.researcher import Researcher, parse_topic_file
 from pal.protocol import (
     ChatMessage,
     CommandMessage,
@@ -338,8 +339,9 @@ class Daemon:
                     "  /learnings     — List saved learnings\n"
                     "  /promote <id>  — Promote a learning to wisdom\n"
                     "  /rate <id> <n> — Rate a learning (1-5)\n"
-                    "  /model [name]  -- Show or switch the active model\n"
-                    "  /think [mode]  -- Control reasoning (on/off/auto/show/hide)\n"
+                    "  /model [name]  - Show or switch the active model\n"
+                    "  /think [mode]  - Control reasoning (on/off/auto/show/hide)\n"
+                    "  /research <t>  - Research a topic or file of topics\n"
                     "  /quit          — End the session"
                 ),
                 command="help",
@@ -405,6 +407,8 @@ class Daemon:
             await self._handle_model(msg.args, conv, writer)
         elif msg.name == "think":
             await self._handle_think(msg.args, conv, writer)
+        elif msg.name == "research":
+            await self._handle_research(msg.args, writer)
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
@@ -1365,6 +1369,105 @@ class Daemon:
                 command="model",
             )
 
+        writer.write(encode_message(resp))
+        await writer.drain()
+
+    async def _handle_research(
+        self, args: str, writer: asyncio.StreamWriter
+    ) -> None:
+        """Handle /research - search, fetch, and summarize topics."""
+        args = args.strip()
+        if not args:
+            error = ErrorMessage(error="Usage: /research [--verbose] [deep] <topic or path>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        # Parse flags
+        verbose = False
+        deep = False
+        parts = args.split()
+        remaining = []
+        for part in parts:
+            if part == "--verbose":
+                verbose = True
+            elif part == "deep" and not remaining:
+                deep = True
+            else:
+                remaining.append(part)
+        topic_or_path = " ".join(remaining)
+
+        if not topic_or_path:
+            error = ErrorMessage(error="Usage: /research [--verbose] [deep] <topic or path>")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        depth = 10 if deep else 3
+
+        # Progress callback - send ToolProgressMessage to client
+        async def send_progress(msg: str) -> None:
+            progress = ToolProgressMessage(tool="research", arguments={"status": msg})
+            writer.write(encode_message(progress))
+            await writer.drain()
+
+        def on_progress(msg: str) -> None:
+            asyncio.get_running_loop().create_task(send_progress(msg))
+
+        researcher = Researcher(
+            websearch=self.websearch,
+            fetcher=self.fetcher,
+            inference=self.inference,
+            vault_path=self.config.vault_path,
+            on_progress=on_progress,
+        )
+
+        # Detect file vs topic
+        candidate_path = self.config.vault_path / topic_or_path
+        if candidate_path.is_file():
+            topics = parse_topic_file(candidate_path)
+            if not topics:
+                error = ErrorMessage(error=f"No topics found in {topic_or_path}")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+        else:
+            topics = [topic_or_path]
+
+        # Run research
+        try:
+            report = await researcher.research_topics(topics, depth=depth, verbose=verbose)
+        except Exception as exc:
+            logger.exception("Research failed: %s", exc)
+            error = ErrorMessage(error=f"Research failed: {exc}")
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
+
+        # Format report
+        from urllib.parse import urlparse
+        lines = [f"Research complete: {len(report.results)} topic(s), "
+                 f"{report.total_fetched} fetched, {report.total_summarized} summarized"]
+        lines.append("")
+        for res in report.results:
+            source_count = len([s for s in res.sources if s.status == "ok"])
+            lines.append(f"  {res.topic} ({source_count} source(s))")
+            for src in res.sources:
+                host = urlparse(src.url).hostname or src.url
+                if src.status == "ok":
+                    lines.append(f"    + {host} - {src.title}")
+                else:
+                    lines.append(f"    x {host} - {src.error or src.status}")
+            lines.append("")
+
+        if report.flagged_topics:
+            for ft in report.flagged_topics:
+                lines.append(f"  ! No usable results for: {ft}")
+            lines.append("")
+
+        lines.append("Summaries ready in raw/summaries/. Review and run /compile to add to wiki.")
+
+        resp = ResponseMessage(text="\n".join(lines), command="research")
         writer.write(encode_message(resp))
         await writer.drain()
 
