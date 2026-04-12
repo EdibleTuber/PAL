@@ -185,20 +185,30 @@ async def mock_collection_get_doc(request: Request):
 
 
 async def mock_searxng_search(request: Request):
-    """Mock SearxNG /search endpoint."""
+    """Mock SearxNG /search endpoint.
+
+    Returns URLs pointing back to the mock server so research tests
+    can actually fetch them.
+    """
     query = request.query_params.get("q", "")
+    base = str(request.base_url).rstrip("/")
     return JSONResponse({
         "query": query,
         "results": [
             {
-                "url": f"https://wikipedia.org/wiki/{query.replace(' ', '_')}",
-                "title": f"{query} - Wikipedia",
-                "content": f"Wikipedia snippet about {query}.",
+                "url": f"{base}/page.html?topic={query.replace(' ', '-')}&src=1",
+                "title": f"{query} - Overview",
+                "content": f"Overview of {query}.",
             },
             {
-                "url": f"https://arxiv.org/abs/2301.00001",
-                "title": f"Research on {query}",
-                "content": f"Abstract mentioning {query}.",
+                "url": f"{base}/page.html?topic={query.replace(' ', '-')}&src=2",
+                "title": f"{query} - Tutorial",
+                "content": f"Tutorial on {query}.",
+            },
+            {
+                "url": f"{base}/page.html?topic={query.replace(' ', '-')}&src=3",
+                "title": f"{query} - Reference",
+                "content": f"Reference for {query}.",
             },
             {
                 "url": "https://evil.example.com/junk",
