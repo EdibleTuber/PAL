@@ -43,11 +43,16 @@ class WikiManager:
         title: str,
         body: str,
         tags: list[str] | None = None,
+        rebuild_index: bool = True,
     ) -> Path:
         """Write or update a markdown article in the vault.
 
         Creates parent directories as needed. Preserves the original
         'created' timestamp on updates and sets 'updated'.
+
+        If rebuild_index is True (the default), rebuilds _index.md after
+        the write. Bulk operations should pass rebuild_index=False and
+        call rebuild_index() once at the end.
         """
         full_path = self._resolve_safe(path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +76,10 @@ class WikiManager:
         content = serialize_frontmatter(meta, body)
         full_path.write_text(content)
         logger.info("Wrote article: %s", path)
+
+        if rebuild_index:
+            self.rebuild_index()
+
         return full_path
 
     def read_article(self, path: str) -> tuple[dict, str]:

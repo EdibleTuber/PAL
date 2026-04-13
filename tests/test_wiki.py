@@ -184,3 +184,39 @@ def test_write_article_path_traversal_blocked(wiki, vault):
     wiki.init_vault()
     with pytest.raises(ValueError):
         wiki.write_article(path="../../etc/evil.md", title="Evil", body="Bad.\n")
+
+
+def test_write_article_rebuilds_index_by_default(wiki, vault):
+    wiki.init_vault()
+    wiki.write_article(path="Projects/a.md", title="Article A", body="Body.\n")
+    index_text = (vault / "_index.md").read_text()
+    assert "Article A" in index_text
+    assert "Projects/a.md" in index_text
+
+
+def test_write_article_skips_rebuild_when_disabled(wiki, vault):
+    wiki.init_vault()
+    # Write an initial article so _index.md exists with known content.
+    wiki.write_article(path="Projects/first.md", title="First", body="Body.\n")
+    first_index = (vault / "_index.md").read_text()
+    # Now write another with rebuild suppressed.
+    wiki.write_article(
+        path="Projects/second.md",
+        title="Second",
+        body="Body.\n",
+        rebuild_index=False,
+    )
+    second_index = (vault / "_index.md").read_text()
+    assert second_index == first_index
+    assert "Second" not in second_index
+
+
+def test_write_article_rebuild_false_still_writes_article(wiki, vault):
+    wiki.init_vault()
+    wiki.write_article(
+        path="Projects/skip.md",
+        title="Skip Index",
+        body="Body.\n",
+        rebuild_index=False,
+    )
+    assert (vault / "Projects" / "skip.md").exists()
