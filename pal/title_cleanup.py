@@ -56,12 +56,15 @@ def parse_title_and_body(response: str) -> tuple[str | None, str]:
 _BAD_TITLE_SUBSTRINGS = (
     " · ",
     " | ",
+    " - ",
     "GitHub -",
 )
 
 
 def is_bad_title(title: str) -> bool:
     """Return True if the title should be regenerated during backfill."""
+    if not title.strip():
+        return True
     if len(title) > 80:
         return True
     for marker in _BAD_TITLE_SUBSTRINGS:
@@ -83,7 +86,7 @@ async def regenerate_title(content: str, inference) -> str | None:
     result = await inference.complete(messages, reasoning="off")
     raw = result.content or ""
     title, _ = parse_title_and_body(raw)
-    if title is None:
-        logger.warning("regenerate_title: model response missing TITLE prefix: %r", raw[:200])
+    if not title or not title.strip():
+        logger.warning("regenerate_title: model response missing or empty TITLE: %r", raw[:200])
         return None
     return title

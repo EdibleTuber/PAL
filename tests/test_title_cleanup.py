@@ -94,3 +94,35 @@ async def test_regenerate_title_returns_none_on_bad_response():
         inference=inference,
     )
     assert result is None
+
+
+def test_is_bad_title_flags_empty():
+    assert is_bad_title("")
+    assert is_bad_title("   ")
+
+
+def test_is_bad_title_flags_space_hyphen_space():
+    assert is_bad_title("Python list comprehension - Stack Overflow")
+    assert is_bad_title("Install Docker - Quick Start Guide")
+
+
+def test_parse_title_and_body_handles_empty_title_value():
+    response = "TITLE:\n\nBody here."
+    title, body = parse_title_and_body(response)
+    # Parser returns empty string; callers are responsible for treating
+    # empty as "missing".
+    assert title == ""
+    assert body == "Body here."
+
+
+@pytest.mark.asyncio
+async def test_regenerate_title_returns_none_on_empty_title():
+    inference = AsyncMock()
+    inference.complete.return_value = MockInferenceResult(
+        content="TITLE:\n\nsome body"
+    )
+    result = await regenerate_title(
+        content="Some content.",
+        inference=inference,
+    )
+    assert result is None
