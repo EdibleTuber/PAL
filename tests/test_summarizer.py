@@ -98,3 +98,43 @@ async def test_summarize_handles_inference_error(raw_file):
             vault_path=vault,
             inference=inference,
         )
+
+
+@pytest.mark.asyncio
+async def test_summarize_uses_clean_title_from_response(raw_file):
+    """When the model emits TITLE: ..., the summary frontmatter gets that title."""
+    vault, path = raw_file
+    inference = AsyncMock()
+    inference.complete.return_value = MockInferenceResult(
+        content="TITLE: Clean Short Title\n\nThis is the summary body."
+    )
+    result = await summarize_raw_file(
+        raw_path=path,
+        vault_path=vault,
+        inference=inference,
+    )
+    from pal.frontmatter import parse_frontmatter
+    meta, body = parse_frontmatter(result.summary_path.read_text())
+    assert meta["title"] == "Clean Short Title"
+    assert "This is the summary body." in body
+    assert "TITLE:" not in body  # title line is stripped from body
+
+
+@pytest.mark.asyncio
+async def test_summarize_falls_back_to_raw_stem_when_no_title_prefix(raw_file):
+    """When the model skips the TITLE: prefix, fall back to raw_stem."""
+    vault, path = raw_file
+    inference = AsyncMock()
+    inference.complete.return_value = MockInferenceResult(
+        content="No title prefix here, just a body."
+    )
+    result = await summarize_raw_file(
+        raw_path=path,
+        vault_path=vault,
+        inference=inference,
+    )
+    from pal.frontmatter import parse_frontmatter
+    meta, body = parse_frontmatter(result.summary_path.read_text())
+    # Expect fallback to the raw file's stem.
+    assert meta["title"] == path.stem
+    assert "No title prefix here" in body
