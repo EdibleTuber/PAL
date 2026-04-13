@@ -215,3 +215,47 @@ async def test_model_default_resets_to_config(running_daemon, socket_path):
     assert running_daemon.inference.default_model == "test-model"
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_model_switch_routes_summarize_to_new_model(model_switch_daemon, socket_path):
+    """/model <name> must propagate to subsequent /summarize inference calls."""
+    from pal.frontmatter import serialize_frontmatter
+    from tests.conftest import REQUEST_LOG
+
+    daemon, vault = model_switch_daemon
+
+    # Write a raw file to the vault for /summarize to consume
+    raw_dir = vault / "raw" / "web"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    meta = {
+        "source_url": "https://example.com/test",
+        "title": "Test Article",
+        "fetched_at": "2026-04-05T12:00:00+00:00",
+        "content_hash": "abc123",
+        "byte_size": 100,
+        "status": "raw",
+    }
+    raw_path = raw_dir / "test.md"
+    raw_path.write_text(serialize_frontmatter(meta, "This is the article body.\n"))
+
+    client = PalClient(socket_path)
+    await client.connect()
+
+    # Switch the active model
+    await client.command("model", "gemma-4-26b-a4b-it-q4_k_m")
+
+    # Clear any requests captured during /model validation + switch
+    REQUEST_LOG.clear()
+
+    # Trigger /summarize - this should hit the inference server with the new model
+    await client.command("summarize", "raw/web/test.md")
+
+    await client.close()
+
+    # Every captured chat/completions request must carry the switched model
+    assert len(REQUEST_LOG) >= 1, "expected at least one inference request during /summarize"
+    for entry in REQUEST_LOG:
+        assert entry.get("model") == "gemma-4-26b-a4b-it-q4_k_m", (
+            f"expected model=gemma-4-26b-a4b-it-q4_k_m, got {entry.get('model')}"
+        )
