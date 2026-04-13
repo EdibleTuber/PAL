@@ -259,3 +259,56 @@ async def test_model_switch_routes_summarize_to_new_model(model_switch_daemon, s
         assert entry.get("model") == "gemma-4-26b-a4b-it-q4_k_m", (
             f"expected model=gemma-4-26b-a4b-it-q4_k_m, got {entry.get('model')}"
         )
+
+
+@pytest.mark.asyncio
+async def test_model_switch_routes_compile_to_new_model(model_switch_daemon, socket_path):
+    """/model <name> must propagate across all inference calls inside /compile.
+
+    /compile makes multiple inference calls: categorize, then compile (and
+    topic-match when applicable). Every call must use the switched model.
+    """
+    from pal.frontmatter import serialize_frontmatter
+    from tests.conftest import REQUEST_LOG
+
+    daemon, vault = model_switch_daemon
+
+    # Write a summary file to the vault for /compile to consume
+    summaries_dir = vault / "raw" / "summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    summary_meta = {
+        "title": "Test Article",
+        "source_url": "https://example.com/test",
+        "source_raw": "raw/web/test.md",
+        "source_hash": "abc123",
+        "summarized_at": "2026-04-05T12:00:00+00:00",
+        "sanitization_issues": [],
+        "status": "summary",
+    }
+    summary_path = summaries_dir / "test.md"
+    summary_path.write_text(serialize_frontmatter(summary_meta, "Summary body about the article.\n"))
+
+    client = PalClient(socket_path)
+    await client.connect()
+
+    # Switch the active model
+    await client.command("model", "gemma-4-26b-a4b-it-q4_k_m")
+
+    # Clear any requests captured during /model validation + switch
+    REQUEST_LOG.clear()
+
+    # Trigger /compile - this hits inference server multiple times
+    await client.command("compile", "raw/summaries/test.md")
+
+    await client.close()
+
+    # /compile must produce at least 2 inference requests (categorize + compile);
+    # with an empty target directory, topic matching short-circuits without a model call.
+    assert len(REQUEST_LOG) >= 2, (
+        f"expected at least 2 inference requests during /compile, got {len(REQUEST_LOG)}"
+    )
+    for entry in REQUEST_LOG:
+        assert entry.get("model") == "gemma-4-26b-a4b-it-q4_k_m", (
+            f"expected model=gemma-4-26b-a4b-it-q4_k_m on every request, "
+            f"got {entry.get('model')}"
+        )
