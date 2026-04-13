@@ -5,12 +5,20 @@ Run with --apply to write changes. Default is dry-run.
 import argparse
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 from pal.backfill_titles import backfill_titles
 from pal.config import load_config
 from pal.inference import InferenceClient
 from pal.wiki import WikiManager
+
+
+# Backfill is best-served by gemma4 because its reasoning goes into
+# reasoning_content (not main content), so TITLE: parsing is clean.
+# Operator can still override via PAL_MODEL or the pal-backfill-titles
+# invocation env.
+_BACKFILL_DEFAULT_MODEL = "gemma-4-26b-a4b-it-q4_k_m"
 
 
 def main() -> None:
@@ -36,6 +44,12 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config()
+
+    # Force gemma4 for the backfill run unless the operator has explicitly
+    # set PAL_MODEL in the invocation environment.
+    if "PAL_MODEL" not in os.environ:
+        config.model = _BACKFILL_DEFAULT_MODEL
+
     vault_path = args.vault or config.vault_path
     wiki = WikiManager(vault_path)
     inference = InferenceClient(
