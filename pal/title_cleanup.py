@@ -8,16 +8,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-TITLE_RULES = """You generate a clean title for the content below.
-
-Rules:
+TITLE_RULES = """Title rules:
 - Max 80 characters.
 - Strip trailing site names (e.g. " - Stack Overflow", " · GitHub", " | Docs").
 - Sentence case. No surrounding quotes.
 - Describe what the content IS, not where it lives. Prefer
   "Claude Code CLI agentic coding tool" over "GitHub - codeaashu/claude-code".
 
-Respond with exactly one line in this format:
+Begin your response with a single line in this format:
 
 TITLE: <your title>
 """

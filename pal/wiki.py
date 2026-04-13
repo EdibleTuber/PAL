@@ -171,8 +171,15 @@ class WikiManager:
     def git_commit(self, message: str) -> None:
         """Stage all changes in the vault and commit.
 
-        No-op if there are no changes to commit.
+        No-op if there are no changes to commit or if the vault is not a git
+        repository.
         """
+        # Bail out early if this is not a git repository to avoid crashing in
+        # non-git vaults (e.g. test fixtures).
+        if not (self.vault_path / ".git").exists():
+            logger.debug("git_commit: vault has no .git directory, skipping")
+            return
+
         subprocess.run(
             ["git", "add", "."],
             cwd=self.vault_path,

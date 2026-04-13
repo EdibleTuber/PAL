@@ -224,3 +224,73 @@ async def test_backfill_skips_when_regenerate_returns_none(vault):
     assert report.processed == 1
     assert report.updated == 0
     assert report.skipped_error == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_apply_creates_git_commit(vault):
+    """Apply mode should produce one git commit describing the backfill."""
+    # Initialize git in the vault so git_commit can work.
+    import subprocess
+    subprocess.run(["git", "init"], cwd=vault, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=vault, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=vault, check=True, capture_output=True)
+    # Initial commit so we have a HEAD.
+    subprocess.run(["git", "commit", "-m", "init", "--allow-empty"], cwd=vault, check=True, capture_output=True)
+
+    _write_article(vault, "AI/long.md", title="a" * 120)
+    _write_article(vault, "AI/long2.md", title="b" * 120)
+
+    inference = AsyncMock()
+    inference.complete.return_value = MockInferenceResult(
+        content="TITLE: Clean Name"
+    )
+    wiki = WikiManager(vault)
+
+    await backfill_titles(
+        vault=vault,
+        wiki=wiki,
+        inference=inference,
+        apply=True,
+    )
+
+    # Confirm a new commit was made.
+    log = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=vault,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    lines = [l for l in log.stdout.strip().split("\n") if l]
+    assert len(lines) >= 2  # init + backfill
+    assert "backfill" in lines[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_backfill_refreshes_updated_timestamp(vault):
+    """Regenerated articles should have their updated timestamp refreshed."""
+    _write_article(vault, "AI/long.md", title="a" * 120)
+    # Seed a specific 'updated' timestamp we can detect as stale.
+    from pal.frontmatter import parse_frontmatter, serialize_frontmatter
+    text = (vault / "AI/long.md").read_text()
+    meta, body = parse_frontmatter(text)
+    meta["updated"] = "2020-01-01T00:00:00+00:00"
+    (vault / "AI/long.md").write_text(serialize_frontmatter(meta, body))
+
+    inference = AsyncMock()
+    inference.complete.return_value = MockInferenceResult(
+        content="TITLE: Fresh Title"
+    )
+    wiki = WikiManager(vault)
+
+    await backfill_titles(
+        vault=vault,
+        wiki=wiki,
+        inference=inference,
+        apply=True,
+    )
+
+    meta, _ = parse_frontmatter((vault / "AI/long.md").read_text())
+    assert meta["title"] == "Fresh Title"
+    # Updated timestamp should be newer than the seeded 2020 value.
+    assert not meta["updated"].startswith("2020")

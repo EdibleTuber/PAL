@@ -7,6 +7,7 @@ and other frontmatter fields. Rebuilds the index once at the end.
 """
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pal.article import parse_article, serialize_article, Article
@@ -96,8 +97,9 @@ async def backfill_titles(
 
         # Update the article's title and rewrite, preserving timeline and
         # all other Article fields (which WikiManager.write_article would drop).
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         updated_article = Article(
-            meta={**article.meta, "title": new_title},
+            meta={**article.meta, "title": new_title, "updated": now},
             compiled_truth=article.compiled_truth,
             timeline=article.timeline,
         )
@@ -105,5 +107,6 @@ async def backfill_titles(
 
     if apply and report.updated > 0:
         wiki.rebuild_index()
+        wiki.git_commit(f"backfill: regenerated titles for {report.updated} articles")
 
     return report
