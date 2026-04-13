@@ -46,13 +46,33 @@ Web Fetch Pipeline (/fetch --> /summarize --> /compile)
     |
     |  User: /compile <summary-path>
     v
-  Daemon reads summary --> inference server (compile prompt)
+  Daemon reads summary
     |
     v
-  Categorizer scans vault dirs --> picks category
+  Categorizer --> picks target category
     |
     v
-  WikiManager.write_article() --> {category}/{slug}.md
+  find_existing_article() -- does a sibling article already cover this topic?
+    |                         (index lookup + model confirmation)
+    |
+    +-- no match: first compile --> inference server (compile prompt)
+    |               |
+    |               v
+    |             new Article with single timeline entry
+    |
+    +-- match found: merge compile --> inference server (merge prompt
+                    |                   with existing compiled truth +
+                    |                   new source material)
+                    v
+                  existing Article rewritten compiled truth + new
+                  timeline entry appended (created date preserved)
+    |
+    v
+  Article serialized with <!-- TIMELINE --> marker separating
+    compiled truth from append-only timeline entries
+    |
+    v
+  WikiManager writes to {category}/{slug}.md
     |
     v
   WikiManager.rebuild_index() --> _index.md updated
@@ -62,6 +82,63 @@ Web Fetch Pipeline (/fetch --> /summarize --> /compile)
     |
     v
   git commit
+
+
+Batch Research and Compilation (/research --> /compile-batch)
+
+  User: /research <topic or path/to/topics.md>
+    |
+    v
+  If path: parse_topic_file() extracts bullet items as topics
+  If topic: wrap as single-item list
+    |
+    v
+  For each topic:
+    Researcher._search_with_refinement()
+      |
+      v
+    WebSearchClient --> SearxNG /search
+      |
+      |  if thin results, retry with "{topic} tutorial",
+      |  "{topic} documentation", "{topic} guide"
+      v
+    Top N unique URLs (default 3, deep mode up to 10)
+      |
+      v
+    Researcher fetches each URL concurrently (asyncio.gather)
+      |
+      |  cross-topic dedup: skip URLs already fetched in this batch
+      v
+    For each fetch: raw/web/{topic-slug}-{source-slug}-{hash8}.md
+      |
+      v
+    Researcher summarizes each raw file
+      |
+      v
+    raw/summaries/{topic-slug}-{source-slug}-{hash8}.md
+    |
+    v
+  Report: topic/source counts, flagged topics with no usable results.
+  Review gate: summaries stay in raw/summaries/ until explicit compile.
+
+
+  User: /compile-batch
+    |
+    v
+  List all summaries in raw/summaries/
+    |
+    v
+  For each summary, sequentially:
+    Daemon._compile_one() -- same flow as /compile above
+      |
+      |  includes topic match, so multiple sources on the same
+      |  topic produce ONE article with multiple timeline entries
+      v
+    Save / merge / archive / git commit
+    |
+    v
+  Final report: new articles, merged-into-existing,
+  insufficient content, errors.
 
 
 Document Import (/import)

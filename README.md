@@ -36,7 +36,7 @@ Discord (pal-discord)  --unix socket--+
 - **CLI**: thin REPL client with streaming markdown rendering
 - **Discord**: bot that bridges Discord DMs and mentions to the daemon for mobile access
 - **Daemon**: always-on process that manages conversations, tools, and the vault
-- **Inference Server**: local LLM (Qwen 3.5 35B by default) via OpenAI-compatible API
+- **Inference Server**: any OpenAI-compatible local LLM. Tested with `gemma-4-26b-a4b-it-q4_k_m` and `Qwen3.5-35B-A3B-Q4_K_M`. Model choice is configurable via `PAL_MODEL` or switched at runtime with `/model`.
 
 ## Setup
 
@@ -114,9 +114,11 @@ Type naturally. PAL streams responses with live markdown rendering. During conve
 | `/get <title>` | Fetch article by exact title |
 | `/search-web <query>` | Web search via SearxNG |
 | `/fetch <url>` | Fetch a URL into raw/ for processing |
+| `/research <topic or file>` | Search, fetch, and summarize multiple sources on a topic (single topic or a markdown list of topics). Add `deep` for more sources, `--verbose` for per-URL progress. |
 | `/import <path>` | Import a local document (PDF, DOCX, etc.) |
 | `/summarize <path>` | Summarize fetched content |
 | `/compile <path>` | Compile a summary into a wiki article |
+| `/compile-batch` | Compile every summary in `raw/summaries/` in one pass |
 | `/learn` | Extract learnings from the conversation |
 | `/learnings` | List saved learnings |
 | `/promote <id>` | Promote a learning to active wisdom |
@@ -124,7 +126,9 @@ Type naturally. PAL streams responses with live markdown rendering. During conve
 | `/profile [set]` | View or update your profile |
 | `/wisdom` | List, add, or remove wisdom entries |
 | `/lint` | Run a vault health check |
-| `/status` | Show model, server, and vault info |
+| `/model [name\|list\|default]` | Show, switch, list, or reset the active model. A change applies to every subsequent inference call (chat, research, summarize, compile, note, learn). |
+| `/think [on\|off\|auto\|show\|hide]` | Control reasoning output for the current session |
+| `/status` | Show active model, config default, server, and vault info |
 | `/help` | Show all commands |
 | `/quit` | End the session |
 
@@ -172,14 +176,58 @@ PAL learns from conversations over time:
 3. **Profile** facts about the user are stored in `_profile/` and also injected into every prompt.
 4. **Ratings** via `/rate` help surface the most useful learnings for promotion.
 
-## Web Search Pipeline
+## Web Research Pipeline
 
-PAL can research topics from the web with a controlled pipeline:
+PAL can research topics from the web with a controlled pipeline. Two entry points exist depending on scope:
+
+**Single URL (granular control):**
 
 1. `/search-web <topic>` searches via a local SearxNG instance, filtered through a domain allowlist.
 2. `/fetch <url>` downloads content into `raw/web/` with prompt injection defenses (GUID-boundary wrapping, content sanitization).
 3. `/summarize <path>` produces a cleaned summary in `raw/summaries/`.
 4. `/compile <path>` turns the summary into a grounded wiki article.
+
+**Topic-level batch research:**
+
+1. `/research <topic>` searches SearxNG for the topic, fetches the top results, summarizes each. Add `deep` for more sources.
+2. `/research path/to/topics.md` accepts a markdown bullet list of topics and processes them as a batch. Query refinement kicks in automatically when initial results are thin.
+3. `/compile-batch` compiles every summary in `raw/summaries/` in one pass, with topic matching so multiple sources on the same subject merge into a single article.
+
+Both pipelines end with articles in the compiled truth + timeline format described below. The review gate before compilation is preserved: summaries sit in `raw/summaries/` until you explicitly compile them.
+
+## Article Format
+
+Compiled articles use a two-zone structural convention that separates current understanding from the evidence trail.
+
+```markdown
+---
+title: ...
+sources:
+  - url: ...
+    hash: ...
+    added: ...
+---
+
+## Overview
+Current best understanding, rewritten when new evidence arrives.
+
+## Key Concepts
+Core ideas, terminology, mental model.
+
+## Usage / Configuration / Gotchas / Related (optional sections)
+Included when relevant to the topic.
+
+<!-- TIMELINE -->
+
+### 2026-04-12 - source.example.com
+**Source:** https://source.example.com/article
+**Added:** 2026-04-12T14:30:00+00:00
+**Source hash:** abc12345
+
+Thorough summary of what this source contributed.
+```
+
+The compiled truth (above the `<!-- TIMELINE -->` marker) is regenerated on each compile. The timeline below is append-only. When `/compile` runs on a summary that matches an existing article's topic, PAL rewrites the compiled truth to incorporate the new source and appends a new timeline entry. Timeline entries are self-contained, so raw files can age out of `raw/archived/` without losing provenance.
 
 ## Document Import
 
