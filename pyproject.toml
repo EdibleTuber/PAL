@@ -20,6 +20,7 @@ dependencies = [
 pal = "pal.cli:main"
 pal-daemon = "pal.daemon_main:main"
 pal-discord = "pal.discord_main:main"
+pal-backfill-titles = "pal.backfill_main:main"
 
 [project.optional-dependencies]
 discord = [
