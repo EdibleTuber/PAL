@@ -4,6 +4,7 @@ Accepts connections from CLI clients, manages conversation state per connection,
 dispatches chat messages to the inference server, and streams responses back.
 """
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -50,6 +51,10 @@ from pal.protocol import (
 logger = logging.getLogger(__name__)
 
 ARCHIVE_MAX_AGE_DAYS = 30
+
+# Most Linux filesystems cap a single filename component at 255 bytes.
+# Keep headroom for ".md" plus any future prefixing.
+MAX_SLUG_BYTES = 200
 
 
 def archive_raw_files(
@@ -1026,6 +1031,14 @@ class Daemon:
         else:
             slug = title.lower().replace("_", "-").replace(" ", "-")
             slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-") or "untitled"
+            if len(slug.encode("utf-8")) > MAX_SLUG_BYTES:
+                h = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
+                truncated = (
+                    slug.encode("utf-8")[: MAX_SLUG_BYTES - 9]
+                    .decode("utf-8", errors="ignore")
+                    .rstrip("-")
+                )
+                slug = f"{truncated}-{h}"
             target_dir = self.config.vault_path / category
             target_dir.mkdir(parents=True, exist_ok=True)
             article_path_rel = f"{category}/{slug}.md"
