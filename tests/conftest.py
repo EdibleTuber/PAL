@@ -15,10 +15,16 @@ import uvicorn
 from pal.config import Config
 from pal.daemon import Daemon
 
+# Captures every /v1/chat/completions body the daemon sends to the mock server.
+# Tests that care about what model/payload hit the wire read from this list.
+# Cleared automatically before each test by the autouse _clear_request_log fixture.
+REQUEST_LOG: list[dict] = []
+
 
 async def mock_chat_completions(request: Request):
     """Mock OpenAI-compatible /v1/chat/completions endpoint."""
     body = await request.json()
+    REQUEST_LOG.append(body)
     stream = body.get("stream", False)
     messages = body.get("messages", [])
     last_user = next(
@@ -370,3 +376,10 @@ async def running_daemon(
     yield daemon
     daemon.shutdown()
     await task
+
+
+@pytest.fixture(autouse=True)
+def _clear_request_log():
+    """Clear REQUEST_LOG before each test to prevent cross-test leakage."""
+    REQUEST_LOG.clear()
+    yield
