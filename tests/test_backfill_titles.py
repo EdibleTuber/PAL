@@ -171,3 +171,56 @@ async def test_backfill_apply_rebuilds_index_once(vault):
     # Ensure both articles are reflected.
     assert "AI/long.md" in index_text
     assert "AI/long2.md" in index_text
+
+
+@pytest.mark.asyncio
+async def test_backfill_skips_unreadable_file(vault):
+    """Files that can't be decoded should count as skipped_error, not crash."""
+    _write_article(vault, "AI/ok.md", title="a" * 120)
+    bad = vault / "AI" / "bad.md"
+    # Write bytes that aren't valid UTF-8.
+    bad.write_bytes(b"---\ntitle: x\n---\n\n\xff\xfe invalid bytes\n")
+
+    inference = AsyncMock()
+    inference.complete.return_value = MockInferenceResult(
+        content="TITLE: Good Title"
+    )
+    wiki = WikiManager(vault)
+
+    # Use apply=False to test that the backfill handles the bad file
+    # without crashing. (Rebuilding the index would fail on the bad file.)
+    report = await backfill_titles(
+        vault=vault,
+        wiki=wiki,
+        inference=inference,
+        apply=False,
+    )
+
+    # The valid article was processed and would update. The bad file
+    # was counted as skipped_error. The function did not crash.
+    assert report.updated == 1
+    assert report.skipped_error >= 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_skips_when_regenerate_returns_none(vault):
+    """When regenerate_title returns None (bad model response), count as skipped_error."""
+    _write_article(vault, "AI/long.md", title="a" * 120)
+
+    inference = AsyncMock()
+    # Response has no TITLE: prefix — regenerate_title returns None.
+    inference.complete.return_value = MockInferenceResult(
+        content="just a body with no title prefix"
+    )
+    wiki = WikiManager(vault)
+
+    report = await backfill_titles(
+        vault=vault,
+        wiki=wiki,
+        inference=inference,
+        apply=True,
+    )
+
+    assert report.processed == 1
+    assert report.updated == 0
+    assert report.skipped_error == 1

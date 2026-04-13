@@ -51,7 +51,12 @@ async def backfill_titles(
         if any(part.startswith("_") for part in rel.parts):
             continue
 
-        text = md_file.read_text()
+        try:
+            text = md_file.read_text()
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.warning("backfill: cannot read %s: %s", rel, exc)
+            report.skipped_error += 1
+            continue
         meta, _ = parse_frontmatter(text)
         old_title = meta.get("title", "")
 
