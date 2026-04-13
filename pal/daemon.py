@@ -533,7 +533,6 @@ class Daemon:
         path = f"{category}/{slug}.md"
 
         self.wiki.write_article(path=path, title=topic, body=body + "\n")
-        self.wiki.rebuild_index()
         self.wiki.git_init()
         self.wiki.git_commit(f"note: {topic}")
 
