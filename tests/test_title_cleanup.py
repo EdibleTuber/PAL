@@ -126,3 +126,12 @@ async def test_regenerate_title_returns_none_on_empty_title():
         inference=inference,
     )
     assert result is None
+
+
+def test_is_bad_title_tolerates_none():
+    assert is_bad_title(None)
+
+
+def test_is_bad_title_tolerates_non_string():
+    # YAML could parse a number into this field; don't crash.
+    assert is_bad_title(123) in (True, False)  # specifically: don't raise

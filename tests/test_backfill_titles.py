@@ -294,3 +294,81 @@ async def test_backfill_refreshes_updated_timestamp(vault):
     assert meta["title"] == "Fresh Title"
     # Updated timestamp should be newer than the seeded 2020 value.
     assert not meta["updated"].startswith("2020")
+
+
+@pytest.mark.asyncio
+async def test_backfill_skips_templates_directory(vault):
+    """templates/ contains scaffolding, not compiled articles. Skip it."""
+    tmpl = vault / "templates"
+    tmpl.mkdir()
+    (tmpl / "note.md").write_text("---\ntitle: \n---\n\n## Overview\n\nScaffold.\n")
+    _write_article(vault, "AI/real.md", title="a" * 120)
+
+    inference = AsyncMock()
+    inference.complete.return_value = MockInferenceResult(
+        content="TITLE: Regenerated"
+    )
+    wiki = WikiManager(vault)
+    report = await backfill_titles(
+        vault=vault,
+        wiki=wiki,
+        inference=inference,
+        apply=True,
+    )
+
+    assert report.processed == 1
+    assert report.updated == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_skips_raw_directory(vault):
+    """raw/ is staging artifacts. Skip it."""
+    raw = vault / "raw" / "summaries"
+    raw.mkdir(parents=True)
+    (raw / "summary.md").write_text(
+        "---\ntitle: " + "z" * 120 + "\n---\n\nSummary body.\n"
+    )
+    _write_article(vault, "AI/real.md", title="a" * 120)
+
+    inference = AsyncMock()
+    inference.complete.return_value = MockInferenceResult(
+        content="TITLE: Regenerated"
+    )
+    wiki = WikiManager(vault)
+    report = await backfill_titles(
+        vault=vault,
+        wiki=wiki,
+        inference=inference,
+        apply=True,
+    )
+
+    assert report.processed == 1
+    assert report.updated == 1
+    # The raw file was not touched.
+    assert ("z" * 120) in (raw / "summary.md").read_text()
+
+
+@pytest.mark.asyncio
+async def test_backfill_handles_null_title_in_non_skipped_dir(vault):
+    """A null title in a regular category dir should not crash the walk."""
+    (vault / "AI").mkdir()
+    (vault / "AI" / "null-title.md").write_text(
+        "---\ntitle: \n---\n\n## Overview\n\nBody.\n"
+    )
+    _write_article(vault, "AI/good.md", title="b" * 120)
+
+    inference = AsyncMock()
+    inference.complete.return_value = MockInferenceResult(
+        content="TITLE: Regenerated"
+    )
+    wiki = WikiManager(vault)
+    report = await backfill_titles(
+        vault=vault,
+        wiki=wiki,
+        inference=inference,
+        apply=True,
+    )
+
+    # Both articles get processed (null title is "bad"). The null-title one
+    # might succeed or fail depending on Article parsing; either way no crash.
+    assert report.processed >= 1

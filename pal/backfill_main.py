@@ -5,6 +5,7 @@ Run with --apply to write changes. Default is dry-run.
 import argparse
 import asyncio
 import logging
+from pathlib import Path
 
 from pal.backfill_titles import backfill_titles
 from pal.config import load_config
@@ -26,10 +27,17 @@ def main() -> None:
         action="store_true",
         help="Write changes. Without this flag, runs in dry-run mode.",
     )
+    parser.add_argument(
+        "--vault",
+        type=Path,
+        default=None,
+        help="Vault path override. Defaults to PAL_VAULT_PATH env var or config default.",
+    )
     args = parser.parse_args()
 
     config = load_config()
-    wiki = WikiManager(config.vault_path)
+    vault_path = args.vault or config.vault_path
+    wiki = WikiManager(vault_path)
     inference = InferenceClient(
         base_url=config.inference_url,
         model=config.model,
@@ -37,7 +45,7 @@ def main() -> None:
 
     async def run() -> None:
         report = await backfill_titles(
-            vault=config.vault_path,
+            vault=vault_path,
             wiki=wiki,
             inference=inference,
             apply=args.apply,

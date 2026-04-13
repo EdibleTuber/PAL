@@ -17,6 +17,12 @@ from pal.wiki import WikiManager
 
 logger = logging.getLogger(__name__)
 
+# Directories to skip entirely during backfill. Neither contains compiled
+# articles: raw/ holds staging artifacts from /fetch and /summarize, and
+# templates/ holds scaffolding files (including ones with null titles that
+# would otherwise trip the heuristic).
+_SKIP_TOP_LEVEL_DIRS = frozenset({"raw", "templates"})
+
 
 @dataclass
 class BackfillReport:
@@ -50,6 +56,9 @@ async def backfill_titles(
         rel = md_file.relative_to(vault)
         # Skip system directories (anything starting with _).
         if any(part.startswith("_") for part in rel.parts):
+            continue
+        # Skip explicit non-article top-level directories.
+        if rel.parts and rel.parts[0] in _SKIP_TOP_LEVEL_DIRS:
             continue
 
         try:

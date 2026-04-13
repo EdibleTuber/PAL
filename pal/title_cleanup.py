@@ -59,14 +59,18 @@ _BAD_TITLE_SUBSTRINGS = (
 )
 
 
-def is_bad_title(title: str) -> bool:
-    """Return True if the title should be regenerated during backfill."""
-    if not title.strip():
+def is_bad_title(title) -> bool:
+    """Return True if the title should be regenerated during backfill.
+
+    Accepts None (for YAML `title:` with null value) and treats it as bad.
+    """
+    if not title or not str(title).strip():
         return True
-    if len(title) > 80:
+    title_str = str(title)
+    if len(title_str) > 80:
         return True
     for marker in _BAD_TITLE_SUBSTRINGS:
-        if marker in title:
+        if marker in title_str:
             return True
     return False
 
