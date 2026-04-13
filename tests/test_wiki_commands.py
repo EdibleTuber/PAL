@@ -117,3 +117,42 @@ async def test_full_wiki_workflow(wiki_daemon, socket_path, vault_path):
     assert resp.text
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_daemon_rebuilds_index_on_startup(tmp_path, mock_inference_server):
+    """Daemon startup should reconcile _index.md with actual vault state."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    # Seed a stale _index.md that doesn't reflect the article below.
+    (vault / "_index.md").write_text("---\ntitle: Vault Index\n---\n\n# Vault Index\n\n_stale_\n")
+    # Write an article directly to disk (bypassing WikiManager), simulating
+    # external modification while the daemon was down.
+    (vault / "Projects").mkdir()
+    (vault / "Projects" / "external.md").write_text(
+        "---\ntitle: External Article\n---\n\nBody.\n"
+    )
+
+    socket_path = tmp_path / "pal-test.sock"
+    cfg = Config(
+        inference_url=mock_inference_server,
+        model="test-model",
+        socket_path=socket_path,
+        history_depth=50,
+        vault_path=vault,
+    )
+    daemon = Daemon(cfg)
+    task = asyncio.create_task(daemon.serve())
+    for _ in range(100):
+        if socket_path.exists():
+            break
+        await asyncio.sleep(0.01)
+
+    try:
+        index_text = (vault / "_index.md").read_text()
+        assert "External Article" in index_text
+        assert "Projects/external.md" in index_text
+        assert "_stale_" not in index_text
+    finally:
+        daemon.shutdown()
+        await task

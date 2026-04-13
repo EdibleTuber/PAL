@@ -145,6 +145,10 @@ class Daemon:
             sock_path.unlink()
         sock_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Reconcile _index.md with vault state on startup so external
+        # modifications made while the daemon was down are reflected.
+        self.wiki.rebuild_index()
+
         self._server = await asyncio.start_unix_server(
             self._handle_connection,
             path=str(sock_path),
