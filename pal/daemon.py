@@ -42,6 +42,7 @@ from pal.protocol import (
     ErrorMessage,
     ToolProgressMessage,
     Message,
+    STREAM_BUFFER_LIMIT,
     encode_message,
     decode_message,
 )
@@ -142,6 +143,7 @@ class Daemon:
         self._server = await asyncio.start_unix_server(
             self._handle_connection,
             path=str(sock_path),
+            limit=STREAM_BUFFER_LIMIT,
         )
         logger.info("Daemon listening on %s", sock_path)
 

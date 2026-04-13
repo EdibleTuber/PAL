@@ -14,6 +14,7 @@ from pal.protocol import (
     ErrorMessage,
     ToolProgressMessage,
     Message,
+    STREAM_BUFFER_LIMIT,
     encode_message,
     decode_message,
 )
@@ -28,7 +29,8 @@ class PalClient:
     async def connect(self) -> None:
         """Connect to the daemon's unix socket."""
         self._reader, self._writer = await asyncio.open_unix_connection(
-            str(self.socket_path)
+            str(self.socket_path),
+            limit=STREAM_BUFFER_LIMIT,
         )
 
     @property

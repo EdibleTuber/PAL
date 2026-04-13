@@ -13,6 +13,10 @@ All messages are serialized as a single JSON line terminated by newline.
 import json
 from dataclasses import dataclass, asdict
 
+# asyncio StreamReader default is 64 KiB, which /research and similar
+# commands can exceed in a single NDJSON line after aggregating sources.
+STREAM_BUFFER_LIMIT = 16 * 1024 * 1024
+
 
 @dataclass
 class ChatMessage:
