@@ -5,7 +5,7 @@ like in code: the model (or injected content) tries to invoke
 research_topic with a proposal_id that has no valid approval. The tool
 must refuse without calling the Researcher.
 """
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -171,3 +171,56 @@ async def test_daemon_handle_connection_does_not_deadlock(tmp_path):
         "Full E2E requires live inference server; covered by the unit-level "
         "test above plus the manual smoke test."
     )
+
+
+@pytest.mark.asyncio
+async def test_injected_compile_batch_call_without_valid_proposal_is_refused(tmp_path):
+    """Indirect-injection attack: content tells the model to call
+    compile_batch with a made-up proposal_id. The tool must refuse
+    without invoking the Compiler."""
+    registry = ApprovalRegistry()
+    compiler = MagicMock()
+    compiler.compile_one = AsyncMock()
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        compiler=compiler,
+    )
+
+    output = await executor.run_async(
+        "compile_batch",
+        {"proposal_id": "injected-by-fetched-content"},
+    )
+    assert "unknown" in output.lower() or "not found" in output.lower()
+    compiler.compile_one.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_consumed_compile_proposal_cannot_be_reused(tmp_path):
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(
+        kind="compile",
+        summary_paths=["raw/summaries/a.md"],
+        rationale="r",
+    )
+    registry.approve(pid)
+
+    async def fake_compile_one(path):
+        return {"status": "ok", "title": "T", "article_path_rel": "X/T.md"}
+
+    compiler = MagicMock()
+    compiler.compile_one = fake_compile_one
+
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        compiler=compiler,
+    )
+
+    first = await executor.run_async("compile_batch", {"proposal_id": pid})
+    assert '"total": 1' in first
+    # Second call with same id must refuse.
+    second = await executor.run_async("compile_batch", {"proposal_id": pid})
+    assert "already" in second.lower() or "consumed" in second.lower()
