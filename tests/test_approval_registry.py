@@ -165,3 +165,54 @@ def test_proposal_is_new_dataclass_name():
     registry = ApprovalRegistry()
     pid = registry.create_proposal(topic="t", depth=3, rationale="r")
     assert isinstance(registry.get(pid), Proposal)
+
+
+def test_create_proposal_with_compile_kind():
+    registry = ApprovalRegistry()
+    paths = ["raw/summaries/a.md", "raw/summaries/b.md"]
+    pid = registry.create_proposal(
+        kind="compile",
+        summary_paths=paths,
+        rationale="promote research findings",
+    )
+    proposal = registry.get(pid)
+    assert proposal.kind == "compile"
+    assert proposal.summary_paths == paths
+    assert proposal.rationale == "promote research findings"
+    assert proposal.status == "pending"
+
+
+def test_edit_compile_proposal_carries_kind_and_paths():
+    registry = ApprovalRegistry()
+    old_pid = registry.create_proposal(
+        kind="compile",
+        summary_paths=["raw/summaries/a.md"],
+        rationale="r",
+    )
+    new_pid = registry.edit(
+        old_pid,
+        summary_paths=["raw/summaries/a.md", "raw/summaries/b.md"],
+    )
+    assert new_pid is not None
+    new = registry.get(new_pid)
+    assert new.kind == "compile"
+    assert new.summary_paths == ["raw/summaries/a.md", "raw/summaries/b.md"]
+    assert new.status == "approved"
+
+
+def test_create_compile_proposal_rejects_empty_paths():
+    registry = ApprovalRegistry()
+    import pytest
+    with pytest.raises(ValueError):
+        registry.create_proposal(
+            kind="compile",
+            summary_paths=[],
+            rationale="r",
+        )
+
+
+def test_create_research_proposal_without_topic_raises():
+    registry = ApprovalRegistry()
+    import pytest
+    with pytest.raises(ValueError):
+        registry.create_proposal(kind="research", rationale="r")

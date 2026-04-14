@@ -33,6 +33,7 @@ class Proposal:
     expires_at: datetime
     kind: ProposalKind = "research"
     successor_id: Optional[str] = None
+    summary_paths: Optional[list[str]] = None
     # asyncio.Event is set when the proposal reaches a terminal state
     # (approved, declined, or expired). Not part of the public dataclass
     # fields — carried separately for awaiting.
@@ -47,7 +48,21 @@ class ApprovalRegistry:
         self._proposals: dict[str, Proposal] = {}
         self._expiry_minutes = expiry_minutes
 
-    def create_proposal(self, topic: str, depth: int, rationale: str) -> str:
+    def create_proposal(
+        self,
+        *,
+        kind: ProposalKind = "research",
+        topic: str = "",
+        depth: int = 3,
+        rationale: str,
+        summary_paths: Optional[list[str]] = None,
+    ) -> str:
+        if kind == "research" and not topic:
+            raise ValueError("research proposals require a non-empty topic")
+        if kind == "compile":
+            if not summary_paths:
+                raise ValueError("compile proposals require a non-empty summary_paths list")
+
         proposal_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
         self._proposals[proposal_id] = Proposal(
@@ -58,7 +73,8 @@ class ApprovalRegistry:
             status="pending",
             created_at=now,
             expires_at=now + timedelta(minutes=self._expiry_minutes),
-            kind="research",
+            kind=kind,
+            summary_paths=list(summary_paths) if summary_paths else None,
         )
         return proposal_id
 
@@ -105,8 +121,10 @@ class ApprovalRegistry:
     def edit(
         self,
         proposal_id: str,
-        new_topic: str,
-        new_depth: int,
+        *,
+        new_topic: Optional[str] = None,
+        new_depth: Optional[int] = None,
+        summary_paths: Optional[list[str]] = None,
     ) -> Optional[str]:
         """Replace a pending proposal with a new approved one.
 
@@ -125,13 +143,17 @@ class ApprovalRegistry:
         now = datetime.now(timezone.utc)
         new_proposal = Proposal(
             proposal_id=new_id,
-            topic=new_topic,
-            depth=new_depth,
+            topic=new_topic if new_topic is not None else old.topic,
+            depth=new_depth if new_depth is not None else old.depth,
             rationale=old.rationale,
             status="approved",
             created_at=now,
             expires_at=now + timedelta(minutes=self._expiry_minutes),
-            kind="research",
+            kind=old.kind,
+            summary_paths=(
+                list(summary_paths) if summary_paths is not None
+                else (list(old.summary_paths) if old.summary_paths else None)
+            ),
         )
         new_proposal.event.set()
         self._proposals[new_id] = new_proposal
