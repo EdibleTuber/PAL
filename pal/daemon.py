@@ -31,6 +31,8 @@ from pal.summarizer import summarize_raw_file
 from pal.chunker import chunk_markdown
 from pal.reasoning import decide_mode
 from pal.researcher import Researcher, parse_topic_file
+from pal.tools import ToolExecutor
+from pal.approval_registry import ApprovalRegistry
 from pal.article import (
     parse_article, serialize_article, append_timeline_entry,
     validate_compiled_truth, find_existing_article, Article,
@@ -170,10 +172,6 @@ class Daemon:
         conv = Conversation(history_depth=self.config.history_depth)
         logger.info("Client connected")
 
-        from pal.tools import ToolExecutor
-        from pal.approval_registry import ApprovalRegistry
-        from pal.researcher import Researcher
-
         approval_registry = ApprovalRegistry()
         researcher = Researcher(
             websearch=self.websearch,
@@ -231,8 +229,8 @@ class Daemon:
 
     def _route_approval_response(
         self,
-        msg,  # ResearchApprovalResponseMessage
-        registry,  # ApprovalRegistry
+        msg: ResearchApprovalResponseMessage,
+        registry: ApprovalRegistry,
     ) -> None:
         if msg.decision == "approve":
             registry.approve(msg.proposal_id)
@@ -250,7 +248,7 @@ class Daemon:
         msg: ChatMessage,
         conv: Conversation,
         writer: asyncio.StreamWriter,
-        tool_executor=None,
+        tool_executor,
     ) -> None:
         """Process a chat message with optional tool use.
 
