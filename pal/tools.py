@@ -137,6 +137,32 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": (
+                "Query the public web via SearxNG and return titles, URLs, "
+                "and snippets. Read-only. No fetching, no file writes. Use "
+                "to triage whether a topic has material online before "
+                "proposing a full research run."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search terms.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum results to return (1-10, default 5).",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 
@@ -184,6 +210,8 @@ class ToolExecutor:
         """Dispatch a tool call, supporting async tools like search_vault."""
         if name == "search_vault":
             return await self._search_vault(arguments)
+        if name == "search_web":
+            return await self._search_web(arguments)
         return self.run(name, arguments)
 
     def _resolve_safe(self, path: str) -> Path | None:
@@ -324,4 +352,28 @@ class ToolExecutor:
         lines = [f"Found {len(results)} result(s) for '{query}':"]
         for r in results:
             lines.append(f"  [{r.get('score', 0):.2f}] {r.get('name', '?')} — {r.get('summary', '')[:100]}")
+        return "\n".join(lines)
+
+    async def _search_web(self, arguments: dict) -> str:
+        query = arguments.get("query", "")
+        if not query:
+            return "Error: 'query' parameter is required."
+        if self.websearch is None:
+            return "Error: web search is not available (no websearch client)."
+        max_results = int(arguments.get("max_results", 5))
+        max_results = max(1, min(max_results, 10))
+        try:
+            results = await self.websearch.search(query)
+        except Exception as exc:
+            return f"Search error: {exc}"
+        results = results[:max_results]
+        if not results:
+            return f"No results for: {query}"
+        lines = [f"Found {len(results)} result(s) for '{query}':"]
+        for r in results:
+            lines.append(f"  {r.title}")
+            lines.append(f"    {r.url}")
+            snippet = (r.snippet or "").strip().replace("\n", " ")[:200]
+            if snippet:
+                lines.append(f"    {snippet}")
         return "\n".join(lines)
