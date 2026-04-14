@@ -195,3 +195,115 @@ async def test_propose_research_requires_registry(tmp_path):
         {"topic": "t", "depth": 3, "rationale": "r"},
     )
     assert "not available" in output.lower()
+
+
+from pal.researcher import ResearchReport, ResearchResult, SourceResult
+
+
+@pytest.mark.asyncio
+async def test_research_topic_executes_approved_proposal(tmp_path):
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(topic="t", depth=3, rationale="r")
+    registry.approve(pid)
+
+    researcher = MagicMock()
+    report = ResearchReport(
+        results=[
+            ResearchResult(
+                topic="t",
+                sources=[
+                    SourceResult(
+                        url="https://example.com/1",
+                        title="Example 1",
+                        summary_path=tmp_path / "raw" / "summaries" / "s1.md",
+                        status="ok",
+                    ),
+                ],
+            )
+        ],
+        total_fetched=1,
+        total_summarized=1,
+        total_failed=0,
+    )
+    async def fake_run(topic, depth, progress_callback=None):
+        return report
+    researcher.run = fake_run
+
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        researcher=researcher,
+    )
+    output = await executor.run_async(
+        "research_topic", {"proposal_id": pid}
+    )
+    assert "Example 1" in output
+    assert "https://example.com/1" in output
+    assert registry.get(pid).status == "consumed"
+
+
+@pytest.mark.asyncio
+async def test_research_topic_refuses_unknown_proposal(tmp_path):
+    registry = ApprovalRegistry()
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        researcher=MagicMock(),
+    )
+    output = await executor.run_async(
+        "research_topic", {"proposal_id": "nonexistent"}
+    )
+    assert "unknown" in output.lower() or "not found" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_research_topic_refuses_pending_proposal(tmp_path):
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(topic="t", depth=3, rationale="r")
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        researcher=MagicMock(),
+    )
+    output = await executor.run_async(
+        "research_topic", {"proposal_id": pid}
+    )
+    assert "not approved" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_research_topic_refuses_consumed_proposal(tmp_path):
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(topic="t", depth=3, rationale="r")
+    registry.approve(pid)
+    registry.consume(pid)
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        researcher=MagicMock(),
+    )
+    output = await executor.run_async(
+        "research_topic", {"proposal_id": pid}
+    )
+    assert "already" in output.lower() or "consumed" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_research_topic_refuses_declined_proposal(tmp_path):
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(topic="t", depth=3, rationale="r")
+    registry.decline(pid)
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        researcher=MagicMock(),
+    )
+    output = await executor.run_async(
+        "research_topic", {"proposal_id": pid}
+    )
+    assert "declined" in output.lower() or "not approved" in output.lower()

@@ -194,6 +194,29 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "research_topic",
+            "description": (
+                "Execute a research run previously approved via "
+                "propose_research. Fetches URLs from SearxNG, summarizes "
+                "them, and saves summaries under raw/summaries/. Requires "
+                "a proposal_id from an approved (unused, unexpired) "
+                "proposal. Returns a structured report."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "proposal_id": {
+                        "type": "string",
+                        "description": "proposal_id returned by propose_research.",
+                    },
+                },
+                "required": ["proposal_id"],
+            },
+        },
+    },
 ]
 
 
@@ -245,6 +268,8 @@ class ToolExecutor:
             return await self._search_web(arguments)
         if name == "propose_research":
             return await self._propose_research(arguments)
+        if name == "research_topic":
+            return await self._research_topic(arguments)
         return self.run(name, arguments)
 
     def _resolve_safe(self, path: str) -> Path | None:
@@ -480,3 +505,62 @@ class ToolExecutor:
             if newest is None or candidate.created_at > newest.created_at:
                 newest = candidate
         return newest
+
+    async def _research_topic(self, arguments: dict) -> str:
+        proposal_id = arguments.get("proposal_id", "").strip()
+        if not proposal_id:
+            return "Error: 'proposal_id' parameter is required."
+        if self.approval_registry is None or self.researcher is None:
+            return "Error: research execution is not available in this session."
+
+        proposal = self.approval_registry.get(proposal_id)
+        if proposal is None:
+            return f"Error: unknown proposal_id: {proposal_id}"
+        if proposal.status == "pending":
+            return "Error: proposal is not approved yet."
+        if proposal.status == "declined":
+            return "Error: proposal was declined."
+        if proposal.status == "expired":
+            return "Error: proposal expired; ask the user to propose again."
+        if proposal.status == "consumed":
+            return "Error: proposal was already used. Each proposal is single-use."
+        if proposal.status != "approved":
+            return f"Error: proposal in unexpected state: {proposal.status}"
+
+        # Consume first so even an exception during run() prevents reuse.
+        self.approval_registry.consume(proposal_id)
+
+        try:
+            report = await self.researcher.run(
+                topic=proposal.topic,
+                depth=proposal.depth,
+            )
+        except Exception as exc:
+            return f"Research error: {exc}"
+
+        return self._format_research_report(report)
+
+    def _format_research_report(self, report) -> str:
+        lines = [
+            f"Research complete: {report.total_summarized} summarized, "
+            f"{report.total_fetched} fetched, {report.total_failed} failed."
+        ]
+        for result in report.results:
+            lines.append(f"\nTopic: {result.topic}")
+            if result.refined_query:
+                lines.append(f"  (refined query: {result.refined_query})")
+            if result.flagged:
+                lines.append("  ! no usable results")
+            for source in result.sources:
+                marker = "+" if source.status == "ok" else "x"
+                lines.append(f"  {marker} {source.title}")
+                lines.append(f"    {source.url}")
+                if source.summary_path:
+                    try:
+                        rel = source.summary_path.relative_to(self.vault_path)
+                        lines.append(f"    summary: {rel}")
+                    except ValueError:
+                        lines.append(f"    summary: {source.summary_path}")
+                if source.error:
+                    lines.append(f"    error: {source.error}")
+        return "\n".join(lines)
