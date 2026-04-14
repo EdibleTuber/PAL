@@ -178,3 +178,121 @@ async def test_propose_compile_batch_requires_rationale(tmp_path):
         {"summary_paths": ["raw/summaries/a.md"]},
     )
     assert "Error" in output and "rationale" in output
+
+
+@pytest.mark.asyncio
+async def test_compile_batch_runs_approved_proposal(tmp_path):
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(
+        kind="compile",
+        summary_paths=["raw/summaries/a.md", "raw/summaries/b.md"],
+        rationale="r",
+    )
+    registry.approve(pid)
+
+    calls = []
+
+    async def fake_compile_one(path):
+        calls.append(path)
+        return {"status": "ok", "title": f"T-{path}", "article_path_rel": f"X/{path}.md"}
+
+    compiler = MagicMock()
+    compiler.compile_one = fake_compile_one
+
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        compiler=compiler,
+    )
+    output = await executor.run_async(
+        "compile_batch", {"proposal_id": pid}
+    )
+    assert calls == ["raw/summaries/a.md", "raw/summaries/b.md"]
+    assert '"total": 2' in output
+    assert '"ok": 2' in output
+    assert registry.get(pid).status == "consumed"
+
+
+@pytest.mark.asyncio
+async def test_compile_batch_refuses_unknown_proposal(tmp_path):
+    registry = ApprovalRegistry()
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        compiler=MagicMock(),
+    )
+    output = await executor.run_async(
+        "compile_batch", {"proposal_id": "does-not-exist"}
+    )
+    assert "unknown" in output.lower() or "not found" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_compile_batch_refuses_pending_proposal(tmp_path):
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(
+        kind="compile",
+        summary_paths=["raw/summaries/a.md"],
+        rationale="r",
+    )
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        compiler=MagicMock(),
+    )
+    output = await executor.run_async("compile_batch", {"proposal_id": pid})
+    assert "not approved" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_compile_batch_refuses_consumed_proposal(tmp_path):
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(
+        kind="compile",
+        summary_paths=["raw/summaries/a.md"],
+        rationale="r",
+    )
+    registry.approve(pid)
+    registry.consume(pid)
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        compiler=MagicMock(),
+    )
+    output = await executor.run_async("compile_batch", {"proposal_id": pid})
+    assert "already" in output.lower() or "consumed" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_compile_batch_partial_failure(tmp_path):
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(
+        kind="compile",
+        summary_paths=["raw/summaries/good.md", "raw/summaries/bad.md"],
+        rationale="r",
+    )
+    registry.approve(pid)
+
+    async def fake_compile_one(path):
+        if "good" in path:
+            return {"status": "ok", "title": "Good", "article_path_rel": "A/Good.md"}
+        return {"status": "error", "reason": "categorization failed"}
+
+    compiler = MagicMock()
+    compiler.compile_one = fake_compile_one
+
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        compiler=compiler,
+    )
+    output = await executor.run_async("compile_batch", {"proposal_id": pid})
+    assert '"ok": 1' in output
+    assert '"error_count": 1' in output
+    # Proposal is still consumed despite partial failure.
+    assert registry.get(pid).status == "consumed"

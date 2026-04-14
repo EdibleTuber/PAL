@@ -271,6 +271,28 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "compile_batch",
+            "description": (
+                "Execute a compile batch previously approved via "
+                "propose_compile_batch. Iterates the approved summary "
+                "paths and compiles each. Partial failures do not "
+                "abort the batch. Returns a structured report."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "proposal_id": {
+                        "type": "string",
+                        "description": "proposal_id returned by propose_compile_batch.",
+                    },
+                },
+                "required": ["proposal_id"],
+            },
+        },
+    },
 ]
 
 
@@ -330,6 +352,8 @@ class ToolExecutor:
             return await self._compile_summary(arguments)
         if name == "propose_compile_batch":
             return await self._propose_compile_batch(arguments)
+        if name == "compile_batch":
+            return await self._compile_batch(arguments)
         return self.run(name, arguments)
 
     def _resolve_safe(self, path: str) -> Path | None:
@@ -663,3 +687,65 @@ class ToolExecutor:
         elif final.status == "approved":
             result["summary_paths"] = list(final.summary_paths or [])
         return _json.dumps(result)
+
+    async def _compile_batch(self, arguments: dict) -> str:
+        import json as _json
+        proposal_id = (arguments.get("proposal_id") or "").strip()
+        if not proposal_id:
+            return "Error: 'proposal_id' parameter is required."
+        if self.approval_registry is None or self.compiler is None:
+            return "Error: compile execution is not available in this session."
+
+        proposal = self.approval_registry.get(proposal_id)
+        if proposal is None:
+            return f"Error: unknown proposal_id: {proposal_id}"
+        if proposal.kind != "compile":
+            return f"Error: proposal_id {proposal_id} is not a compile proposal."
+        if proposal.status == "pending":
+            return "Error: proposal is not approved yet."
+        if proposal.status == "declined":
+            return "Error: proposal was declined."
+        if proposal.status == "expired":
+            return "Error: proposal expired; propose again."
+        if proposal.status == "consumed":
+            return "Error: proposal was already used. Each proposal is single-use."
+        if proposal.status != "approved":
+            return f"Error: proposal in unexpected state: {proposal.status}"
+
+        # Consume first — single-use even on failure.
+        self.approval_registry.consume(proposal_id)
+
+        per_file = []
+        ok = merged = insufficient = error_count = 0
+        for path in (proposal.summary_paths or []):
+            try:
+                outcome = await self.compiler.compile_one(path)
+            except Exception as exc:
+                outcome = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
+            entry = {"path": path, "status": outcome.get("status")}
+            if "title" in outcome:
+                entry["title"] = outcome["title"]
+            if "article_path_rel" in outcome:
+                entry["article_path"] = outcome["article_path_rel"]
+            if "reason" in outcome:
+                entry["reason"] = outcome["reason"]
+            per_file.append(entry)
+            s = outcome.get("status")
+            if s == "ok":
+                ok += 1
+            elif s == "merged":
+                merged += 1
+            elif s == "insufficient":
+                insufficient += 1
+            else:
+                error_count += 1
+
+        report = {
+            "total": len(per_file),
+            "ok": ok,
+            "merged": merged,
+            "insufficient": insufficient,
+            "error_count": error_count,
+            "per_file": per_file,
+        }
+        return _json.dumps(report)
