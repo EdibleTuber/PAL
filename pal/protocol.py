@@ -1,12 +1,14 @@
 """Message protocol for PAL — newline-delimited JSON over unix socket.
 
 Message types:
-    chat            — user text message
-    command         — parsed slash command (name + args)
-    stream_chunk    — single streaming token from daemon
-    response        — complete response (non-streaming commands)
-    error           — error message
-    tool_progress   — tool execution progress indicator
+    chat                        — user text message
+    command                     — parsed slash command (name + args)
+    stream_chunk                — single streaming token from daemon
+    response                    — complete response (non-streaming commands)
+    error                       — error message
+    tool_progress               — tool execution progress indicator
+    research_proposal           — daemon-to-CLI research approval request
+    research_approval_response  — CLI-to-daemon approval decision
 
 All messages are serialized as a single JSON line terminated by newline.
 """
