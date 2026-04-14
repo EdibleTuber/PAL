@@ -23,6 +23,7 @@ from pal.protocol import (
     ToolProgressMessage,
     ResearchProposalMessage,
     ResearchApprovalResponseMessage,
+    CompileProposalMessage,
     Message,
 )
 
@@ -40,6 +41,23 @@ def format_research_proposal(msg: ResearchProposalMessage) -> str:
         "  [a]pprove  [d]ecline  [e]dit\n"
         "> "
     )
+
+
+def format_compile_proposal(msg: "CompileProposalMessage") -> str:
+    """Render a compile proposal approval prompt. Pure formatter."""
+    lines = [
+        "",
+        "────────── PAL proposes compile ──────────",
+        f"  Summaries ({len(msg.summary_paths)}):",
+    ]
+    for path in msg.summary_paths:
+        lines.append(f"    {path}")
+    lines.extend([
+        f"  Rationale: {msg.rationale}",
+        "  [a]pprove  [d]ecline  [e]dit",
+        "> ",
+    ])
+    return "\n".join(lines)
 
 
 def _tool_progress_label(tool: str, arguments: dict) -> str:
@@ -238,6 +256,29 @@ async def run_repl() -> None:
                                     new_topic=new_topic,
                                     new_depth=new_depth,
                                 )
+                        else:
+                            response = ResearchApprovalResponseMessage(
+                                proposal_id=msg.proposal_id, decision="decline"
+                            )
+                        await client.send(response)
+                        continue
+                    elif isinstance(msg, CompileProposalMessage):
+                        if live is not None:
+                            live.stop()
+                            live = None
+                        print(format_compile_proposal(msg), end="", flush=True)
+                        loop = asyncio.get_running_loop()
+                        choice = (await loop.run_in_executor(None, input)).strip().lower()
+                        if choice in ("a", "approve"):
+                            response = ResearchApprovalResponseMessage(
+                                proposal_id=msg.proposal_id, decision="approve"
+                            )
+                        elif choice in ("e", "edit"):
+                            # v1: edit maps to decline; model reproposes
+                            # based on the user's next message.
+                            response = ResearchApprovalResponseMessage(
+                                proposal_id=msg.proposal_id, decision="decline"
+                            )
                         else:
                             response = ResearchApprovalResponseMessage(
                                 proposal_id=msg.proposal_id, decision="decline"

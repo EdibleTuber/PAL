@@ -44,3 +44,18 @@ def test_search_web_progress_with_query():
 def test_search_web_progress_without_query():
     label = _tool_progress_label("search_web", {})
     assert "searching web" in label.lower()
+
+
+def test_format_compile_proposal_includes_paths_and_rationale():
+    from pal.cli import format_compile_proposal
+    from pal.protocol import CompileProposalMessage
+    msg = CompileProposalMessage(
+        proposal_id="abc",
+        summary_paths=["raw/summaries/a.md", "raw/summaries/b.md"],
+        rationale="promote home-automation research findings",
+    )
+    text = format_compile_proposal(msg)
+    assert "raw/summaries/a.md" in text
+    assert "raw/summaries/b.md" in text
+    assert "promote home-automation research findings" in text
+    assert "[a]" in text.lower() or "approve" in text.lower()
