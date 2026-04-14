@@ -93,3 +93,23 @@ def test_base_prompt_specifies_research_flow():
     assert "propose_research" in lower
     assert "research_topic" in lower
     assert "blocks until the user" in lower or "blocks until" in lower
+
+
+def test_base_prompt_routes_wiki_promotion_through_compile():
+    assert "/compile" in BASE_PROMPT
+    assert "create_file" in BASE_PROMPT  # still mentioned as a tool
+    # The prompt should tell the model NOT to use create_file for wiki promotion.
+    lower = BASE_PROMPT.lower()
+    assert "do not use create_file" in lower or "do not use create_file or edit_file" in lower
+
+
+def test_base_prompt_requires_inline_citations():
+    lower = BASE_PROMPT.lower()
+    assert "inline" in lower
+    assert "each claim" in lower or "for each claim" in lower
+
+
+def test_base_prompt_constrains_default_depth():
+    lower = BASE_PROMPT.lower()
+    assert "default depth is 3" in lower
+    assert "do not inflate depth" in lower or "only propose higher depth" in lower
