@@ -23,6 +23,35 @@ from pal.archive import archive_raw_files, MAX_SLUG_BYTES
 logger = logging.getLogger(__name__)
 
 
+def _clip_title_for_slug(title: str, max_chars: int = 80, max_words: int = 8) -> str:
+    """Clip a title to a readable length before slug generation.
+
+    Summary titles can be long descriptive sentences (GitHub READMEs,
+    arxiv abstracts). Slugifying them whole produces unwieldy filenames.
+    We take the first `max_words` words OR `max_chars` characters at a
+    word boundary, whichever comes first. If a single word exceeds
+    max_chars, hard-clip mid-word.
+    """
+    if len(title) <= max_chars and len(title.split()) <= max_words:
+        return title
+    words = title.split()
+    if not words:
+        return title[:max_chars]
+    clipped: list[str] = []
+    length = 0
+    for w in words[:max_words]:
+        # +1 for the space we'll reintroduce (except on the first word)
+        added = len(w) if not clipped else len(w) + 1
+        if length + added > max_chars:
+            break
+        clipped.append(w)
+        length += added
+    if not clipped:
+        # Single word longer than max_chars -- hard-clip it.
+        return title[:max_chars]
+    return " ".join(clipped)
+
+
 class Compiler:
     def __init__(
         self,
@@ -208,7 +237,8 @@ class Compiler:
             article_path_rel = existing_match["path"]
             article_full_path = self.vault_path / article_path_rel
         else:
-            slug = title.lower().replace("_", "-").replace(" ", "-")
+            slug_source = _clip_title_for_slug(title)
+            slug = slug_source.lower().replace("_", "-").replace(" ", "-")
             slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-") or "untitled"
             if len(slug.encode("utf-8")) > MAX_SLUG_BYTES:
                 h = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
