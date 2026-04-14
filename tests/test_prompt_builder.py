@@ -96,7 +96,8 @@ def test_base_prompt_specifies_research_flow():
 
 
 def test_base_prompt_routes_wiki_promotion_through_compile():
-    assert "/compile" in BASE_PROMPT
+    # The prompt should list compile tools for wiki promotion
+    assert "compile_summary" in BASE_PROMPT or "compile_batch" in BASE_PROMPT
     assert "create_file" in BASE_PROMPT  # still mentioned as a tool
     # The prompt should tell the model NOT to use create_file for wiki promotion.
     lower = BASE_PROMPT.lower()
@@ -113,3 +114,16 @@ def test_base_prompt_constrains_default_depth():
     lower = BASE_PROMPT.lower()
     assert "default depth is 3" in lower
     assert "do not inflate depth" in lower or "only propose higher depth" in lower
+
+
+def test_base_prompt_lists_compile_tools():
+    assert "compile_summary" in BASE_PROMPT
+    assert "propose_compile_batch" in BASE_PROMPT
+    assert "compile_batch" in BASE_PROMPT
+
+
+def test_base_prompt_routes_wiki_promotion_through_compile_tools():
+    lower = BASE_PROMPT.lower()
+    assert "compile_summary" in BASE_PROMPT
+    assert "propose_compile_batch" in BASE_PROMPT
+    assert "do not use create_file" in lower
