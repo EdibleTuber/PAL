@@ -46,6 +46,11 @@ class PalClient:
             self._writer = None
             self._reader = None
 
+    async def send(self, msg: Message) -> None:
+        """Send a protocol Message to the daemon over this client's connection."""
+        self._writer.write(encode_message(msg))
+        await self._writer.drain()
+
     async def chat(self, text: str) -> AsyncGenerator[Message, None]:
         """Send a chat message and yield streaming chunks + final response."""
         if not self._writer or not self._reader:

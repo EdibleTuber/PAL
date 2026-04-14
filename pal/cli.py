@@ -24,7 +24,6 @@ from pal.protocol import (
     ResearchProposalMessage,
     ResearchApprovalResponseMessage,
     Message,
-    encode_message,
 )
 
 _reasoning_display: str = "show"
@@ -231,9 +230,7 @@ async def run_repl() -> None:
                             response = ResearchApprovalResponseMessage(
                                 proposal_id=msg.proposal_id, decision="decline"
                             )
-                        writer = client._writer
-                        writer.write(encode_message(response))
-                        await writer.drain()
+                        await client.send(response)
                         continue
                     elif isinstance(msg, StreamChunkMessage):
                         if live is None:

@@ -1,8 +1,9 @@
 """Tests for the unix socket client."""
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from pal.client import PalClient
-from pal.protocol import StreamChunkMessage, ResponseMessage
+from pal.protocol import StreamChunkMessage, ResponseMessage, ChatMessage, decode_message
 
 
 @pytest.mark.asyncio
@@ -57,3 +58,23 @@ async def test_client_multiple_chats(running_daemon, socket_path):
             break
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_client_send_writes_encoded_message(tmp_path):
+    client = PalClient(socket_path=tmp_path / "fake.sock")
+    # Inject a mock writer to avoid real socket I/O.
+    mock_writer = MagicMock()
+    mock_writer.drain = AsyncMock()
+    client._writer = mock_writer
+
+    msg = ChatMessage(text="hello")
+    await client.send(msg)
+
+    # writer.write was called once with encoded bytes that round-trip to msg.
+    mock_writer.write.assert_called_once()
+    written = mock_writer.write.call_args[0][0]
+    decoded = decode_message(written.strip())
+    assert isinstance(decoded, ChatMessage)
+    assert decoded.text == "hello"
+    mock_writer.drain.assert_awaited_once()
