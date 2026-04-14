@@ -9,11 +9,21 @@ from pathlib import Path
 import discord
 
 from pal.client import PalClient
+from pal.discord_interactions import (
+    DiscordStreamProcessor,
+    ProposalContext,
+    build_research_edit_modal,
+    build_compile_edit_modal,
+    parse_button_custom_id,
+    parse_modal_custom_id,
+    extract_modal_field_values,
+)
 from pal.protocol import (
     StreamChunkMessage,
     ResponseMessage,
     ErrorMessage,
     ToolProgressMessage,
+    ResearchApprovalResponseMessage,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,36 +58,6 @@ class UserConnectionManager:
         for client in self._clients.values():
             await client.close()
         self._clients.clear()
-
-
-from collections.abc import AsyncGenerator
-from pal.protocol import Message
-
-
-async def collect_response(
-    message_stream: AsyncGenerator[Message, None],
-) -> tuple[list[ToolProgressMessage], str]:
-    """Collect all messages from a daemon response stream.
-
-    Returns (tool_progress_list, final_text).
-    """
-    progress: list[ToolProgressMessage] = []
-    accumulated: list[str] = []
-    final_text = ""
-
-    async for msg in message_stream:
-        if isinstance(msg, ToolProgressMessage):
-            progress.append(msg)
-        elif isinstance(msg, StreamChunkMessage):
-            accumulated.append(msg.token)
-        elif isinstance(msg, ResponseMessage):
-            final_text = "".join(accumulated) if accumulated else msg.text
-            break
-        elif isinstance(msg, ErrorMessage):
-            final_text = f"Error: {msg.error}"
-            break
-
-    return progress, final_text
 
 
 _DISCORD_MSG_LIMIT = 2000
@@ -180,6 +160,7 @@ class PalDiscordBot(discord.Client):
             allowed_users=allowed_users,
             socket_path=socket_path,
         )
+        self.active_proposals: dict[str, ProposalContext] = {}
 
     async def on_ready(self) -> None:
         logger.info("PAL Discord bot connected as %s", self.user)
@@ -223,9 +204,16 @@ class PalDiscordBot(discord.Client):
                         reply_text = f"Error: {exc}"
                 else:
                     _, chat_text = parsed
-                    progress, reply_text = await collect_response(client.chat(chat_text))
+                    processor = DiscordStreamProcessor(
+                        channel=message.channel,
+                        triggerer_id=user_id,
+                        bot=self,
+                        client=client,
+                    )
+                    progress, reply_text = await processor.run(client.chat(chat_text))
 
-                    # Prepend tool progress lines
+                    # Prepend tool progress lines (only for non-proposal chat;
+                    # proposal progress is routed to thread by the processor).
                     if progress:
                         progress_lines = "\n".join(
                             format_tool_progress(p.tool, p.arguments) for p in progress
@@ -241,6 +229,145 @@ class PalDiscordBot(discord.Client):
         # Send response, splitting if needed
         for chunk in split_message(reply_text):
             await message.channel.send(chunk)
+
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        """Route button clicks and modal submits to the appropriate handler."""
+        if interaction.type == discord.InteractionType.component:
+            await self._handle_button_interaction(interaction)
+        elif interaction.type == discord.InteractionType.modal_submit:
+            await self._handle_modal_submit(interaction)
+
+    async def _handle_button_interaction(
+        self, interaction: discord.Interaction,
+    ) -> None:
+        cid = interaction.data.get("custom_id", "") if interaction.data else ""
+        parsed = parse_button_custom_id(cid)
+        if parsed is None:
+            return
+        kind, action, proposal_id = parsed
+
+        ctx = self.active_proposals.get(proposal_id)
+        if ctx is None:
+            await interaction.response.send_message(
+                "This proposal is no longer active.", ephemeral=True,
+            )
+            return
+        if str(interaction.user.id) != ctx.triggerer_id:
+            await interaction.response.send_message(
+                f"This proposal is for <@{ctx.triggerer_id}>.", ephemeral=True,
+            )
+            return
+
+        if action == "edit":
+            if kind == "research":
+                modal = build_research_edit_modal(ctx)
+            else:
+                modal = build_compile_edit_modal(ctx)
+            await interaction.response.send_modal(modal)
+            return
+
+        # approve or decline
+        try:
+            client = await self.connections.get_client(str(interaction.user.id))
+            await client.send(ResearchApprovalResponseMessage(
+                proposal_id=proposal_id,
+                decision=action,
+            ))
+        except Exception as exc:
+            logger.exception("Failed to send approval response: %s", exc)
+            await interaction.response.send_message(
+                "Something went wrong sending your decision. Try again.",
+                ephemeral=True,
+            )
+            return
+
+        status_text = {
+            "approve": "✅ Approved, running — see thread for progress",
+            "decline": "❌ Declined",
+        }[action]
+        try:
+            await interaction.response.edit_message(content=status_text, view=None)
+        except discord.HTTPException:
+            pass
+        if action == "decline":
+            self.active_proposals.pop(proposal_id, None)
+
+    async def _handle_modal_submit(
+        self, interaction: discord.Interaction,
+    ) -> None:
+        cid = interaction.data.get("custom_id", "") if interaction.data else ""
+        parsed = parse_modal_custom_id(cid)
+        if parsed is None:
+            return
+        kind, proposal_id = parsed
+
+        ctx = self.active_proposals.get(proposal_id)
+        if ctx is None or str(interaction.user.id) != ctx.triggerer_id:
+            try:
+                await interaction.response.defer()
+            except discord.HTTPException:
+                pass
+            return
+
+        values = extract_modal_field_values(interaction.data)
+
+        if kind == "research":
+            new_topic = values[0].strip() if len(values) >= 1 else ""
+            new_depth_raw = values[1].strip() if len(values) >= 2 else ""
+            if not new_topic:
+                response = ResearchApprovalResponseMessage(
+                    proposal_id=proposal_id, decision="decline",
+                )
+            else:
+                try:
+                    new_depth = int(new_depth_raw) if new_depth_raw else ctx.depth
+                except ValueError:
+                    new_depth = ctx.depth
+                response = ResearchApprovalResponseMessage(
+                    proposal_id=proposal_id,
+                    decision="edit",
+                    new_topic=new_topic,
+                    new_depth=new_depth,
+                )
+        else:  # compile
+            raw = values[0] if len(values) >= 1 else ""
+            paths = [line.strip() for line in raw.splitlines() if line.strip()]
+            if not paths:
+                response = ResearchApprovalResponseMessage(
+                    proposal_id=proposal_id, decision="decline",
+                )
+            else:
+                response = ResearchApprovalResponseMessage(
+                    proposal_id=proposal_id,
+                    decision="edit",
+                    summary_paths=paths,
+                )
+
+        try:
+            client = await self.connections.get_client(str(interaction.user.id))
+            await client.send(response)
+        except Exception as exc:
+            logger.exception("Failed to send modal response: %s", exc)
+            try:
+                await interaction.response.send_message(
+                    "Something went wrong sending your edit. Try again.",
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
+                pass
+            return
+
+        status_text = (
+            "❌ Declined" if response.decision == "decline"
+            else "✏️ Edited, running — see thread for progress"
+        )
+        try:
+            await interaction.response.edit_message(content=status_text, view=None)
+        except discord.HTTPException:
+            try:
+                await interaction.response.defer()
+            except discord.HTTPException:
+                pass
 
     async def close(self) -> None:
         await self.connections.close_all()
