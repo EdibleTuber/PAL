@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from pal.approval_registry import ApprovalRegistry
     from pal.websearch import WebSearchClient
     from pal.researcher import Researcher
+    from pal.compiler import Compiler
 
 # Maximum characters to return from a file read (~8000 tokens ≈ 32000 chars).
 _READ_LIMIT = 32_000
@@ -234,6 +235,7 @@ class ToolExecutor:
         websearch: "WebSearchClient | None" = None,
         researcher: "Researcher | None" = None,
         proposal_emitter=None,
+        compiler: "Compiler | None" = None,
     ) -> None:
         self.vault_path = vault_path.resolve()
         self.retrieval = retrieval
@@ -242,6 +244,7 @@ class ToolExecutor:
         self.websearch = websearch
         self.researcher = researcher
         self.proposal_emitter = proposal_emitter
+        self.compiler = compiler
 
     def run(self, name: str, arguments: dict) -> str:
         """Dispatch a tool call and return the result as a string.
