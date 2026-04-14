@@ -76,3 +76,49 @@ def test_approve_declined_proposal_is_noop():
     registry.decline(pid)
     registry.approve(pid)
     assert registry.get(pid).status == "declined"
+
+
+def test_expiry_transitions_pending_to_expired():
+    registry = ApprovalRegistry(expiry_minutes=0)  # immediate expiry
+    pid = registry.create_proposal(topic="t", depth=3, rationale="r")
+    registry.expire_stale()
+    proposal = registry.get(pid)
+    assert proposal.status == "expired"
+    assert proposal.event.is_set()
+
+
+def test_expiry_leaves_non_pending_alone():
+    registry = ApprovalRegistry(expiry_minutes=0)
+    pid = registry.create_proposal(topic="t", depth=3, rationale="r")
+    registry.approve(pid)
+    registry.expire_stale()
+    assert registry.get(pid).status == "approved"
+
+
+def test_edit_declines_old_proposal_and_issues_new():
+    registry = ApprovalRegistry()
+    old_pid = registry.create_proposal(topic="original", depth=3, rationale="r")
+    new_pid = registry.edit(old_pid, new_topic="refined", new_depth=5)
+    assert new_pid != old_pid
+    old = registry.get(old_pid)
+    new = registry.get(new_pid)
+    assert old.status == "declined"
+    assert old.event.is_set()
+    # The new proposal is created approved (user has already committed
+    # to the edited topic/depth via the CLI edit workflow).
+    assert new.status == "approved"
+    assert new.topic == "refined"
+    assert new.depth == 5
+    assert new.event.is_set()
+
+
+def test_edit_unknown_id_returns_none():
+    registry = ApprovalRegistry()
+    assert registry.edit("nonexistent", new_topic="x", new_depth=3) is None
+
+
+def test_edit_non_pending_returns_none():
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(topic="t", depth=3, rationale="r")
+    registry.approve(pid)
+    assert registry.edit(pid, new_topic="x", new_depth=3) is None

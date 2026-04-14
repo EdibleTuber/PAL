@@ -79,3 +79,45 @@ class ApprovalRegistry:
             return False
         proposal.status = "consumed"
         return True
+
+    def expire_stale(self) -> None:
+        """Mark pending proposals past their expiry as expired and signal waiters."""
+        now = datetime.now(timezone.utc)
+        for proposal in self._proposals.values():
+            if proposal.status == "pending" and now >= proposal.expires_at:
+                proposal.status = "expired"
+                proposal.event.set()
+
+    def edit(
+        self,
+        proposal_id: str,
+        new_topic: str,
+        new_depth: int,
+    ) -> Optional[str]:
+        """Replace a pending proposal with a new approved one.
+
+        Returns the new proposal_id, or None if the original is missing
+        or not pending.
+        """
+        old = self._proposals.get(proposal_id)
+        if old is None or old.status != "pending":
+            return None
+        # Decline the old proposal so any waiter gets a terminal state.
+        old.status = "declined"
+        old.event.set()
+        # The user has committed to the edited values via the CLI, so the
+        # new proposal is created already-approved.
+        new_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        new_proposal = ResearchProposal(
+            proposal_id=new_id,
+            topic=new_topic,
+            depth=new_depth,
+            rationale=old.rationale,
+            status="approved",
+            created_at=now,
+            expires_at=now + timedelta(minutes=self._expiry_minutes),
+        )
+        new_proposal.event.set()
+        self._proposals[new_id] = new_proposal
+        return new_id
