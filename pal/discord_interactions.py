@@ -119,3 +119,46 @@ def build_compile_proposal_embed(
         custom_id=f"compile:edit:{msg.proposal_id}",
     ))
     return embed, view
+
+
+def build_research_edit_modal(ctx: ProposalContext) -> discord.ui.Modal:
+    """Research-edit modal: new topic + new depth, with current values
+    as defaults. custom_id format: 'research:<proposal_id>' so the
+    submit handler can route by proposal_id."""
+    modal = discord.ui.Modal(
+        title="Edit research proposal",
+        custom_id=f"research:{ctx.proposal_id}",
+    )
+    modal.add_item(discord.ui.TextInput(
+        label="New topic",
+        style=discord.TextStyle.paragraph,
+        default=ctx.topic,
+        required=True,
+        max_length=200,
+    ))
+    modal.add_item(discord.ui.TextInput(
+        label="New depth",
+        style=discord.TextStyle.short,
+        default=str(ctx.depth),
+        required=False,
+        placeholder="3",
+        max_length=3,
+    ))
+    return modal
+
+
+def build_compile_edit_modal(ctx: ProposalContext) -> discord.ui.Modal:
+    """Compile-edit modal: paragraph-text field for newline-separated
+    summary paths, defaulting to the current path list."""
+    modal = discord.ui.Modal(
+        title="Edit compile proposal",
+        custom_id=f"compile:{ctx.proposal_id}",
+    )
+    default_paths = "\n".join(ctx.summary_paths) if ctx.summary_paths else ""
+    modal.add_item(discord.ui.TextInput(
+        label="Summary paths (one per line)",
+        style=discord.TextStyle.paragraph,
+        default=default_paths,
+        required=True,
+    ))
+    return modal

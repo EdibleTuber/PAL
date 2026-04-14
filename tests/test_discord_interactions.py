@@ -2,6 +2,8 @@ from pal.discord_interactions import (
     ProposalContext,
     build_research_proposal_embed,
     build_compile_proposal_embed,
+    build_research_edit_modal,
+    build_compile_edit_modal,
 )
 from pal.protocol import ResearchProposalMessage, CompileProposalMessage
 
@@ -78,3 +80,40 @@ def test_proposal_context_for_compile():
         rationale="r",
     )
     assert ctx.summary_paths == ["raw/summaries/a.md"]
+
+
+def test_research_edit_modal_has_topic_and_depth_inputs_with_defaults():
+    ctx = ProposalContext(
+        proposal_id="abc",
+        kind="research",
+        triggerer_id="u1",
+        topic="original topic",
+        depth=4,
+        rationale="r",
+    )
+    modal = build_research_edit_modal(ctx)
+    assert modal.custom_id == "research:abc"
+    labels = [c.label for c in modal.children]
+    assert "New topic" in labels
+    assert "New depth" in labels
+    topic_input = next(c for c in modal.children if c.label == "New topic")
+    depth_input = next(c for c in modal.children if c.label == "New depth")
+    assert topic_input.default == "original topic"
+    assert depth_input.default == "4"
+
+
+def test_compile_edit_modal_has_paths_input_with_default():
+    ctx = ProposalContext(
+        proposal_id="xyz",
+        kind="compile",
+        triggerer_id="u1",
+        summary_paths=["raw/summaries/a.md", "raw/summaries/b.md"],
+        rationale="r",
+    )
+    modal = build_compile_edit_modal(ctx)
+    assert modal.custom_id == "compile:xyz"
+    labels = [c.label for c in modal.children]
+    assert any("paths" in l.lower() for l in labels)
+    paths_input = modal.children[0]
+    assert "raw/summaries/a.md" in paths_input.default
+    assert "raw/summaries/b.md" in paths_input.default
