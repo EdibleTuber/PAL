@@ -57,6 +57,18 @@ def _tool_progress_label(tool: str, arguments: dict) -> str:
         return f"[editing {arguments.get('path', '?')}...]"
     if tool == "create_file":
         return f"[creating {arguments.get('path', '?')}...]"
+    if tool == "research_topic":
+        status = arguments.get("status")
+        label = status if status else "running research..."
+        return f"[{label}]"
+    if tool == "propose_research":
+        topic = arguments.get("topic", "")
+        label = f"proposing research on \"{topic}\"..." if topic else "proposing research..."
+        return f"[{label}]"
+    if tool == "search_web":
+        query = arguments.get("query", "")
+        label = f"searching web for \"{query}\"..." if query else "searching web..."
+        return f"[{label}]"
     return f"[{tool}...]"
 
 

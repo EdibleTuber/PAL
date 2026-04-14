@@ -120,6 +120,15 @@ def format_tool_progress(tool: str, arguments: dict) -> str:
         label = f"editing {arguments.get('path', '?')}..."
     elif tool == "create_file":
         label = f"creating {arguments.get('path', '?')}..."
+    elif tool == "research_topic":
+        status = arguments.get("status")
+        label = status if status else "running research..."
+    elif tool == "propose_research":
+        topic = arguments.get("topic", "")
+        label = f"proposing research on \"{topic}\"..." if topic else "proposing research..."
+    elif tool == "search_web":
+        query = arguments.get("query", "")
+        label = f"searching web for \"{query}\"..." if query else "searching web..."
     else:
         label = f"{tool}..."
     return f"*[{label}]*"
