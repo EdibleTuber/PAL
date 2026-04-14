@@ -19,7 +19,7 @@ from typing import Literal, Optional
 ProposalStatus = Literal["pending", "approved", "declined", "consumed", "expired"]
 ProposalKind = Literal["research", "compile"]
 
-DEFAULT_EXPIRY_MINUTES = 30
+DEFAULT_EXPIRY_MINUTES = 15
 
 
 @dataclass
