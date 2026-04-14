@@ -155,6 +155,7 @@ class PalDiscordBot(discord.Client):
     def __init__(self, allowed_users: set[str], socket_path: str | Path) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.direct_messages = True  # explicit; default() already includes this
         super().__init__(intents=intents)
         self.connections = UserConnectionManager(
             allowed_users=allowed_users,
