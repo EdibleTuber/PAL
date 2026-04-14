@@ -153,3 +153,25 @@ def test_compile_proposal_message_roundtrip():
     assert decoded.summary_paths == ["raw/summaries/a.md", "raw/summaries/b.md"]
     assert decoded.rationale == "promote findings"
     assert decoded.type == "compile_proposal"
+
+
+def test_research_approval_response_carries_summary_paths():
+    msg = ResearchApprovalResponseMessage(
+        proposal_id="abc",
+        decision="edit",
+        summary_paths=["raw/summaries/a.md", "raw/summaries/b.md"],
+    )
+    decoded = decode_message(encode_message(msg).strip())
+    assert isinstance(decoded, ResearchApprovalResponseMessage)
+    assert decoded.summary_paths == ["raw/summaries/a.md", "raw/summaries/b.md"]
+    assert decoded.new_topic is None
+    assert decoded.new_depth is None
+
+
+def test_research_approval_response_summary_paths_defaults_to_none():
+    msg = ResearchApprovalResponseMessage(
+        proposal_id="abc",
+        decision="approve",
+    )
+    decoded = decode_message(encode_message(msg).strip())
+    assert decoded.summary_paths is None

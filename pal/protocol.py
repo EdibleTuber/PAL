@@ -76,6 +76,7 @@ class ResearchApprovalResponseMessage:
     decision: str  # "approve" | "decline" | "edit"
     new_topic: str | None = None
     new_depth: int | None = None
+    summary_paths: list[str] | None = None
     type: str = "research_approval_response"
 
 
