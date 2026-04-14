@@ -220,6 +220,29 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "compile_summary",
+            "description": (
+                "Promote a single raw summary into a grounded wiki "
+                "article. Categorizes, merges with any existing article "
+                "on the same topic, and archives the raw+summary on "
+                "success. Use when the user wants one specific summary "
+                "ingested. For batches, use propose_compile_batch."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary_path": {
+                        "type": "string",
+                        "description": "Relative path under raw/summaries/ (e.g. 'raw/summaries/foo.md').",
+                    },
+                },
+                "required": ["summary_path"],
+            },
+        },
+    },
 ]
 
 
@@ -275,6 +298,8 @@ class ToolExecutor:
             return await self._propose_research(arguments)
         if name == "research_topic":
             return await self._research_topic(arguments)
+        if name == "compile_summary":
+            return await self._compile_summary(arguments)
         return self.run(name, arguments)
 
     def _resolve_safe(self, path: str) -> Path | None:
@@ -551,3 +576,13 @@ class ToolExecutor:
                 if source.error:
                     lines.append(f"    error: {source.error}")
         return "\n".join(lines)
+
+    async def _compile_summary(self, arguments: dict) -> str:
+        import json as _json
+        summary_path = arguments.get("summary_path", "").strip()
+        if not summary_path:
+            return "Error: 'summary_path' parameter is required."
+        if self.compiler is None:
+            return "Error: compile is not available in this session."
+        result = await self.compiler.compile_one(summary_path)
+        return _json.dumps(result)
