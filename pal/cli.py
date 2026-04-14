@@ -202,16 +202,31 @@ async def run_repl() -> None:
                                 proposal_id=msg.proposal_id, decision="approve"
                             )
                         elif choice in ("e", "edit"):
-                            new_topic = await loop.run_in_executor(None, input, "  New topic: ")
-                            new_topic = new_topic.strip()
-                            new_depth_raw = (await loop.run_in_executor(None, input, "  New depth [3]: ")).strip()
-                            new_depth = int(new_depth_raw) if new_depth_raw else 3
-                            response = ResearchApprovalResponseMessage(
-                                proposal_id=msg.proposal_id,
-                                decision="edit",
-                                new_topic=new_topic,
-                                new_depth=new_depth,
-                            )
+                            new_topic = (await loop.run_in_executor(None, input, "  New topic: ")).strip()
+                            if not new_topic:
+                                # Empty topic -> treat as decline, don't send a bad edit.
+                                response = ResearchApprovalResponseMessage(
+                                    proposal_id=msg.proposal_id, decision="decline"
+                                )
+                            else:
+                                new_depth_raw = (
+                                    await loop.run_in_executor(
+                                        None, input, f"  New depth [{msg.depth}]: "
+                                    )
+                                ).strip()
+                                if new_depth_raw:
+                                    try:
+                                        new_depth = int(new_depth_raw)
+                                    except ValueError:
+                                        new_depth = msg.depth
+                                else:
+                                    new_depth = msg.depth
+                                response = ResearchApprovalResponseMessage(
+                                    proposal_id=msg.proposal_id,
+                                    decision="edit",
+                                    new_topic=new_topic,
+                                    new_depth=new_depth,
+                                )
                         else:
                             response = ResearchApprovalResponseMessage(
                                 proposal_id=msg.proposal_id, decision="decline"
@@ -219,6 +234,7 @@ async def run_repl() -> None:
                         writer = client._writer
                         writer.write(encode_message(response))
                         await writer.drain()
+                        continue
                     elif isinstance(msg, StreamChunkMessage):
                         if live is None:
                             live = Live(Markdown(""), console=console, refresh_per_second=10)
