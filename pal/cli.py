@@ -16,9 +16,31 @@ from rich.text import Text
 
 from pal.client import PalClient
 from pal.config import load_config
-from pal.protocol import StreamChunkMessage, ResponseMessage, ErrorMessage, ToolProgressMessage, Message
+from pal.protocol import (
+    StreamChunkMessage,
+    ResponseMessage,
+    ErrorMessage,
+    ToolProgressMessage,
+    ResearchProposalMessage,
+    ResearchApprovalResponseMessage,
+    Message,
+    encode_message,
+)
 
 _reasoning_display: str = "show"
+
+
+def format_research_proposal(msg: ResearchProposalMessage) -> str:
+    """Render a proposal approval prompt. Pure formatter for testability."""
+    return (
+        "\n"
+        "────────── PAL proposes research ──────────\n"
+        f"  Topic:     {msg.topic}\n"
+        f"  Depth:     {msg.depth}\n"
+        f"  Rationale: {msg.rationale}\n"
+        "  [a]pprove  [d]ecline  [e]dit\n"
+        "> "
+    )
 
 
 def _tool_progress_label(tool: str, arguments: dict) -> str:
@@ -168,6 +190,35 @@ async def run_repl() -> None:
                             live = None
                         label = _tool_progress_label(msg.tool, msg.arguments)
                         console.print(Text(f"  {label}", style="dim"))
+                    elif isinstance(msg, ResearchProposalMessage):
+                        if live is not None:
+                            live.stop()
+                            live = None
+                        print(format_research_proposal(msg), end="", flush=True)
+                        loop = asyncio.get_running_loop()
+                        choice = (await loop.run_in_executor(None, input)).strip().lower()
+                        if choice in ("a", "approve"):
+                            response = ResearchApprovalResponseMessage(
+                                proposal_id=msg.proposal_id, decision="approve"
+                            )
+                        elif choice in ("e", "edit"):
+                            new_topic = await loop.run_in_executor(None, input, "  New topic: ")
+                            new_topic = new_topic.strip()
+                            new_depth_raw = (await loop.run_in_executor(None, input, "  New depth [3]: ")).strip()
+                            new_depth = int(new_depth_raw) if new_depth_raw else 3
+                            response = ResearchApprovalResponseMessage(
+                                proposal_id=msg.proposal_id,
+                                decision="edit",
+                                new_topic=new_topic,
+                                new_depth=new_depth,
+                            )
+                        else:
+                            response = ResearchApprovalResponseMessage(
+                                proposal_id=msg.proposal_id, decision="decline"
+                            )
+                        writer = client._writer
+                        writer.write(encode_message(response))
+                        await writer.drain()
                     elif isinstance(msg, StreamChunkMessage):
                         if live is None:
                             live = Live(Markdown(""), console=console, refresh_per_second=10)
