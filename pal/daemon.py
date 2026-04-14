@@ -251,11 +251,14 @@ class Daemon:
         elif msg.decision == "decline":
             registry.decline(msg.proposal_id)
         elif msg.decision == "edit":
-            registry.edit(
-                msg.proposal_id,
-                new_topic=msg.new_topic or "",
-                new_depth=msg.new_depth or 3,
-            )
+            if msg.summary_paths is not None:
+                registry.edit(msg.proposal_id, summary_paths=msg.summary_paths)
+            else:
+                registry.edit(
+                    msg.proposal_id,
+                    new_topic=msg.new_topic or None,
+                    new_depth=msg.new_depth or None,
+                )
 
     async def _handle_chat(
         self,

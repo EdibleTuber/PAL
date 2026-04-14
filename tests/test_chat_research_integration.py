@@ -224,3 +224,73 @@ async def test_consumed_compile_proposal_cannot_be_reused(tmp_path):
     # Second call with same id must refuse.
     second = await executor.run_async("compile_batch", {"proposal_id": pid})
     assert "already" in second.lower() or "consumed" in second.lower()
+
+
+@pytest.mark.asyncio
+async def test_route_compile_edit_replaces_summary_paths(tmp_path):
+    """Daemon routes a compile-edit approval by passing summary_paths
+    to ApprovalRegistry.edit, producing a new approved compile proposal
+    with the replacement paths."""
+    from pal.daemon import Daemon
+    from pal.protocol import ResearchApprovalResponseMessage
+
+    registry = ApprovalRegistry()
+    old_pid = registry.create_proposal(
+        kind="compile",
+        summary_paths=["raw/summaries/a.md"],
+        rationale="r",
+    )
+
+    # Lightweight stub binding _route_approval_response without a full Daemon.
+    class _Stub:
+        _route_approval_response = Daemon._route_approval_response
+
+    stub = _Stub()
+    msg = ResearchApprovalResponseMessage(
+        proposal_id=old_pid,
+        decision="edit",
+        summary_paths=["raw/summaries/a.md", "raw/summaries/b.md"],
+    )
+    stub._route_approval_response(msg, registry)
+
+    old = registry.get(old_pid)
+    assert old.status == "declined"
+    new_pid = old.successor_id
+    assert new_pid is not None
+    new = registry.get(new_pid)
+    assert new.status == "approved"
+    assert new.kind == "compile"
+    assert new.summary_paths == ["raw/summaries/a.md", "raw/summaries/b.md"]
+
+
+@pytest.mark.asyncio
+async def test_route_research_edit_still_uses_new_topic_and_depth(tmp_path):
+    """Research-edit routing path is unchanged."""
+    from pal.daemon import Daemon
+    from pal.protocol import ResearchApprovalResponseMessage
+
+    registry = ApprovalRegistry()
+    old_pid = registry.create_proposal(
+        topic="original",
+        depth=3,
+        rationale="r",
+    )
+
+    class _Stub:
+        _route_approval_response = Daemon._route_approval_response
+
+    stub = _Stub()
+    msg = ResearchApprovalResponseMessage(
+        proposal_id=old_pid,
+        decision="edit",
+        new_topic="refined",
+        new_depth=5,
+    )
+    stub._route_approval_response(msg, registry)
+
+    old = registry.get(old_pid)
+    new_pid = old.successor_id
+    new = registry.get(new_pid)
+    assert new.kind == "research"
+    assert new.topic == "refined"
+    assert new.depth == 5
