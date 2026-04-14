@@ -214,6 +214,8 @@ class Daemon:
             proposal_emitter=emit_proposal,
         )
 
+        current_chat_task: asyncio.Task | None = None
+
         try:
             while True:
                 line = await reader.readline()
@@ -228,12 +230,31 @@ class Daemon:
                     await writer.drain()
                     continue
 
-                if isinstance(msg, ChatMessage):
-                    await self._handle_chat(msg, conv, writer, tool_executor)
-                elif isinstance(msg, CommandMessage):
-                    await self._handle_command(msg, conv, writer)
-                elif isinstance(msg, ResearchApprovalResponseMessage):
+                if isinstance(msg, ResearchApprovalResponseMessage):
+                    # Fast, synchronous registry update. Processed immediately
+                    # so the tool coroutine awaiting the proposal event can
+                    # proceed even while a chat turn is in flight.
                     self._route_approval_response(msg, approval_registry)
+                elif isinstance(msg, ChatMessage):
+                    if current_chat_task is not None and not current_chat_task.done():
+                        error = ErrorMessage(
+                            error="A previous turn is still being processed. Wait for it to complete."
+                        )
+                        writer.write(encode_message(error))
+                        await writer.drain()
+                        continue
+                    current_chat_task = asyncio.create_task(
+                        self._handle_chat(msg, conv, writer, tool_executor)
+                    )
+                elif isinstance(msg, CommandMessage):
+                    if current_chat_task is not None and not current_chat_task.done():
+                        error = ErrorMessage(
+                            error="A previous turn is still being processed. Wait for it to complete."
+                        )
+                        writer.write(encode_message(error))
+                        await writer.drain()
+                        continue
+                    await self._handle_command(msg, conv, writer)
                 else:
                     error = ErrorMessage(error=f"Unexpected message type: {msg.type}")
                     writer.write(encode_message(error))
@@ -243,6 +264,13 @@ class Daemon:
         except Exception as exc:
             logger.exception("Connection error: %s", exc)
         finally:
+            # Cancel any in-flight chat task on disconnect and await its cleanup.
+            if current_chat_task is not None and not current_chat_task.done():
+                current_chat_task.cancel()
+                try:
+                    await current_chat_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             writer.close()
             await writer.wait_closed()
             logger.info("Client disconnected")
