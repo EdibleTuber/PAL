@@ -241,3 +241,73 @@ async def test_stream_processor_posts_progress_to_thread_after_proposal():
     thread_mock.send.assert_awaited()
     assert progress == []
     assert final_text == "done"
+
+
+from pal.discord_interactions import (
+    parse_button_custom_id,
+    parse_modal_custom_id,
+    extract_modal_field_values,
+)
+
+
+def test_parse_button_custom_id_research_approve():
+    kind, action, proposal_id = parse_button_custom_id("research:approve:abc-123")
+    assert kind == "research"
+    assert action == "approve"
+    assert proposal_id == "abc-123"
+
+
+def test_parse_button_custom_id_compile_edit():
+    kind, action, proposal_id = parse_button_custom_id("compile:edit:xyz")
+    assert kind == "compile"
+    assert action == "edit"
+    assert proposal_id == "xyz"
+
+
+def test_parse_button_custom_id_invalid_returns_none():
+    assert parse_button_custom_id("") is None
+    assert parse_button_custom_id("bogus") is None
+    assert parse_button_custom_id("research:approve") is None
+    assert parse_button_custom_id("wrong:kind:abc") is None
+
+
+def test_parse_modal_custom_id():
+    kind, proposal_id = parse_modal_custom_id("research:abc-123")
+    assert kind == "research"
+    assert proposal_id == "abc-123"
+    kind, proposal_id = parse_modal_custom_id("compile:xyz")
+    assert kind == "compile"
+    assert proposal_id == "xyz"
+
+
+def test_parse_modal_custom_id_invalid_returns_none():
+    assert parse_modal_custom_id("bogus") is None
+    assert parse_modal_custom_id("") is None
+
+
+def test_extract_modal_field_values_multi_field():
+    """Given discord.py's modal submit interaction.data shape, extract
+    the text values in order, one per action-row."""
+    interaction_data = {
+        "components": [
+            {"components": [{"value": "new topic text"}]},
+            {"components": [{"value": "5"}]},
+        ],
+    }
+    values = extract_modal_field_values(interaction_data)
+    assert values == ["new topic text", "5"]
+
+
+def test_extract_modal_field_values_single_field():
+    interaction_data = {
+        "components": [
+            {"components": [{"value": "path1\npath2\npath3"}]},
+        ],
+    }
+    values = extract_modal_field_values(interaction_data)
+    assert values == ["path1\npath2\npath3"]
+
+
+def test_extract_modal_field_values_handles_missing():
+    assert extract_modal_field_values({}) == []
+    assert extract_modal_field_values({"components": []}) == []

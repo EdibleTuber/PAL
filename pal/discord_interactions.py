@@ -313,3 +313,50 @@ class DiscordStreamProcessor:
         if ctx.kind == "research":
             return f"research: {ctx.topic[:80]}"
         return f"compile: {len(ctx.summary_paths)} summaries"
+
+
+def parse_button_custom_id(
+    cid: str,
+) -> Optional[tuple[ProposalKind, str, str]]:
+    """Parse 'research:approve:abc-123' into ('research', 'approve', 'abc-123').
+    Returns None for malformed input."""
+    parts = cid.split(":", 2)
+    if len(parts) != 3:
+        return None
+    kind, action, proposal_id = parts
+    if kind not in ("research", "compile"):
+        return None
+    if action not in ("approve", "decline", "edit"):
+        return None
+    if not proposal_id:
+        return None
+    return kind, action, proposal_id  # type: ignore[return-value]
+
+
+def parse_modal_custom_id(cid: str) -> Optional[tuple[ProposalKind, str]]:
+    """Parse 'research:abc-123' into ('research', 'abc-123')."""
+    parts = cid.split(":", 1)
+    if len(parts) != 2:
+        return None
+    kind, proposal_id = parts
+    if kind not in ("research", "compile"):
+        return None
+    if not proposal_id:
+        return None
+    return kind, proposal_id  # type: ignore[return-value]
+
+
+def extract_modal_field_values(interaction_data: dict) -> list[str]:
+    """Pull text values out of discord.py's modal interaction.data.
+
+    Shape: interaction_data['components'] is a list of action-row dicts,
+    each containing its own 'components' list with text-input dicts
+    carrying a 'value' field. We flatten to a list of values in order.
+    """
+    rows = interaction_data.get("components", [])
+    values: list[str] = []
+    for row in rows:
+        inner = row.get("components", [])
+        for component in inner:
+            values.append(component.get("value", ""))
+    return values
