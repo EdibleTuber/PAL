@@ -531,7 +531,7 @@ class ToolExecutor:
         self.approval_registry.consume(proposal_id)
 
         try:
-            report = await self.researcher.run(
+            report = await self.researcher.research_topic(
                 topic=proposal.topic,
                 depth=proposal.depth,
             )

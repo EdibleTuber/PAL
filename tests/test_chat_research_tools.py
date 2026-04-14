@@ -202,11 +202,13 @@ from pal.researcher import ResearchReport, ResearchResult, SourceResult
 
 @pytest.mark.asyncio
 async def test_research_topic_executes_approved_proposal(tmp_path):
+    from pal.researcher import Researcher
+
     registry = ApprovalRegistry()
     pid = registry.create_proposal(topic="t", depth=3, rationale="r")
     registry.approve(pid)
 
-    researcher = MagicMock()
+    researcher = MagicMock(spec=Researcher)
     report = ResearchReport(
         results=[
             ResearchResult(
@@ -225,9 +227,10 @@ async def test_research_topic_executes_approved_proposal(tmp_path):
         total_summarized=1,
         total_failed=0,
     )
-    async def fake_run(topic, depth, progress_callback=None):
+
+    async def fake_research_topic(topic, depth, verbose=False):
         return report
-    researcher.run = fake_run
+    researcher.research_topic = fake_research_topic
 
     executor = ToolExecutor(
         vault_path=tmp_path,
