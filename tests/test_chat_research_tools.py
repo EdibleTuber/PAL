@@ -310,3 +310,24 @@ async def test_research_topic_refuses_declined_proposal(tmp_path):
         "research_topic", {"proposal_id": pid}
     )
     assert "declined" in output.lower() or "not approved" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_propose_research_times_out_when_no_response(tmp_path):
+    """If the user never responds in the CLI, the proposal expires and
+    the handler returns with status='expired' rather than hanging."""
+    # Zero-minute expiry so expire_stale() flips it on first sweep.
+    registry = ApprovalRegistry(expiry_minutes=0)
+    emitted = []
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        proposal_emitter=emitted.append,
+    )
+
+    output = await executor.run_async(
+        "propose_research",
+        {"topic": "t", "depth": 3, "rationale": "r"},
+    )
+    assert '"status": "expired"' in output

@@ -3,6 +3,8 @@
 Defines tool schemas (OpenAI function-calling format) and a ToolExecutor
 that runs tool calls against the vault.
 """
+import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -464,7 +466,13 @@ class ToolExecutor:
             )
         )
         # Block until the CLI signals a terminal status (or expiry).
-        await proposal.event.wait()
+        # Bound the wait by the proposal's own expiry so a disconnected
+        # CLI can't hang this tool coroutine forever.
+        remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
+        try:
+            await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
+        except asyncio.TimeoutError:
+            self.approval_registry.expire_stale()
         final = self.approval_registry.get(proposal_id)
         result = {"proposal_id": proposal_id, "status": final.status}
         if final.status == "declined":

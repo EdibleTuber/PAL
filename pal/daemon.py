@@ -182,7 +182,12 @@ class Daemon:
 
         def emit_proposal(msg):
             writer.write(encode_message(msg))
-            asyncio.create_task(writer.drain())
+            drain_task = asyncio.create_task(writer.drain())
+            def _log_drain_failure(task: asyncio.Task) -> None:
+                exc = task.exception()
+                if exc is not None:
+                    logger.warning("proposal drain failed: %s", exc)
+            drain_task.add_done_callback(_log_drain_failure)
 
         tool_executor = ToolExecutor(
             vault_path=self.config.vault_path,
