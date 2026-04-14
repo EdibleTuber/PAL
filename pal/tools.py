@@ -4,9 +4,15 @@ Defines tool schemas (OpenAI function-calling format) and a ToolExecutor
 that runs tool calls against the vault.
 """
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pal.retrieval import RetrievalClient
 from pal.wiki import WikiManager
+
+if TYPE_CHECKING:
+    from pal.approval_registry import ApprovalRegistry
+    from pal.websearch import WebSearchClient
+    from pal.researcher import Researcher
 
 # Maximum characters to return from a file read (~8000 tokens ≈ 32000 chars).
 _READ_LIMIT = 32_000
@@ -137,10 +143,23 @@ TOOL_DEFINITIONS = [
 class ToolExecutor:
     """Executes tool calls against the vault."""
 
-    def __init__(self, vault_path: Path, retrieval: RetrievalClient | None, wiki: WikiManager | None = None) -> None:
+    def __init__(
+        self,
+        vault_path: Path,
+        retrieval: RetrievalClient | None,
+        wiki: WikiManager | None = None,
+        approval_registry: "ApprovalRegistry | None" = None,
+        websearch: "WebSearchClient | None" = None,
+        researcher: "Researcher | None" = None,
+        proposal_emitter=None,
+    ) -> None:
         self.vault_path = vault_path.resolve()
         self.retrieval = retrieval
         self.wiki = wiki
+        self.approval_registry = approval_registry
+        self.websearch = websearch
+        self.researcher = researcher
+        self.proposal_emitter = proposal_emitter
 
     def run(self, name: str, arguments: dict) -> str:
         """Dispatch a tool call and return the result as a string.
