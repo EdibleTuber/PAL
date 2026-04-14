@@ -137,3 +137,19 @@ def test_research_approval_response_edit_carries_new_values():
     assert decoded.decision == "edit"
     assert decoded.new_topic == "refined topic"
     assert decoded.new_depth == 5
+
+
+def test_compile_proposal_message_roundtrip():
+    from pal.protocol import CompileProposalMessage
+    msg = CompileProposalMessage(
+        proposal_id="abc",
+        summary_paths=["raw/summaries/a.md", "raw/summaries/b.md"],
+        rationale="promote findings",
+    )
+    line = encode_message(msg)
+    decoded = decode_message(line.strip())
+    assert isinstance(decoded, CompileProposalMessage)
+    assert decoded.proposal_id == "abc"
+    assert decoded.summary_paths == ["raw/summaries/a.md", "raw/summaries/b.md"]
+    assert decoded.rationale == "promote findings"
+    assert decoded.type == "compile_proposal"

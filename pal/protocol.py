@@ -9,6 +9,7 @@ Message types:
     tool_progress               — tool execution progress indicator
     research_proposal           — daemon-to-CLI research approval request
     research_approval_response  — CLI-to-daemon approval decision
+    compile_proposal            — daemon-to-CLI compile approval request
 
 All messages are serialized as a single JSON line terminated by newline.
 """
@@ -78,6 +79,14 @@ class ResearchApprovalResponseMessage:
     type: str = "research_approval_response"
 
 
+@dataclass
+class CompileProposalMessage:
+    proposal_id: str
+    summary_paths: list[str]
+    rationale: str
+    type: str = "compile_proposal"
+
+
 _MESSAGE_TYPES: dict[str, type] = {
     "chat": ChatMessage,
     "command": CommandMessage,
@@ -87,6 +96,7 @@ _MESSAGE_TYPES: dict[str, type] = {
     "tool_progress": ToolProgressMessage,
     "research_proposal": ResearchProposalMessage,
     "research_approval_response": ResearchApprovalResponseMessage,
+    "compile_proposal": CompileProposalMessage,
 }
 
 Message = (
@@ -98,6 +108,7 @@ Message = (
     | ToolProgressMessage
     | ResearchProposalMessage
     | ResearchApprovalResponseMessage
+    | CompileProposalMessage
 )
 
 
