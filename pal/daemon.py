@@ -177,6 +177,7 @@ class Daemon:
             websearch=self.websearch,
             researcher=researcher,
             proposal_emitter=emit_proposal,
+            compiler=self.compiler,
         )
 
         current_chat_task: asyncio.Task | None = None
