@@ -57,3 +57,25 @@ class ApprovalRegistry:
 
     def get(self, proposal_id: str) -> Optional[ResearchProposal]:
         return self._proposals.get(proposal_id)
+
+    def approve(self, proposal_id: str) -> None:
+        proposal = self._proposals.get(proposal_id)
+        if proposal is None or proposal.status != "pending":
+            return
+        proposal.status = "approved"
+        proposal.event.set()
+
+    def decline(self, proposal_id: str) -> None:
+        proposal = self._proposals.get(proposal_id)
+        if proposal is None or proposal.status != "pending":
+            return
+        proposal.status = "declined"
+        proposal.event.set()
+
+    def consume(self, proposal_id: str) -> bool:
+        """Mark an approved proposal as consumed. Returns True on success."""
+        proposal = self._proposals.get(proposal_id)
+        if proposal is None or proposal.status != "approved":
+            return False
+        proposal.status = "consumed"
+        return True
