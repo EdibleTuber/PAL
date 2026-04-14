@@ -42,6 +42,7 @@ from pal.protocol import (
     ResponseMessage,
     ErrorMessage,
     ToolProgressMessage,
+    ResearchApprovalResponseMessage,
     Message,
     STREAM_BUFFER_LIMIT,
     encode_message,
@@ -116,12 +117,6 @@ class Daemon:
             profile=self.profile,
             wisdom=self.wisdom,
         )
-        from pal.tools import ToolExecutor
-        self.tool_executor = ToolExecutor(
-            vault_path=config.vault_path,
-            retrieval=self.retrieval,
-            wiki=self.wiki,
-        )
         self.learning = LearningManager(config.vault_path)
         self.allowlist = AllowlistManager(config.vault_path)
         self.allowlist.seed()
@@ -175,6 +170,32 @@ class Daemon:
         conv = Conversation(history_depth=self.config.history_depth)
         logger.info("Client connected")
 
+        from pal.tools import ToolExecutor
+        from pal.approval_registry import ApprovalRegistry
+        from pal.researcher import Researcher
+
+        approval_registry = ApprovalRegistry()
+        researcher = Researcher(
+            websearch=self.websearch,
+            fetcher=self.fetcher,
+            inference=self.inference,
+            vault_path=self.config.vault_path,
+        )
+
+        def emit_proposal(msg):
+            writer.write(encode_message(msg))
+            asyncio.create_task(writer.drain())
+
+        tool_executor = ToolExecutor(
+            vault_path=self.config.vault_path,
+            retrieval=self.retrieval,
+            wiki=self.wiki,
+            approval_registry=approval_registry,
+            websearch=self.websearch,
+            researcher=researcher,
+            proposal_emitter=emit_proposal,
+        )
+
         try:
             while True:
                 line = await reader.readline()
@@ -190,9 +211,11 @@ class Daemon:
                     continue
 
                 if isinstance(msg, ChatMessage):
-                    await self._handle_chat(msg, conv, writer)
+                    await self._handle_chat(msg, conv, writer, tool_executor)
                 elif isinstance(msg, CommandMessage):
                     await self._handle_command(msg, conv, writer)
+                elif isinstance(msg, ResearchApprovalResponseMessage):
+                    self._route_approval_response(msg, approval_registry)
                 else:
                     error = ErrorMessage(error=f"Unexpected message type: {msg.type}")
                     writer.write(encode_message(error))
@@ -206,11 +229,28 @@ class Daemon:
             await writer.wait_closed()
             logger.info("Client disconnected")
 
+    def _route_approval_response(
+        self,
+        msg,  # ResearchApprovalResponseMessage
+        registry,  # ApprovalRegistry
+    ) -> None:
+        if msg.decision == "approve":
+            registry.approve(msg.proposal_id)
+        elif msg.decision == "decline":
+            registry.decline(msg.proposal_id)
+        elif msg.decision == "edit":
+            registry.edit(
+                msg.proposal_id,
+                new_topic=msg.new_topic or "",
+                new_depth=msg.new_depth or 3,
+            )
+
     async def _handle_chat(
         self,
         msg: ChatMessage,
         conv: Conversation,
         writer: asyncio.StreamWriter,
+        tool_executor=None,
     ) -> None:
         """Process a chat message with optional tool use.
 
@@ -288,7 +328,7 @@ class Daemon:
                     writer.write(encode_message(progress))
                     await writer.drain()
 
-                    result = await self.tool_executor.run_async(tc.name, tc.arguments)
+                    result = await tool_executor.run_async(tc.name, tc.arguments)
                     conv.add_tool_result(tc.id, result)
 
                 messages = conv.get_messages_for_api(
