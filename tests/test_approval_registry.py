@@ -122,3 +122,32 @@ def test_edit_non_pending_returns_none():
     pid = registry.create_proposal(topic="t", depth=3, rationale="r")
     registry.approve(pid)
     assert registry.edit(pid, new_topic="x", new_depth=3) is None
+
+
+def test_edit_records_successor_id_on_old_proposal():
+    registry = ApprovalRegistry()
+    old_pid = registry.create_proposal(topic="original", depth=3, rationale="r")
+    new_pid = registry.edit(old_pid, new_topic="refined", new_depth=5)
+    old = registry.get(old_pid)
+    assert old.successor_id == new_pid
+
+
+def test_get_successor_returns_new_proposal():
+    registry = ApprovalRegistry()
+    old_pid = registry.create_proposal(topic="t", depth=3, rationale="r")
+    new_pid = registry.edit(old_pid, new_topic="u", new_depth=4)
+    successor = registry.get_successor(old_pid)
+    assert successor is not None
+    assert successor.proposal_id == new_pid
+    assert successor.topic == "u"
+
+
+def test_get_successor_returns_none_when_no_edit():
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(topic="t", depth=3, rationale="r")
+    assert registry.get_successor(pid) is None
+
+
+def test_get_successor_unknown_id_returns_none():
+    registry = ApprovalRegistry()
+    assert registry.get_successor("nonexistent") is None

@@ -33,6 +33,7 @@ class ResearchProposal:
     # asyncio.Event is set when the proposal reaches a terminal state
     # (approved, declined, or expired). Not part of the public dataclass
     # fields — carried separately for awaiting.
+    successor_id: Optional[str] = None
     event: asyncio.Event = field(default_factory=asyncio.Event, repr=False, compare=False)
 
 
@@ -88,6 +89,13 @@ class ApprovalRegistry:
                 proposal.status = "expired"
                 proposal.event.set()
 
+    def get_successor(self, proposal_id: str) -> Optional["ResearchProposal"]:
+        """Return the proposal that replaced this one via edit(), or None."""
+        proposal = self._proposals.get(proposal_id)
+        if proposal is None or proposal.successor_id is None:
+            return None
+        return self._proposals.get(proposal.successor_id)
+
     def edit(
         self,
         proposal_id: str,
@@ -120,4 +128,5 @@ class ApprovalRegistry:
         )
         new_proposal.event.set()
         self._proposals[new_id] = new_proposal
+        old.successor_id = new_id
         return new_id

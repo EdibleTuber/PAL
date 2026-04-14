@@ -476,9 +476,8 @@ class ToolExecutor:
         final = self.approval_registry.get(proposal_id)
         result = {"proposal_id": proposal_id, "status": final.status}
         if final.status == "declined":
-            # Check whether this decline is actually an edit -- find the
-            # most recently created approved proposal with no prior consume.
-            edited = self._find_edit_successor(proposal_id)
+            # If this proposal was edited, the registry links old -> new.
+            edited = self.approval_registry.get_successor(proposal_id)
             if edited is not None:
                 result = {
                     "proposal_id": edited.proposal_id,
@@ -490,29 +489,6 @@ class ToolExecutor:
             result["topic"] = final.topic
             result["depth"] = final.depth
         return _json.dumps(result)
-
-    def _find_edit_successor(self, old_proposal_id: str):
-        """Find the approved proposal that replaced an edited one.
-
-        The edit() method creates a new proposal with status=approved and
-        signals the old one as declined, both in the same call. The new
-        proposal's created_at is after the old one's. Return the newest
-        approved proposal not yet consumed; None if no match.
-        """
-        if self.approval_registry is None:
-            return None
-        old = self.approval_registry.get(old_proposal_id)
-        if old is None:
-            return None
-        newest = None
-        for candidate in self.approval_registry._proposals.values():
-            if candidate.status != "approved":
-                continue
-            if candidate.created_at <= old.created_at:
-                continue
-            if newest is None or candidate.created_at > newest.created_at:
-                newest = candidate
-        return newest
 
     async def _research_topic(self, arguments: dict) -> str:
         proposal_id = arguments.get("proposal_id", "").strip()
