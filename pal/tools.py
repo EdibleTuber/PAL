@@ -243,6 +243,34 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_compile_batch",
+            "description": (
+                "Propose compiling multiple raw summaries into wiki "
+                "articles. Blocks until the user approves, declines, "
+                "or edits in the CLI. Use for multi-summary promotion. "
+                "After approval, immediately call compile_batch with "
+                "the returned proposal_id."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Relative paths under raw/summaries/ (non-empty).",
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "One-line reason shown to the user in the approval prompt.",
+                    },
+                },
+                "required": ["summary_paths", "rationale"],
+            },
+        },
+    },
 ]
 
 
@@ -300,6 +328,8 @@ class ToolExecutor:
             return await self._research_topic(arguments)
         if name == "compile_summary":
             return await self._compile_summary(arguments)
+        if name == "propose_compile_batch":
+            return await self._propose_compile_batch(arguments)
         return self.run(name, arguments)
 
     def _resolve_safe(self, path: str) -> Path | None:
@@ -585,4 +615,51 @@ class ToolExecutor:
         if self.compiler is None:
             return "Error: compile is not available in this session."
         result = await self.compiler.compile_one(summary_path)
+        return _json.dumps(result)
+
+    async def _propose_compile_batch(self, arguments: dict) -> str:
+        import json as _json
+        from pal.protocol import CompileProposalMessage
+
+        if self.approval_registry is None or self.proposal_emitter is None:
+            return "Error: compile proposals are not available in this session."
+        paths = arguments.get("summary_paths")
+        if not isinstance(paths, list) or not paths:
+            return "Error: 'summary_paths' must be a non-empty list."
+        rationale = (arguments.get("rationale") or "").strip()
+        if not rationale:
+            return "Error: 'rationale' parameter is required."
+
+        proposal_id = self.approval_registry.create_proposal(
+            kind="compile",
+            summary_paths=paths,
+            rationale=rationale,
+        )
+        proposal = self.approval_registry.get(proposal_id)
+        self.proposal_emitter(
+            CompileProposalMessage(
+                proposal_id=proposal_id,
+                summary_paths=list(paths),
+                rationale=rationale,
+            )
+        )
+
+        remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
+        try:
+            await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
+        except asyncio.TimeoutError:
+            self.approval_registry.expire_stale()
+
+        final = self.approval_registry.get(proposal_id)
+        result = {"proposal_id": proposal_id, "status": final.status}
+        if final.status == "declined":
+            edited = self.approval_registry.get_successor(proposal_id)
+            if edited is not None:
+                result = {
+                    "proposal_id": edited.proposal_id,
+                    "status": "approved",
+                    "summary_paths": list(edited.summary_paths or []),
+                }
+        elif final.status == "approved":
+            result["summary_paths"] = list(final.summary_paths or [])
         return _json.dumps(result)
