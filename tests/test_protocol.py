@@ -8,6 +8,8 @@ from pal.protocol import (
     ResponseMessage,
     ErrorMessage,
     ToolProgressMessage,
+    ResearchProposalMessage,
+    ResearchApprovalResponseMessage,
     encode_message,
     decode_message,
 )
@@ -92,3 +94,46 @@ def test_decode_unknown_type_raises():
         assert False, "Should have raised ValueError"
     except ValueError:
         pass
+
+
+def test_research_proposal_message_roundtrip():
+    msg = ResearchProposalMessage(
+        proposal_id="abc-123",
+        topic="prompt injection",
+        depth=3,
+        rationale="vault has no sources",
+    )
+    line = encode_message(msg)
+    decoded = decode_message(line.strip())
+    assert isinstance(decoded, ResearchProposalMessage)
+    assert decoded.proposal_id == "abc-123"
+    assert decoded.topic == "prompt injection"
+    assert decoded.depth == 3
+    assert decoded.rationale == "vault has no sources"
+    assert decoded.type == "research_proposal"
+
+
+def test_research_approval_response_approve():
+    msg = ResearchApprovalResponseMessage(
+        proposal_id="abc-123",
+        decision="approve",
+    )
+    decoded = decode_message(encode_message(msg).strip())
+    assert isinstance(decoded, ResearchApprovalResponseMessage)
+    assert decoded.proposal_id == "abc-123"
+    assert decoded.decision == "approve"
+    assert decoded.new_topic is None
+    assert decoded.new_depth is None
+
+
+def test_research_approval_response_edit_carries_new_values():
+    msg = ResearchApprovalResponseMessage(
+        proposal_id="abc-123",
+        decision="edit",
+        new_topic="refined topic",
+        new_depth=5,
+    )
+    decoded = decode_message(encode_message(msg).strip())
+    assert decoded.decision == "edit"
+    assert decoded.new_topic == "refined topic"
+    assert decoded.new_depth == 5

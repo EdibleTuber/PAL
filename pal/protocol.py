@@ -58,6 +58,24 @@ class ToolProgressMessage:
     type: str = "tool_progress"
 
 
+@dataclass
+class ResearchProposalMessage:
+    proposal_id: str
+    topic: str
+    depth: int
+    rationale: str
+    type: str = "research_proposal"
+
+
+@dataclass
+class ResearchApprovalResponseMessage:
+    proposal_id: str
+    decision: str  # "approve" | "decline" | "edit"
+    new_topic: str | None = None
+    new_depth: int | None = None
+    type: str = "research_approval_response"
+
+
 _MESSAGE_TYPES: dict[str, type] = {
     "chat": ChatMessage,
     "command": CommandMessage,
@@ -65,9 +83,20 @@ _MESSAGE_TYPES: dict[str, type] = {
     "response": ResponseMessage,
     "error": ErrorMessage,
     "tool_progress": ToolProgressMessage,
+    "research_proposal": ResearchProposalMessage,
+    "research_approval_response": ResearchApprovalResponseMessage,
 }
 
-Message = ChatMessage | CommandMessage | StreamChunkMessage | ResponseMessage | ErrorMessage | ToolProgressMessage
+Message = (
+    ChatMessage
+    | CommandMessage
+    | StreamChunkMessage
+    | ResponseMessage
+    | ErrorMessage
+    | ToolProgressMessage
+    | ResearchProposalMessage
+    | ResearchApprovalResponseMessage
+)
 
 
 def encode_message(msg: Message) -> bytes:
