@@ -27,6 +27,7 @@ from pal.websearch import WebSearchClient
 from pal.fetcher import URLFetcher, FetchError
 from pal.converter import DocumentConverter, ConversionError
 from pal.categorizer import Categorizer
+from pal.compiler import Compiler
 from pal.summarizer import summarize_raw_file
 from pal.chunker import chunk_markdown
 from pal.reasoning import decide_mode
@@ -132,6 +133,13 @@ class Daemon:
         )
         self.converter = DocumentConverter()
         self.categorizer = Categorizer(self.inference)
+        self.compiler = Compiler(
+            vault_path=config.vault_path,
+            wiki=self.wiki,
+            inference=self.inference,
+            categorizer=self.categorizer,
+            prompt_builder=self.prompt_builder,
+        )
         cleanup_archived(config.vault_path)
 
     async def serve(self) -> None:
@@ -940,219 +948,6 @@ class Daemon:
         writer.write(encode_message(resp))
         await writer.drain()
 
-    async def _compile_one(self, summary_path: str) -> dict:
-        """Core compile logic. Returns a dict with status and metadata.
-
-        Status values:
-          - "ok": new article saved
-          - "merged": existing article updated
-          - "insufficient": model refused (summary too thin)
-          - "not_found": summary file doesn't exist
-          - "invalid_path": path traversal / escapes vault
-          - "error": inference or other failure
-
-        Other fields: title, article_path_rel, compiled_truth, reason.
-        """
-        # Path traversal guard
-        if ".." in summary_path.split("/") or summary_path.startswith("/"):
-            return {"status": "invalid_path", "reason": f"Invalid path: {summary_path}"}
-
-        full_path = self.config.vault_path / summary_path
-        if not full_path.exists():
-            return {"status": "not_found", "reason": f"File not found: {summary_path}"}
-
-        # Resolve + boundary check
-        try:
-            resolved = full_path.resolve()
-            vault_resolved = self.config.vault_path.resolve()
-            if not str(resolved).startswith(str(vault_resolved) + "/"):
-                return {"status": "invalid_path", "reason": f"Invalid path: {summary_path}"}
-        except Exception:
-            return {"status": "invalid_path", "reason": f"Invalid path: {summary_path}"}
-
-        from pal.frontmatter import parse_frontmatter
-        summary_meta, summary_body = parse_frontmatter(full_path.read_text())
-
-        title = summary_meta.get("title", full_path.stem)
-        source_url = summary_meta.get("source_url", "")
-        source_hash = summary_meta.get("source_hash", "")
-
-        # Step 1: Categorize
-        category = await self.categorizer.categorize(
-            title=title,
-            body=summary_body,
-            vault_path=self.config.vault_path,
-        )
-
-        # Step 2: Topic matching
-        all_articles = self.wiki.list_articles()
-        existing_match = await find_existing_article(
-            summary_title=title,
-            summary_preview=summary_body[:400],
-            category=category,
-            articles=all_articles,
-            inference=self.inference,
-        )
-
-        # Step 3: Build prompts
-        base_prompt = self.prompt_builder.build()
-
-        if existing_match:
-            # Merge compile
-            existing_text = (self.config.vault_path / existing_match["path"]).read_text()
-            existing_article = parse_article(existing_text)
-
-            timeline_context = "\n".join(
-                f"- {e.date} {e.source_label}: {e.summary[:200]}"
-                for e in existing_article.timeline
-            )
-
-            system_prompt = (
-                f"{base_prompt}\n\n"
-                "You are updating a wiki article with new information. "
-                "Rewrite the compiled truth sections to incorporate the new source material. "
-                "Keep the same section structure. Do not drop existing knowledge unless "
-                "the new source directly contradicts it.\n\n"
-                "Required sections: ## Overview, ## Key Concepts\n"
-                "Optional sections (include if relevant): ## Usage, ## Configuration, "
-                "## Gotchas, ## Related\n\n"
-                "Use ONLY information from the existing article and the new source material. "
-                "Do NOT add facts not present in either."
-            )
-
-            user_prompt = (
-                f"CURRENT COMPILED TRUTH:\n\n{existing_article.compiled_truth.strip()}\n\n"
-                f"PREVIOUS SOURCES:\n{timeline_context}\n\n"
-                f"NEW SOURCE MATERIAL:\n"
-                f"Title: {title}\n"
-                f"Source URL: {source_url}\n\n"
-                f"{summary_body.strip()}\n\n"
-                "---\n\n"
-                "Rewrite the compiled truth incorporating the new information."
-            )
-        else:
-            # First compile
-            existing_article = None
-
-            system_prompt = (
-                f"{base_prompt}\n\n"
-                "You are compiling a wiki article from source material. RULES:\n"
-                "- Use ONLY information from the SOURCE MATERIAL below.\n"
-                "- Do NOT add facts that aren't in the source.\n"
-                "- If the source lacks sufficient detail, respond with exactly: "
-                "INSUFFICIENT: <one-sentence reason>\n\n"
-                "Required sections: ## Overview, ## Key Concepts\n"
-                "Optional sections (include if relevant): ## Usage, ## Configuration, "
-                "## Gotchas, ## Related"
-            )
-
-            user_prompt = (
-                f"SOURCE MATERIAL (reviewed summary):\n\n"
-                f"Title: {title}\n"
-                f"Source URL: {source_url}\n\n"
-                f"{summary_body.strip()}\n\n"
-                f"---\n\n"
-                f"Write a grounded wiki article based on this source material."
-            )
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        try:
-            result = await self.inference.complete(messages, reasoning="off")
-            compiled_truth = result.content or ""
-        except Exception as exc:
-            logger.exception("Compile inference failed: %s", exc)
-            return {"status": "error", "title": title, "reason": f"Compile failed: {exc}"}
-
-        if compiled_truth.strip().startswith("INSUFFICIENT:"):
-            return {
-                "status": "insufficient",
-                "title": title,
-                "reason": compiled_truth.strip(),
-            }
-
-        # Validate required sections
-        issues = validate_compiled_truth(compiled_truth)
-        if issues:
-            logger.warning("Compiled truth validation issues: %s", issues)
-
-        # Build article
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-        if existing_article:
-            article = Article(
-                meta=dict(existing_article.meta),
-                compiled_truth=compiled_truth.strip() + "\n",
-                timeline=list(existing_article.timeline),
-            )
-            article.meta["updated"] = now
-            article.meta["compiled_at"] = now
-        else:
-            article = Article(
-                meta={
-                    "title": title,
-                    "created": now,
-                    "updated": now,
-                    "compiled_at": now,
-                    "status": "compiled",
-                    "sources": [],
-                },
-                compiled_truth=compiled_truth.strip() + "\n",
-                timeline=[],
-            )
-
-        # Append timeline entry
-        article = append_timeline_entry(
-            article=article,
-            source_url=source_url,
-            source_hash=source_hash,
-            summary=summary_body.strip(),
-        )
-
-        # Determine save path
-        if existing_match:
-            article_path_rel = existing_match["path"]
-            article_full_path = self.config.vault_path / article_path_rel
-        else:
-            slug = title.lower().replace("_", "-").replace(" ", "-")
-            slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-") or "untitled"
-            if len(slug.encode("utf-8")) > MAX_SLUG_BYTES:
-                h = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
-                truncated = (
-                    slug.encode("utf-8")[: MAX_SLUG_BYTES - 9]
-                    .decode("utf-8", errors="ignore")
-                    .rstrip("-")
-                )
-                slug = f"{truncated}-{h}"
-            target_dir = self.config.vault_path / category
-            target_dir.mkdir(parents=True, exist_ok=True)
-            article_path_rel = f"{category}/{slug}.md"
-            article_full_path = target_dir / f"{slug}.md"
-
-        article_full_path.write_text(serialize_article(article))
-        logger.info("Compiled %s -> %s", summary_path, article_path_rel)
-
-        # Rebuild index and commit
-        self.wiki.rebuild_index()
-        self.wiki.git_init()
-        self.wiki.git_commit(f"compile: {title}")
-
-        # Archive raw intermediates
-        source_raw = summary_meta.get("source_raw", "")
-        archive_raw_files(self.config.vault_path, raw_path=source_raw, summary_path=summary_path)
-        self.wiki.git_commit(f"archive: {title}")
-
-        return {
-            "status": "merged" if existing_match else "ok",
-            "title": title,
-            "article_path_rel": article_path_rel,
-            "compiled_truth": compiled_truth.strip(),
-        }
-
     async def _handle_compile(self, summary_path: str, writer: asyncio.StreamWriter) -> None:
         """Handle /compile <summary-path> — build a grounded wiki article from a summary."""
         summary_path = summary_path.strip()
@@ -1162,7 +957,7 @@ class Daemon:
             await writer.drain()
             return
 
-        outcome = await self._compile_one(summary_path)
+        outcome = await self.compiler.compile_one(summary_path)
 
         if outcome["status"] in ("invalid_path", "not_found", "error"):
             error = ErrorMessage(error=outcome["reason"])
@@ -1236,7 +1031,7 @@ class Daemon:
             await writer.drain()
 
             try:
-                outcome = await self._compile_one(rel)
+                outcome = await self.compiler.compile_one(rel)
             except Exception as exc:
                 logger.exception("Batch compile failed for %s: %s", rel, exc)
                 errors.append((rel, str(exc)))
