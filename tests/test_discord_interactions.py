@@ -1,11 +1,23 @@
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from pal.discord_interactions import (
+    DiscordStreamProcessor,
     ProposalContext,
     build_research_proposal_embed,
     build_compile_proposal_embed,
     build_research_edit_modal,
     build_compile_edit_modal,
 )
-from pal.protocol import ResearchProposalMessage, CompileProposalMessage
+from pal.protocol import (
+    ResearchProposalMessage,
+    CompileProposalMessage,
+    ResponseMessage,
+    StreamChunkMessage,
+    ToolProgressMessage,
+)
 
 
 def test_research_embed_has_title_and_fields():
@@ -117,3 +129,115 @@ def test_compile_edit_modal_has_paths_input_with_default():
     paths_input = modal.children[0]
     assert "raw/summaries/a.md" in paths_input.default
     assert "raw/summaries/b.md" in paths_input.default
+
+
+@pytest.mark.asyncio
+async def test_stream_processor_plain_chat_returns_final_text():
+    """Non-proposal chat: accumulate progress, return (progress, final_text).
+    Matches the legacy collect_response shape."""
+    channel = MagicMock()
+    bot = MagicMock()
+    bot.active_proposals = {}
+    client = MagicMock()
+
+    processor = DiscordStreamProcessor(
+        channel=channel,
+        triggerer_id="user-1",
+        bot=bot,
+        client=client,
+    )
+
+    async def stream():
+        yield ToolProgressMessage(tool="read_file", arguments={"path": "foo.md"})
+        yield StreamChunkMessage(token="Hello ")
+        yield StreamChunkMessage(token="world")
+        yield ResponseMessage(text="")
+
+    progress, final_text = await processor.run(stream())
+    assert final_text == "Hello world"
+    assert len(progress) == 1
+    assert progress[0].tool == "read_file"
+    channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stream_processor_posts_research_proposal_and_records_context():
+    channel = MagicMock()
+    bot = MagicMock()
+    bot.active_proposals = {}
+    bot.connections = MagicMock()
+    client = MagicMock()
+
+    posted_message = MagicMock()
+    posted_message.id = 555
+    posted_message.create_thread = AsyncMock()
+    channel.send = AsyncMock(return_value=posted_message)
+    channel.id = 100
+
+    processor = DiscordStreamProcessor(
+        channel=channel,
+        triggerer_id="user-1",
+        bot=bot,
+        client=client,
+    )
+
+    async def stream():
+        yield ResearchProposalMessage(
+            proposal_id="abc",
+            topic="t",
+            depth=3,
+            rationale="r",
+        )
+        yield ResponseMessage(text="")
+
+    progress, final_text = await processor.run(stream())
+    channel.send.assert_awaited_once()
+    ctx = bot.active_proposals.get("abc")
+    assert ctx is not None
+    assert ctx.kind == "research"
+    assert ctx.triggerer_id == "user-1"
+    assert ctx.topic == "t"
+    assert ctx.discord_message_id == 555
+    assert ctx.channel_id == 100
+
+
+@pytest.mark.asyncio
+async def test_stream_processor_posts_progress_to_thread_after_proposal():
+    """Once a proposal has been posted, subsequent progress events route
+    to the thread (created lazily on first progress event), not the
+    channel's main stream."""
+    channel = MagicMock()
+    bot = MagicMock()
+    bot.active_proposals = {}
+    client = MagicMock()
+
+    thread_mock = MagicMock()
+    thread_mock.send = AsyncMock()
+    posted_message = MagicMock()
+    posted_message.id = 777
+    posted_message.create_thread = AsyncMock(return_value=thread_mock)
+    channel.send = AsyncMock(return_value=posted_message)
+    channel.id = 200
+
+    processor = DiscordStreamProcessor(
+        channel=channel,
+        triggerer_id="u1",
+        bot=bot,
+        client=client,
+    )
+
+    async def stream():
+        yield ResearchProposalMessage(
+            proposal_id="p1", topic="t", depth=3, rationale="r",
+        )
+        yield ToolProgressMessage(
+            tool="research_topic",
+            arguments={"status": "Researching: t"},
+        )
+        yield ResponseMessage(text="done")
+
+    progress, final_text = await processor.run(stream())
+    posted_message.create_thread.assert_awaited_once()
+    thread_mock.send.assert_awaited()
+    assert progress == []
+    assert final_text == "done"
