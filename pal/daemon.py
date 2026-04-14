@@ -173,12 +173,6 @@ class Daemon:
         logger.info("Client connected")
 
         approval_registry = ApprovalRegistry()
-        researcher = Researcher(
-            websearch=self.websearch,
-            fetcher=self.fetcher,
-            inference=self.inference,
-            vault_path=self.config.vault_path,
-        )
 
         def emit_proposal(msg):
             writer.write(encode_message(msg))
@@ -188,6 +182,27 @@ class Daemon:
                 if exc is not None:
                     logger.warning("proposal drain failed: %s", exc)
             drain_task.add_done_callback(_log_drain_failure)
+
+        def emit_progress(status: str) -> None:
+            progress = ToolProgressMessage(
+                tool="research_topic",
+                arguments={"status": status},
+            )
+            writer.write(encode_message(progress))
+            drain_task = asyncio.create_task(writer.drain())
+            def _log_drain_failure(task: asyncio.Task) -> None:
+                exc = task.exception()
+                if exc is not None:
+                    logger.warning("progress drain failed: %s", exc)
+            drain_task.add_done_callback(_log_drain_failure)
+
+        researcher = Researcher(
+            websearch=self.websearch,
+            fetcher=self.fetcher,
+            inference=self.inference,
+            vault_path=self.config.vault_path,
+            on_progress=emit_progress,
+        )
 
         tool_executor = ToolExecutor(
             vault_path=self.config.vault_path,
