@@ -18,37 +18,9 @@ from pal.article import (
     validate_compiled_truth,
 )
 from pal.frontmatter import parse_frontmatter
+from pal.archive import archive_raw_files, MAX_SLUG_BYTES
 
 logger = logging.getLogger(__name__)
-
-# Most Linux filesystems cap a single filename component at 255 bytes.
-# Keep headroom for ".md" plus any future prefixing.
-MAX_SLUG_BYTES = 200
-
-
-def _archive_raw_files(
-    vault_path: Path,
-    raw_path: str,
-    summary_path: str | None = None,
-) -> None:
-    """Move raw and summary files to raw/archived/ after successful compile."""
-    archive_dir = vault_path / "raw" / "archived"
-    archive_dir.mkdir(parents=True, exist_ok=True)
-
-    raw_full = vault_path / raw_path
-    if raw_full.exists():
-        dest = archive_dir / raw_full.name
-        raw_full.rename(dest)
-        logger.info("Archived %s -> raw/archived/%s", raw_path, raw_full.name)
-
-    if summary_path:
-        summary_full = vault_path / summary_path
-        if summary_full.exists():
-            # Use .summary.md suffix to avoid name collision with the raw file
-            dest_name = summary_full.stem + ".summary.md"
-            dest = archive_dir / dest_name
-            summary_full.rename(dest)
-            logger.info("Archived %s -> raw/archived/%s", summary_path, dest_name)
 
 
 class Compiler:
@@ -261,7 +233,7 @@ class Compiler:
 
         # Archive raw intermediates
         source_raw = summary_meta.get("source_raw", "")
-        _archive_raw_files(self.vault_path, raw_path=source_raw, summary_path=summary_path)
+        archive_raw_files(self.vault_path, raw_path=source_raw, summary_path=summary_path)
         self.wiki.git_commit(f"archive: {title}")
 
         return {

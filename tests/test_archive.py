@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from pal.daemon import archive_raw_files, cleanup_archived
+from pal.archive import archive_raw_files, cleanup_archived
 
 
 class TestArchiveRawFiles:
