@@ -1,6 +1,6 @@
 """ApprovalRegistry — per-session store for research proposal approvals.
 
-Tracks ResearchProposal entries through their lifecycle:
+Tracks Proposal entries through their lifecycle:
     pending -> approved -> consumed
     pending -> declined
     pending -> expired
@@ -17,12 +17,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
 ProposalStatus = Literal["pending", "approved", "declined", "consumed", "expired"]
+ProposalKind = Literal["research", "compile"]
 
 DEFAULT_EXPIRY_MINUTES = 30
 
 
 @dataclass
-class ResearchProposal:
+class Proposal:
     proposal_id: str
     topic: str
     depth: int
@@ -30,22 +31,26 @@ class ResearchProposal:
     status: ProposalStatus
     created_at: datetime
     expires_at: datetime
+    kind: ProposalKind = "research"
+    successor_id: Optional[str] = None
     # asyncio.Event is set when the proposal reaches a terminal state
     # (approved, declined, or expired). Not part of the public dataclass
     # fields — carried separately for awaiting.
-    successor_id: Optional[str] = None
     event: asyncio.Event = field(default_factory=asyncio.Event, repr=False, compare=False)
+
+
+ResearchProposal = Proposal  # deprecated alias; remove after callers migrate
 
 
 class ApprovalRegistry:
     def __init__(self, expiry_minutes: int = DEFAULT_EXPIRY_MINUTES) -> None:
-        self._proposals: dict[str, ResearchProposal] = {}
+        self._proposals: dict[str, Proposal] = {}
         self._expiry_minutes = expiry_minutes
 
     def create_proposal(self, topic: str, depth: int, rationale: str) -> str:
         proposal_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
-        self._proposals[proposal_id] = ResearchProposal(
+        self._proposals[proposal_id] = Proposal(
             proposal_id=proposal_id,
             topic=topic,
             depth=depth,
@@ -53,10 +58,11 @@ class ApprovalRegistry:
             status="pending",
             created_at=now,
             expires_at=now + timedelta(minutes=self._expiry_minutes),
+            kind="research",
         )
         return proposal_id
 
-    def get(self, proposal_id: str) -> Optional[ResearchProposal]:
+    def get(self, proposal_id: str) -> Optional[Proposal]:
         return self._proposals.get(proposal_id)
 
     def approve(self, proposal_id: str) -> None:
@@ -89,7 +95,7 @@ class ApprovalRegistry:
                 proposal.status = "expired"
                 proposal.event.set()
 
-    def get_successor(self, proposal_id: str) -> Optional["ResearchProposal"]:
+    def get_successor(self, proposal_id: str) -> Optional["Proposal"]:
         """Return the proposal that replaced this one via edit(), or None."""
         proposal = self._proposals.get(proposal_id)
         if proposal is None or proposal.successor_id is None:
@@ -117,7 +123,7 @@ class ApprovalRegistry:
         # new proposal is created already-approved.
         new_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
-        new_proposal = ResearchProposal(
+        new_proposal = Proposal(
             proposal_id=new_id,
             topic=new_topic,
             depth=new_depth,
@@ -125,6 +131,7 @@ class ApprovalRegistry:
             status="approved",
             created_at=now,
             expires_at=now + timedelta(minutes=self._expiry_minutes),
+            kind="research",
         )
         new_proposal.event.set()
         self._proposals[new_id] = new_proposal

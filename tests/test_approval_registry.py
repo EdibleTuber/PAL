@@ -151,3 +151,17 @@ def test_get_successor_returns_none_when_no_edit():
 def test_get_successor_unknown_id_returns_none():
     registry = ApprovalRegistry()
     assert registry.get_successor("nonexistent") is None
+
+
+def test_create_proposal_defaults_to_research_kind():
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(topic="t", depth=3, rationale="r")
+    proposal = registry.get(pid)
+    assert proposal.kind == "research"
+
+
+def test_proposal_is_new_dataclass_name():
+    from pal.approval_registry import Proposal
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(topic="t", depth=3, rationale="r")
+    assert isinstance(registry.get(pid), Proposal)
