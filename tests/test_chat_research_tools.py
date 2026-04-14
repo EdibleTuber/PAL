@@ -90,3 +90,108 @@ async def test_search_web_unavailable_without_client(tmp_path):
 
 async def _async_result(value):
     return value
+
+
+import asyncio
+
+
+@pytest.mark.asyncio
+async def test_propose_research_emits_message_and_waits_for_approval(tmp_path):
+    registry = ApprovalRegistry()
+    emitted = []
+    def emitter(msg):
+        emitted.append(msg)
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        proposal_emitter=emitter,
+    )
+
+    async def approve_later():
+        # Wait for the proposal to be created, then approve it.
+        for _ in range(50):
+            if emitted:
+                break
+            await asyncio.sleep(0.01)
+        assert emitted, "proposal was not emitted"
+        registry.approve(emitted[0].proposal_id)
+
+    approval_task = asyncio.create_task(approve_later())
+    output = await executor.run_async(
+        "propose_research",
+        {"topic": "prompt injection", "depth": 3, "rationale": "user asked"},
+    )
+    await approval_task
+
+    assert emitted[0].topic == "prompt injection"
+    assert emitted[0].depth == 3
+    assert emitted[0].rationale == "user asked"
+    assert '"status": "approved"' in output
+    assert '"proposal_id"' in output
+
+
+@pytest.mark.asyncio
+async def test_propose_research_returns_declined(tmp_path):
+    registry = ApprovalRegistry()
+    emitted = []
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        proposal_emitter=emitted.append,
+    )
+
+    async def decline_later():
+        for _ in range(50):
+            if emitted:
+                break
+            await asyncio.sleep(0.01)
+        registry.decline(emitted[0].proposal_id)
+
+    asyncio.create_task(decline_later())
+    output = await executor.run_async(
+        "propose_research",
+        {"topic": "t", "depth": 3, "rationale": "r"},
+    )
+    assert '"status": "declined"' in output
+
+
+@pytest.mark.asyncio
+async def test_propose_research_returns_edited_with_new_id(tmp_path):
+    registry = ApprovalRegistry()
+    emitted = []
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        proposal_emitter=emitted.append,
+    )
+
+    async def edit_later():
+        for _ in range(50):
+            if emitted:
+                break
+            await asyncio.sleep(0.01)
+        registry.edit(
+            emitted[0].proposal_id, new_topic="refined", new_depth=5
+        )
+
+    asyncio.create_task(edit_later())
+    output = await executor.run_async(
+        "propose_research",
+        {"topic": "t", "depth": 3, "rationale": "r"},
+    )
+    assert '"status": "approved"' in output  # edited -> new proposal approved
+    assert '"topic": "refined"' in output
+    assert '"depth": 5' in output
+
+
+@pytest.mark.asyncio
+async def test_propose_research_requires_registry(tmp_path):
+    executor = ToolExecutor(vault_path=tmp_path, retrieval=None)
+    output = await executor.run_async(
+        "propose_research",
+        {"topic": "t", "depth": 3, "rationale": "r"},
+    )
+    assert "not available" in output.lower()

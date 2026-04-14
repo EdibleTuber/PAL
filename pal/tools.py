@@ -163,6 +163,37 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_research",
+            "description": (
+                "Propose a web research run. Emits a proposal to the user "
+                "and blocks until they approve, decline, or edit it in the "
+                "CLI. Returns a JSON object with the final status and "
+                "proposal_id. Use research_topic to execute an approved "
+                "proposal."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "Topic string to research.",
+                    },
+                    "depth": {
+                        "type": "integer",
+                        "description": "Number of sources to fetch (1-10, default 3).",
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "One-line reason shown to the user.",
+                    },
+                },
+                "required": ["topic", "rationale"],
+            },
+        },
+    },
 ]
 
 
@@ -212,6 +243,8 @@ class ToolExecutor:
             return await self._search_vault(arguments)
         if name == "search_web":
             return await self._search_web(arguments)
+        if name == "propose_research":
+            return await self._propose_research(arguments)
         return self.run(name, arguments)
 
     def _resolve_safe(self, path: str) -> Path | None:
@@ -377,3 +410,73 @@ class ToolExecutor:
             if snippet:
                 lines.append(f"    {snippet}")
         return "\n".join(lines)
+
+    async def _propose_research(self, arguments: dict) -> str:
+        import json as _json
+        from pal.protocol import ResearchProposalMessage
+
+        if self.approval_registry is None or self.proposal_emitter is None:
+            return "Error: research proposals are not available in this session."
+        topic = arguments.get("topic", "").strip()
+        rationale = arguments.get("rationale", "").strip()
+        if not topic:
+            return "Error: 'topic' parameter is required."
+        if not rationale:
+            return "Error: 'rationale' parameter is required."
+        depth = int(arguments.get("depth", 3))
+        depth = max(1, min(depth, 10))
+
+        proposal_id = self.approval_registry.create_proposal(
+            topic=topic, depth=depth, rationale=rationale
+        )
+        proposal = self.approval_registry.get(proposal_id)
+        self.proposal_emitter(
+            ResearchProposalMessage(
+                proposal_id=proposal_id,
+                topic=topic,
+                depth=depth,
+                rationale=rationale,
+            )
+        )
+        # Block until the CLI signals a terminal status (or expiry).
+        await proposal.event.wait()
+        final = self.approval_registry.get(proposal_id)
+        result = {"proposal_id": proposal_id, "status": final.status}
+        if final.status == "declined":
+            # Check whether this decline is actually an edit -- find the
+            # most recently created approved proposal with no prior consume.
+            edited = self._find_edit_successor(proposal_id)
+            if edited is not None:
+                result = {
+                    "proposal_id": edited.proposal_id,
+                    "status": "approved",
+                    "topic": edited.topic,
+                    "depth": edited.depth,
+                }
+        elif final.status == "approved":
+            result["topic"] = final.topic
+            result["depth"] = final.depth
+        return _json.dumps(result)
+
+    def _find_edit_successor(self, old_proposal_id: str):
+        """Find the approved proposal that replaced an edited one.
+
+        The edit() method creates a new proposal with status=approved and
+        signals the old one as declined, both in the same call. The new
+        proposal's created_at is after the old one's. Return the newest
+        approved proposal not yet consumed; None if no match.
+        """
+        if self.approval_registry is None:
+            return None
+        old = self.approval_registry.get(old_proposal_id)
+        if old is None:
+            return None
+        newest = None
+        for candidate in self.approval_registry._proposals.values():
+            if candidate.status != "approved":
+                continue
+            if candidate.created_at <= old.created_at:
+                continue
+            if newest is None or candidate.created_at > newest.created_at:
+                newest = candidate
+        return newest
