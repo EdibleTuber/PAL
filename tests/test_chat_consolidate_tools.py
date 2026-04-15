@@ -126,3 +126,44 @@ async def test_execute_rejects_reused_proposal(tmp_path):
     assert json.loads(first)["status"] == "ok"
     second = await executor.run_async("consolidate", {"proposal_id": pid})
     assert "already used" in second.lower() or "consumed" in second.lower()
+
+
+@pytest.mark.asyncio
+async def test_consolidate_unavailable_without_consolidator(tmp_path):
+    registry = ApprovalRegistry()
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        wiki=None,
+        approval_registry=registry,
+        proposal_emitter=lambda msg: None,
+        consolidator=None,  # not wired
+    )
+    result = await executor.run_async("consolidate", {"proposal_id": "any"})
+    assert "not available" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_propose_consolidate_requires_target_title(tmp_path):
+    executor, _, _, _ = _executor(tmp_path, auto_approve=False)
+    result = await executor.run_async("propose_consolidate", {
+        "source_paths": ["Security/a.md", "Security/b.md"],
+        "target_path": "Security/Combined.md",
+        "target_title": "",
+        "rationale": "r",
+    })
+    assert "target_title" in result
+
+
+@pytest.mark.asyncio
+async def test_consolidate_refuses_wrong_kind(tmp_path):
+    executor, registry, _, _ = _executor(tmp_path)
+    # Create a compile proposal (not consolidate) and mark approved
+    pid = registry.create_proposal(
+        kind="compile",
+        summary_paths=["raw/summaries/x.md"],
+        rationale="r",
+    )
+    registry.approve(pid)
+    result = await executor.run_async("consolidate", {"proposal_id": pid})
+    assert "not a consolidate proposal" in result.lower()

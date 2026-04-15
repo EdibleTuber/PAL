@@ -1062,13 +1062,13 @@ class ToolExecutor:
             return "Error: 'source_paths' must be a list with at least two entries."
         target_path = (arguments.get("target_path") or "").strip()
         if not target_path:
-            return "Error: 'target_path' is required."
+            return "Error: 'target_path' parameter is required."
         target_title = (arguments.get("target_title") or "").strip()
         if not target_title:
-            return "Error: 'target_title' is required."
+            return "Error: 'target_title' parameter is required."
         rationale = (arguments.get("rationale") or "").strip()
         if not rationale:
-            return "Error: 'rationale' is required."
+            return "Error: 'rationale' parameter is required."
 
         try:
             proposal_id = self.approval_registry.create_proposal(
@@ -1120,7 +1120,7 @@ class ToolExecutor:
         import json as _json
         proposal_id = (arguments.get("proposal_id") or "").strip()
         if not proposal_id:
-            return "Error: 'proposal_id' is required."
+            return "Error: 'proposal_id' parameter is required."
         if self.approval_registry is None or self.consolidator is None:
             return "Error: consolidate execution is not available in this session."
 
@@ -1140,6 +1140,7 @@ class ToolExecutor:
         if proposal.status != "approved":
             return f"Error: proposal in unexpected state: {proposal.status}"
 
+        # Consume first — single-use even on failure.
         self.approval_registry.consume(proposal_id)
 
         try:
