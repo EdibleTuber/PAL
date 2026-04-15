@@ -86,12 +86,74 @@ class Consolidator:
             _meta, body = parse_frontmatter(text)
             source_bodies.append((src, body))
 
-        # Subsequent steps wired in Task 4.
+        # Build the grounded system + user prompt
+        base = self.prompt_builder.build()
+        system_prompt = (
+            f"{base}\n\n"
+            "You are consolidating multiple existing wiki articles into ONE new article. RULES:\n"
+            "- Use ONLY information from the SOURCES below. Do NOT add facts that aren't in sources.\n"
+            "- Deduplicate overlap across sources; do not repeat the same fact twice.\n"
+            "- For every substantive claim, cite the specific source path inline, e.g. (from Security/a.md).\n"
+            "- If the combined source material lacks sufficient detail for a grounded article, respond "
+            "with exactly: INSUFFICIENT: <one-sentence reason>\n\n"
+            "Required sections: ## Overview, ## Key Concepts\n"
+            "Optional sections (include if relevant): ## Usage, ## Configuration, ## Gotchas, ## Related"
+        )
+
+        labeled_sources = "\n\n".join(
+            f"### SOURCE: {path}\n{body.strip()}" for path, body in source_bodies
+        )
+        user_prompt = (
+            f"Target title: {target_title}\n"
+            f"Target path: {target_path}\n\n"
+            f"SOURCES ({len(source_bodies)}):\n\n{labeled_sources}"
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        try:
+            result = await self.inference.complete(messages, reasoning="off")
+        except Exception as exc:
+            logger.exception("Consolidate inference failed: %s", exc)
+            return {
+                "status": "error",
+                "target_path": target_path,
+                "reason": f"inference failed: {type(exc).__name__}: {exc}",
+                "vault_exists": False,
+            }
+
+        content = (getattr(result, "content", "") or "").strip()
+        if content.startswith("INSUFFICIENT:"):
+            reason = content[len("INSUFFICIENT:"):].strip() or "model reported insufficient material"
+            return {
+                "status": "insufficient",
+                "target_path": target_path,
+                "reason": reason,
+                "vault_exists": False,
+            }
+
+        tags = ["consolidated"]
+        try:
+            self.wiki.write_article(target_path, target_title, content, tags=tags)
+            self.wiki.git_commit(
+                f"consolidate {len(source_bodies)} sources -> {target_path}"
+            )
+        except Exception as exc:
+            return {
+                "status": "error",
+                "target_path": target_path,
+                "reason": f"write failed: {type(exc).__name__}: {exc}",
+                "vault_exists": (self.vault_path / target_path).exists(),
+            }
+
         return {
-            "status": "error",
+            "status": "ok",
             "target_path": target_path,
-            "reason": "inference pipeline not wired",
-            "vault_exists": False,
+            "article_path_rel": target_path,
+            "vault_exists": (self.vault_path / target_path).exists(),
         }
 
     def _validate_target(self, target_path: str) -> str | None:

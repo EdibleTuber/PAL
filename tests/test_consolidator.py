@@ -9,10 +9,12 @@ class _FakeInference:
         self.response = response
         self.calls = []
 
-    async def generate(self, *, system: str, user: str):
-        self.calls.append({"system": system, "user": user})
+    async def complete(self, messages, reasoning=None, tools=None, model=None):
+        self.calls.append({"messages": list(messages), "reasoning": reasoning})
         class R:
+            type = "text"
             content = self.response
+            reasoning = ""
         return R()
 
 
@@ -109,3 +111,72 @@ async def test_source_missing(tmp_path):
     )
     assert out["status"] == "not_found"
     assert "missing.md" in out["reason"]
+
+
+@pytest.mark.asyncio
+async def test_happy_path_writes_article(tmp_path):
+    (tmp_path / "Security").mkdir()
+    (tmp_path / "Security" / "a.md").write_text("---\ntitle: A\n---\nBody A")
+    (tmp_path / "Security" / "b.md").write_text("---\ntitle: B\n---\nBody B")
+    c, inference, wiki = _make(tmp_path, inference_response="## Overview\n\nFused (from Security/a.md)")
+
+    out = await c.consolidate(
+        source_paths=["Security/a.md", "Security/b.md"],
+        target_path="Security/Combined.md",
+        target_title="Combined",
+    )
+
+    assert out["status"] == "ok", out
+    assert out["target_path"] == "Security/Combined.md"
+    assert out["article_path_rel"] == "Security/Combined.md"
+    assert out["vault_exists"] is True
+    assert (tmp_path / "Security" / "Combined.md").exists()
+    assert wiki.written and wiki.written[0]["title"] == "Combined"
+
+    # Inference saw both source bodies and the path labels in the user message
+    assert inference.calls, "inference was not invoked"
+    messages = inference.calls[0]["messages"]
+    user_content = next(m["content"] for m in messages if m["role"] == "user")
+    assert "Security/a.md" in user_content
+    assert "Security/b.md" in user_content
+    assert "Body A" in user_content
+    assert "Body B" in user_content
+
+
+@pytest.mark.asyncio
+async def test_insufficient_response(tmp_path):
+    (tmp_path / "Security").mkdir()
+    (tmp_path / "Security" / "a.md").write_text("---\ntitle: A\n---\nA")
+    (tmp_path / "Security" / "b.md").write_text("---\ntitle: B\n---\nB")
+    c, _, wiki = _make(tmp_path, inference_response="INSUFFICIENT: sources too thin")
+
+    out = await c.consolidate(
+        source_paths=["Security/a.md", "Security/b.md"],
+        target_path="Security/Combined.md",
+        target_title="Combined",
+    )
+
+    assert out["status"] == "insufficient"
+    assert "thin" in out["reason"].lower()
+    assert not wiki.written
+    assert not (tmp_path / "Security" / "Combined.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_prompt_demands_inline_citations(tmp_path):
+    (tmp_path / "Security").mkdir()
+    (tmp_path / "Security" / "a.md").write_text("---\ntitle: A\n---\nA")
+    (tmp_path / "Security" / "b.md").write_text("---\ntitle: B\n---\nB")
+    c, inference, _ = _make(tmp_path, inference_response="## Overview\n\nFused")
+
+    await c.consolidate(
+        source_paths=["Security/a.md", "Security/b.md"],
+        target_path="Security/Combined.md",
+        target_title="Combined",
+    )
+
+    messages = inference.calls[0]["messages"]
+    system_content = next(m["content"] for m in messages if m["role"] == "system")
+    assert "ONLY information" in system_content
+    assert "INSUFFICIENT" in system_content
+    assert "cite" in system_content.lower() or "citation" in system_content.lower()
