@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from pal.websearch import WebSearchClient
     from pal.researcher import Researcher
     from pal.compiler import Compiler
+    from pal.reorg import Reorganizer
 
 # Maximum characters to return from a file read (~8000 tokens ≈ 32000 chars).
 _READ_LIMIT = 32_000
@@ -293,6 +294,44 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_reorg",
+            "description": (
+                "Propose a batch of vault reorganization operations "
+                "(move/rename articles or merge duplicates). Blocks "
+                "until the user approves, declines, or edits. After "
+                "approval, call reorg(proposal_id) to execute."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["move", "merge"],
+                                },
+                                "src": {"type": "string"},
+                                "dst": {"type": "string"},
+                            },
+                            "required": ["type", "src", "dst"],
+                        },
+                        "description": "List of reorg operations (non-empty).",
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "One-line reason shown to the user.",
+                    },
+                },
+                "required": ["operations", "rationale"],
+            },
+        },
+    },
 ]
 
 
@@ -309,6 +348,7 @@ class ToolExecutor:
         researcher: "Researcher | None" = None,
         proposal_emitter=None,
         compiler: "Compiler | None" = None,
+        reorganizer: "Reorganizer | None" = None,
     ) -> None:
         self.vault_path = vault_path.resolve()
         self.retrieval = retrieval
@@ -318,6 +358,7 @@ class ToolExecutor:
         self.researcher = researcher
         self.proposal_emitter = proposal_emitter
         self.compiler = compiler
+        self.reorganizer = reorganizer
 
     def run(self, name: str, arguments: dict) -> str:
         """Dispatch a tool call and return the result as a string.
@@ -354,6 +395,8 @@ class ToolExecutor:
             return await self._propose_compile_batch(arguments)
         if name == "compile_batch":
             return await self._compile_batch(arguments)
+        if name == "propose_reorg":
+            return await self._propose_reorg(arguments)
         return self.run(name, arguments)
 
     def _resolve_safe(self, path: str) -> Path | None:
@@ -749,3 +792,71 @@ class ToolExecutor:
             "per_file": per_file,
         }
         return _json.dumps(report)
+
+    async def _propose_reorg(self, arguments: dict) -> str:
+        import json as _json
+        from pal.protocol import ReorgProposalMessage
+
+        if (self.approval_registry is None or self.proposal_emitter is None
+                or self.reorganizer is None):
+            return "Error: reorg proposals are not available in this session."
+        operations = arguments.get("operations")
+        if not isinstance(operations, list) or not operations:
+            return "Error: 'operations' must be a non-empty list."
+        rationale = (arguments.get("rationale") or "").strip()
+        if not rationale:
+            return "Error: 'rationale' parameter is required."
+
+        # Pre-validate to surface errors before prompting the user
+        try:
+            validation_errors = self.reorganizer.validate_operations(operations)
+        except Exception as exc:
+            return f"Error: operation validation failed: {exc}"
+        if validation_errors:
+            return "Error: invalid operations:\n" + "\n".join(validation_errors)
+
+        # Reference-count preview
+        src_paths = [op["src"] for op in operations if "src" in op]
+        try:
+            references_preview = self.reorganizer.count_references(src_paths)
+        except Exception:
+            references_preview = 0
+
+        try:
+            proposal_id = self.approval_registry.create_proposal(
+                kind="reorg",
+                operations=operations,
+                rationale=rationale,
+            )
+        except ValueError as exc:
+            return f"Error: {exc}"
+
+        proposal = self.approval_registry.get(proposal_id)
+        self.proposal_emitter(
+            ReorgProposalMessage(
+                proposal_id=proposal_id,
+                operations=[dict(op) for op in operations],
+                rationale=rationale,
+                references_preview=references_preview,
+            )
+        )
+
+        remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
+        try:
+            await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
+        except asyncio.TimeoutError:
+            self.approval_registry.expire_stale()
+
+        final = self.approval_registry.get(proposal_id)
+        result = {"proposal_id": proposal_id, "status": final.status}
+        if final.status == "declined":
+            edited = self.approval_registry.get_successor(proposal_id)
+            if edited is not None:
+                result = {
+                    "proposal_id": edited.proposal_id,
+                    "status": "approved",
+                    "operations": list(edited.operations or []),
+                }
+        elif final.status == "approved":
+            result["operations"] = list(final.operations or [])
+        return _json.dumps(result)
