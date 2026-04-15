@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
 ProposalStatus = Literal["pending", "approved", "declined", "consumed", "expired"]
-ProposalKind = Literal["research", "compile"]
+ProposalKind = Literal["research", "compile", "reorg"]
 
 DEFAULT_EXPIRY_MINUTES = 15
 
@@ -34,6 +34,7 @@ class Proposal:
     kind: ProposalKind = "research"
     successor_id: Optional[str] = None
     summary_paths: Optional[list[str]] = None
+    operations: Optional[list[dict]] = None
     # asyncio.Event is set when the proposal reaches a terminal state
     # (approved, declined, or expired). Not part of the public dataclass
     # fields — carried separately for awaiting.
@@ -56,12 +57,23 @@ class ApprovalRegistry:
         depth: int = 3,
         rationale: str,
         summary_paths: Optional[list[str]] = None,
+        operations: Optional[list[dict]] = None,
     ) -> str:
         if kind == "research" and not topic:
             raise ValueError("research proposals require a non-empty topic")
         if kind == "compile":
             if not summary_paths:
                 raise ValueError("compile proposals require a non-empty summary_paths list")
+        if kind == "reorg":
+            if not operations:
+                raise ValueError("reorg proposals require a non-empty operations list")
+            for op in operations:
+                if not isinstance(op, dict):
+                    raise ValueError(f"each operation must be a dict, got {type(op).__name__}")
+                if op.get("type") not in ("move", "merge"):
+                    raise ValueError(f"operation type must be 'move' or 'merge', got {op.get('type')!r}")
+                if not op.get("src") or not op.get("dst"):
+                    raise ValueError("every operation requires 'src' and 'dst' fields")
 
         proposal_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -75,6 +87,7 @@ class ApprovalRegistry:
             expires_at=now + timedelta(minutes=self._expiry_minutes),
             kind=kind,
             summary_paths=list(summary_paths) if summary_paths else None,
+            operations=[dict(op) for op in operations] if operations else None,
         )
         return proposal_id
 
@@ -125,6 +138,7 @@ class ApprovalRegistry:
         new_topic: Optional[str] = None,
         new_depth: Optional[int] = None,
         summary_paths: Optional[list[str]] = None,
+        operations: Optional[list[dict]] = None,
     ) -> Optional[str]:
         """Replace a pending proposal with a new approved one.
 
@@ -153,6 +167,10 @@ class ApprovalRegistry:
             summary_paths=(
                 list(summary_paths) if summary_paths is not None
                 else (list(old.summary_paths) if old.summary_paths else None)
+            ),
+            operations=(
+                [dict(op) for op in operations] if operations is not None
+                else ([dict(op) for op in old.operations] if old.operations else None)
             ),
         )
         new_proposal.event.set()

@@ -216,3 +216,67 @@ def test_create_research_proposal_without_topic_raises():
     import pytest
     with pytest.raises(ValueError):
         registry.create_proposal(kind="research", rationale="r")
+
+
+def test_create_proposal_with_reorg_kind():
+    registry = ApprovalRegistry()
+    ops = [
+        {"type": "move", "src": "A.md", "dst": "B.md"},
+        {"type": "merge", "src": "C.md", "dst": "D.md"},
+    ]
+    pid = registry.create_proposal(
+        kind="reorg",
+        operations=ops,
+        rationale="consolidate duplicates",
+    )
+    proposal = registry.get(pid)
+    assert proposal.kind == "reorg"
+    assert proposal.operations == ops
+    assert proposal.rationale == "consolidate duplicates"
+
+
+def test_create_reorg_proposal_rejects_empty_operations():
+    registry = ApprovalRegistry()
+    import pytest
+    with pytest.raises(ValueError):
+        registry.create_proposal(
+            kind="reorg",
+            operations=[],
+            rationale="r",
+        )
+
+
+def test_create_reorg_proposal_rejects_invalid_op_type():
+    registry = ApprovalRegistry()
+    import pytest
+    with pytest.raises(ValueError):
+        registry.create_proposal(
+            kind="reorg",
+            operations=[{"type": "delete", "src": "A.md", "dst": "B.md"}],
+            rationale="r",
+        )
+
+
+def test_create_reorg_proposal_rejects_missing_src_dst():
+    registry = ApprovalRegistry()
+    import pytest
+    with pytest.raises(ValueError):
+        registry.create_proposal(
+            kind="reorg",
+            operations=[{"type": "move", "src": "A.md"}],  # no dst
+            rationale="r",
+        )
+
+
+def test_edit_reorg_proposal_carries_kind_and_operations():
+    registry = ApprovalRegistry()
+    old_ops = [{"type": "move", "src": "A.md", "dst": "B.md"}]
+    new_ops = [{"type": "move", "src": "A.md", "dst": "C.md"}]
+    old_pid = registry.create_proposal(
+        kind="reorg", operations=old_ops, rationale="r",
+    )
+    new_pid = registry.edit(old_pid, operations=new_ops)
+    new = registry.get(new_pid)
+    assert new.kind == "reorg"
+    assert new.operations == new_ops
+    assert new.status == "approved"
