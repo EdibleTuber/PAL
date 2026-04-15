@@ -40,9 +40,15 @@ class Consolidator:
     ) -> dict[str, Any]:
         """Synthesize `target_path` from the content of `source_paths`.
 
-        Returns a dict with keys: status, target_path, article_path_rel,
-        vault_exists, reason? Statuses: ok, insufficient, invalid_path,
-        not_found, error.
+        Validation-phase return shape (Task 3):
+          status: invalid_path | not_found | error
+          target_path: str (echo of input)
+          reason: str
+          vault_exists: bool (True iff target already exists on disk)
+
+        Task 4 extends this with:
+          status: ok | insufficient
+          article_path_rel: str (ok branch only)
         """
         # Validate target
         bad = self._validate_target(target_path)
@@ -59,7 +65,7 @@ class Consolidator:
             }
 
         # Validate each source exists
-        source_bodies: list[tuple[str, str]] = []
+        source_bodies: list[tuple[str, str]] = []  # populated here for Task 4 inference block
         for src in source_paths:
             if ".." in src.split("/") or src.startswith("/"):
                 return {
