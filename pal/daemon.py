@@ -103,6 +103,13 @@ class Daemon:
             wiki=self.wiki,
             compiler=self.compiler,
         )
+        from pal.consolidator import Consolidator
+        self.consolidator = Consolidator(
+            vault_path=config.vault_path,
+            wiki=self.wiki,
+            inference=self.inference,
+            prompt_builder=self.prompt_builder,
+        )
         cleanup_archived(config.vault_path)
 
     async def serve(self) -> None:
@@ -185,6 +192,7 @@ class Daemon:
             proposal_emitter=emit_proposal,
             compiler=self.compiler,
             reorganizer=self.reorganizer,
+            consolidator=self.consolidator,
         )
 
         current_chat_task: asyncio.Task | None = None
