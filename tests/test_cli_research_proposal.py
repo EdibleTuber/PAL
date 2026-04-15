@@ -59,3 +59,28 @@ def test_format_compile_proposal_includes_paths_and_rationale():
     assert "raw/summaries/b.md" in text
     assert "promote home-automation research findings" in text
     assert "[a]" in text.lower() or "approve" in text.lower()
+
+
+def test_format_reorg_proposal_includes_ops_and_preview():
+    from pal.cli import format_reorg_proposal
+    from pal.protocol import ReorgProposalMessage
+    msg = ReorgProposalMessage(
+        proposal_id="xyz",
+        operations=[
+            {"type": "move", "src": "AI-Agents/old.md", "dst": "AI-Agents/new.md"},
+            {"type": "merge", "src": "AI-Security/a.md", "dst": "AI-Security/b.md"},
+        ],
+        rationale="clean up names and dedupe",
+        references_preview=5,
+    )
+    text = format_reorg_proposal(msg)
+    assert "reorg" in text.lower()
+    assert "[move]" in text
+    assert "[merge]" in text
+    assert "AI-Agents/old.md" in text
+    assert "AI-Agents/new.md" in text
+    assert "AI-Security/a.md" in text
+    assert "AI-Security/b.md" in text
+    assert "clean up names and dedupe" in text
+    assert "5" in text  # references_preview
+    assert "[a]" in text.lower() or "approve" in text.lower()

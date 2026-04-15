@@ -24,6 +24,7 @@ from pal.protocol import (
     ResearchProposalMessage,
     ResearchApprovalResponseMessage,
     CompileProposalMessage,
+    ReorgProposalMessage,
     Message,
 )
 
@@ -54,6 +55,29 @@ def format_compile_proposal(msg: "CompileProposalMessage") -> str:
         lines.append(f"    {path}")
     lines.extend([
         f"  Rationale: {msg.rationale}",
+        "  [a]pprove  [d]ecline  [e]dit",
+        "> ",
+    ])
+    return "\n".join(lines)
+
+
+def format_reorg_proposal(msg: "ReorgProposalMessage") -> str:
+    """Render a reorg proposal approval prompt. Pure formatter."""
+    lines = [
+        "",
+        "────────── PAL proposes reorg ──────────",
+        f"  Operations ({len(msg.operations)}):",
+    ]
+    for op in msg.operations:
+        op_type = op.get("type", "?")
+        src = op.get("src", "?")
+        dst = op.get("dst", "?")
+        tag = f"[{op_type}]"
+        lines.append(f"    {tag:<8} {src}")
+        lines.append(f"             -> {dst}")
+    lines.extend([
+        f"  Rationale: {msg.rationale}",
+        f"  Would rewrite {msg.references_preview} link references.",
         "  [a]pprove  [d]ecline  [e]dit",
         "> ",
     ])
@@ -276,6 +300,27 @@ async def run_repl() -> None:
                         elif choice in ("e", "edit"):
                             # v1: edit maps to decline; model reproposes
                             # based on the user's next message.
+                            response = ResearchApprovalResponseMessage(
+                                proposal_id=msg.proposal_id, decision="decline"
+                            )
+                        else:
+                            response = ResearchApprovalResponseMessage(
+                                proposal_id=msg.proposal_id, decision="decline"
+                            )
+                        await client.send(response)
+                        continue
+                    elif isinstance(msg, ReorgProposalMessage):
+                        if live is not None:
+                            live.stop()
+                            live = None
+                        print(format_reorg_proposal(msg), end="", flush=True)
+                        loop = asyncio.get_running_loop()
+                        choice = (await loop.run_in_executor(None, input)).strip().lower()
+                        if choice in ("a", "approve"):
+                            response = ResearchApprovalResponseMessage(
+                                proposal_id=msg.proposal_id, decision="approve"
+                            )
+                        elif choice in ("e", "edit"):
                             response = ResearchApprovalResponseMessage(
                                 proposal_id=msg.proposal_id, decision="decline"
                             )
