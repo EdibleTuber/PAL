@@ -118,42 +118,15 @@ class Compiler:
         base_prompt = self.prompt_builder.build()
 
         if existing_match:
-            # Merge compile
-            existing_text = (self.vault_path / existing_match["path"]).read_text()
-            existing_article = parse_article(existing_text)
-
-            timeline_context = "\n".join(
-                f"- {e.date} {e.source_label}: {e.summary[:200]}"
-                for e in existing_article.timeline
-            )
-
-            system_prompt = (
-                f"{base_prompt}\n\n"
-                "You are updating a wiki article with new information. "
-                "Rewrite the compiled truth sections to incorporate the new source material. "
-                "Keep the same section structure. Do not drop existing knowledge unless "
-                "the new source directly contradicts it.\n\n"
-                "Required sections: ## Overview, ## Key Concepts\n"
-                "Optional sections (include if relevant): ## Usage, ## Configuration, "
-                "## Gotchas, ## Related\n\n"
-                "Use ONLY information from the existing article and the new source material. "
-                "Do NOT add facts not present in either."
-            )
-
-            user_prompt = (
-                f"CURRENT COMPILED TRUTH:\n\n{existing_article.compiled_truth.strip()}\n\n"
-                f"PREVIOUS SOURCES:\n{timeline_context}\n\n"
-                f"NEW SOURCE MATERIAL:\n"
-                f"Title: {title}\n"
-                f"Source URL: {source_url}\n\n"
-                f"{summary_body.strip()}\n\n"
-                "---\n\n"
-                "Rewrite the compiled truth incorporating the new information."
+            return await self.merge_into_existing(
+                new_content=summary_body,
+                new_title=title,
+                existing_article_path=existing_match["path"],
+                source_url=source_url,
+                source_hash=source_hash,
             )
         else:
             # First compile
-            existing_article = None
-
             system_prompt = (
                 f"{base_prompt}\n\n"
                 "You are compiling a wiki article from source material. RULES:\n"
@@ -202,27 +175,18 @@ class Compiler:
         # Build article
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-        if existing_article:
-            article = Article(
-                meta=dict(existing_article.meta),
-                compiled_truth=compiled_truth.strip() + "\n",
-                timeline=list(existing_article.timeline),
-            )
-            article.meta["updated"] = now
-            article.meta["compiled_at"] = now
-        else:
-            article = Article(
-                meta={
-                    "title": title,
-                    "created": now,
-                    "updated": now,
-                    "compiled_at": now,
-                    "status": "compiled",
-                    "sources": [],
-                },
-                compiled_truth=compiled_truth.strip() + "\n",
-                timeline=[],
-            )
+        article = Article(
+            meta={
+                "title": title,
+                "created": now,
+                "updated": now,
+                "compiled_at": now,
+                "status": "compiled",
+                "sources": [],
+            },
+            compiled_truth=compiled_truth.strip() + "\n",
+            timeline=[],
+        )
 
         # Append timeline entry
         article = append_timeline_entry(
@@ -232,26 +196,22 @@ class Compiler:
             summary=summary_body.strip(),
         )
 
-        # Determine save path
-        if existing_match:
-            article_path_rel = existing_match["path"]
-            article_full_path = self.vault_path / article_path_rel
-        else:
-            slug_source = _clip_title_for_slug(title)
-            slug = slug_source.lower().replace("_", "-").replace(" ", "-")
-            slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-") or "untitled"
-            if len(slug.encode("utf-8")) > MAX_SLUG_BYTES:
-                h = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
-                truncated = (
-                    slug.encode("utf-8")[: MAX_SLUG_BYTES - 9]
-                    .decode("utf-8", errors="ignore")
-                    .rstrip("-")
-                )
-                slug = f"{truncated}-{h}"
-            target_dir = self.vault_path / category
-            target_dir.mkdir(parents=True, exist_ok=True)
-            article_path_rel = f"{category}/{slug}.md"
-            article_full_path = target_dir / f"{slug}.md"
+        # Determine save path (new article)
+        slug_source = _clip_title_for_slug(title)
+        slug = slug_source.lower().replace("_", "-").replace(" ", "-")
+        slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-") or "untitled"
+        if len(slug.encode("utf-8")) > MAX_SLUG_BYTES:
+            h = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
+            truncated = (
+                slug.encode("utf-8")[: MAX_SLUG_BYTES - 9]
+                .decode("utf-8", errors="ignore")
+                .rstrip("-")
+            )
+            slug = f"{truncated}-{h}"
+        target_dir = self.vault_path / category
+        target_dir.mkdir(parents=True, exist_ok=True)
+        article_path_rel = f"{category}/{slug}.md"
+        article_full_path = target_dir / f"{slug}.md"
 
         article_full_path.write_text(serialize_article(article))
         logger.info("Compiled %s -> %s", summary_path, article_path_rel)
@@ -267,8 +227,122 @@ class Compiler:
         self.wiki.git_commit(f"archive: {title}")
 
         return {
-            "status": "merged" if existing_match else "ok",
+            "status": "ok",
             "title": title,
+            "article_path_rel": article_path_rel,
+            "compiled_truth": compiled_truth.strip(),
+        }
+
+    async def merge_into_existing(
+        self,
+        new_content: str,
+        new_title: str,
+        existing_article_path: str,
+        source_url: str = "",
+        source_hash: str = "",
+    ) -> dict[str, Any]:
+        """Merge new content into an existing wiki article via LLM synthesis.
+
+        Returns the same result shape as compile_one:
+          status: "merged" | "insufficient" | "error"
+          title: str
+          article_path_rel: str
+          reason: str (on failure)
+
+        Used by compile_one's existing-match branch and by Reorganizer
+        for merge operations.
+        """
+        base_prompt = self.prompt_builder.build()
+
+        existing_text = (self.vault_path / existing_article_path).read_text()
+        existing_article = parse_article(existing_text)
+
+        timeline_context = "\n".join(
+            f"- {e.date} {e.source_label}: {e.summary[:200]}"
+            for e in existing_article.timeline
+        )
+
+        system_prompt = (
+            f"{base_prompt}\n\n"
+            "You are updating a wiki article with new information. "
+            "Rewrite the compiled truth sections to incorporate the new source material. "
+            "Keep the same section structure. Do not drop existing knowledge unless "
+            "the new source directly contradicts it.\n\n"
+            "Required sections: ## Overview, ## Key Concepts\n"
+            "Optional sections (include if relevant): ## Usage, ## Configuration, "
+            "## Gotchas, ## Related\n\n"
+            "Use ONLY information from the existing article and the new source material. "
+            "Do NOT add facts not present in either."
+        )
+
+        user_prompt = (
+            f"CURRENT COMPILED TRUTH:\n\n{existing_article.compiled_truth.strip()}\n\n"
+            f"PREVIOUS SOURCES:\n{timeline_context}\n\n"
+            f"NEW SOURCE MATERIAL:\n"
+            f"Title: {new_title}\n"
+            f"Source URL: {source_url}\n\n"
+            f"{new_content.strip()}\n\n"
+            "---\n\n"
+            "Rewrite the compiled truth incorporating the new information."
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        try:
+            result = await self.inference.complete(messages, reasoning="off")
+            # Support both CompletionResult (.content) and plain-string returns
+            # (the latter arises in tests that mock inference directly).
+            compiled_truth = getattr(result, "content", result) or ""
+        except Exception as exc:
+            logger.exception("Merge inference failed: %s", exc)
+            return {"status": "error", "title": new_title, "reason": f"Merge failed: {exc}"}
+
+        if compiled_truth.strip().startswith("INSUFFICIENT:"):
+            return {
+                "status": "insufficient",
+                "title": new_title,
+                "reason": compiled_truth.strip(),
+            }
+
+        # Validate required sections
+        issues = validate_compiled_truth(compiled_truth)
+        if issues:
+            logger.warning("Merged compiled truth validation issues: %s", issues)
+
+        # Build updated article preserving existing meta and timeline
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        article = Article(
+            meta=dict(existing_article.meta),
+            compiled_truth=compiled_truth.strip() + "\n",
+            timeline=list(existing_article.timeline),
+        )
+        article.meta["updated"] = now
+        article.meta["compiled_at"] = now
+
+        # Append timeline entry
+        article = append_timeline_entry(
+            article=article,
+            source_url=source_url,
+            source_hash=source_hash,
+            summary=new_content.strip(),
+        )
+
+        article_path_rel = existing_article_path
+        article_full_path = self.vault_path / article_path_rel
+        article_full_path.write_text(serialize_article(article))
+        logger.info("Merged -> %s", article_path_rel)
+
+        # Rebuild index and commit
+        self.wiki.rebuild_index()
+        self.wiki.git_init()
+        self.wiki.git_commit(f"compile: {new_title}")
+
+        return {
+            "status": "merged",
+            "title": new_title,
             "article_path_rel": article_path_rel,
             "compiled_truth": compiled_truth.strip(),
         }
