@@ -175,3 +175,26 @@ def test_research_approval_response_summary_paths_defaults_to_none():
     )
     decoded = decode_message(encode_message(msg).strip())
     assert decoded.summary_paths is None
+
+
+def test_reorg_proposal_message_roundtrip():
+    from pal.protocol import ReorgProposalMessage
+    msg = ReorgProposalMessage(
+        proposal_id="abc",
+        operations=[
+            {"type": "move", "src": "A.md", "dst": "B.md"},
+            {"type": "merge", "src": "C.md", "dst": "D.md"},
+        ],
+        rationale="consolidate and rename",
+        references_preview=7,
+    )
+    decoded = decode_message(encode_message(msg).strip())
+    assert isinstance(decoded, ReorgProposalMessage)
+    assert decoded.proposal_id == "abc"
+    assert decoded.operations == [
+        {"type": "move", "src": "A.md", "dst": "B.md"},
+        {"type": "merge", "src": "C.md", "dst": "D.md"},
+    ]
+    assert decoded.rationale == "consolidate and rename"
+    assert decoded.references_preview == 7
+    assert decoded.type == "reorg_proposal"
