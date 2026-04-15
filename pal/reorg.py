@@ -217,6 +217,98 @@ class Reorganizer:
             "references_rewritten": refs,
         }
 
+    async def execute_operations_async(self, operations: list[dict]) -> list[dict]:
+        """Execute a batch of operations sequentially. Returns per-op
+        results. Async because merge ops call the LLM via Compiler."""
+        results: list[dict] = []
+        for op in operations:
+            op_type = op.get("type")
+            if op_type == "move":
+                results.append(self._execute_move(op))
+            elif op_type == "merge":
+                results.append(await self._execute_merge(op))
+            else:
+                results.append({
+                    "op": str(op_type),
+                    "src": op.get("src", ""),
+                    "dst": op.get("dst", ""),
+                    "status": "failed",
+                    "reason": f"unknown op type: {op_type!r}",
+                    "references_rewritten": 0,
+                })
+        if self.wiki is not None:
+            try:
+                self.wiki.rebuild_index()
+            except Exception as exc:
+                logger.warning("rebuild_index failed after reorg: %s", exc)
+        return results
+
+    async def _execute_merge(self, op: dict) -> dict:
+        src = op.get("src", "")
+        dst = op.get("dst", "")
+        src_full = self.vault_path / src
+        dst_full = self.vault_path / dst
+
+        if not src_full.exists():
+            return {"op": "merge", "src": src, "dst": dst,
+                    "status": "failed",
+                    "reason": f"src does not exist: {src}",
+                    "references_rewritten": 0}
+        if not dst_full.exists():
+            return {"op": "merge", "src": src, "dst": dst,
+                    "status": "failed",
+                    "reason": f"dst does not exist: {dst}",
+                    "references_rewritten": 0}
+        if self.compiler is None:
+            return {"op": "merge", "src": src, "dst": dst,
+                    "status": "failed",
+                    "reason": "compiler not available",
+                    "references_rewritten": 0}
+
+        from pal.frontmatter import parse_frontmatter
+        src_meta, src_body = parse_frontmatter(src_full.read_text())
+        src_title = src_meta.get("title", src_full.stem)
+
+        merge_result = await self.compiler.merge_into_existing(
+            new_content=src_body,
+            new_title=src_title,
+            existing_article_path=dst,
+        )
+        if merge_result.get("status") != "merged":
+            return {
+                "op": "merge", "src": src, "dst": dst,
+                "status": merge_result.get("status", "failed"),
+                "reason": merge_result.get("reason", "merge failed"),
+                "references_rewritten": 0,
+            }
+
+        try:
+            refs = self._rewrite_references(src, dst)
+        except Exception as exc:
+            return {"op": "merge", "src": src, "dst": dst,
+                    "status": "failed",
+                    "reason": f"link rewrite failed after merge: {exc}",
+                    "references_rewritten": 0}
+
+        archived_dir = self.vault_path / "raw" / "archived"
+        archived_dir.mkdir(parents=True, exist_ok=True)
+        archive_dest = archived_dir / f"{src_full.stem}.archived.md"
+        if archive_dest.exists():
+            import hashlib
+            h = hashlib.sha1(src.encode("utf-8")).hexdigest()[:8]
+            archive_dest = archived_dir / f"{src_full.stem}.{h}.archived.md"
+        src_full.rename(archive_dest)
+
+        if self.wiki is not None:
+            try:
+                self.wiki.git_commit(f"reorg: merge {src} into {dst}")
+            except Exception as exc:
+                logger.warning("git commit failed after merge: %s", exc)
+
+        return {"op": "merge", "src": src, "dst": dst,
+                "status": "ok",
+                "references_rewritten": refs}
+
     def _rewrite_references(self, old_path: str, new_path: str) -> int:
         """Rewrite `](old_path)` occurrences to `](new_path)` across the
         vault (excluding raw/archived/). Returns the number of rewrites."""

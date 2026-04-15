@@ -194,3 +194,74 @@ def test_execute_move_partial_failure_isolation(tmp_path):
     assert results[0]["status"] == "ok"
     assert results[1]["status"] == "failed"
     assert (vault / "A-new.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_execute_merge_folds_src_into_dst(tmp_path):
+    """Merge delegates to compiler.merge_into_existing, then archives
+    src and rewrites references."""
+    vault = _seed_vault(tmp_path, {
+        "AI-Security/src.md": "---\ntitle: Src\n---\n\nSrc body.\n",
+        "AI-Security/dst.md": "---\ntitle: Dst\n---\n\nDst body.\n",
+        "Other.md": "---\n---\n\nLinks to [x](AI-Security/src.md) here.\n",
+    })
+    (vault / "raw" / "archived").mkdir(parents=True)
+
+    wiki = MagicMock()
+    wiki.git_commit = MagicMock()
+    wiki.rebuild_index = MagicMock()
+
+    compiler = MagicMock()
+    async def fake_merge(new_content, new_title, existing_article_path):
+        return {
+            "status": "merged",
+            "title": "Dst",
+            "article_path_rel": existing_article_path,
+        }
+    compiler.merge_into_existing = fake_merge
+
+    reorg = Reorganizer(vault_path=vault, wiki=wiki, compiler=compiler)
+    ops = [{"type": "merge", "src": "AI-Security/src.md", "dst": "AI-Security/dst.md"}]
+    results = await reorg.execute_operations_async(ops)
+
+    assert not (vault / "AI-Security/src.md").exists()
+    assert (vault / "AI-Security/dst.md").exists()
+    other = (vault / "Other.md").read_text()
+    assert "(AI-Security/dst.md)" in other
+    assert "(AI-Security/src.md)" not in other
+    assert results[0]["status"] == "ok"
+    assert results[0]["op"] == "merge"
+    assert results[0]["references_rewritten"] == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_merge_leaves_files_on_insufficient(tmp_path):
+    """If merge_into_existing returns insufficient, src and dst stay,
+    references are NOT rewritten."""
+    vault = _seed_vault(tmp_path, {
+        "src.md": "---\n---\n",
+        "dst.md": "---\n---\n",
+        "Other.md": "---\n---\n\n[x](src.md)\n",
+    })
+    (vault / "raw" / "archived").mkdir(parents=True)
+
+    wiki = MagicMock()
+    compiler = MagicMock()
+    async def fake_merge(new_content, new_title, existing_article_path):
+        return {
+            "status": "insufficient",
+            "title": "t",
+            "article_path_rel": existing_article_path,
+            "reason": "LLM refused",
+        }
+    compiler.merge_into_existing = fake_merge
+
+    reorg = Reorganizer(vault_path=vault, wiki=wiki, compiler=compiler)
+    ops = [{"type": "merge", "src": "src.md", "dst": "dst.md"}]
+    results = await reorg.execute_operations_async(ops)
+
+    assert (vault / "src.md").exists()
+    assert (vault / "dst.md").exists()
+    assert "(src.md)" in (vault / "Other.md").read_text()
+    assert results[0]["status"] == "insufficient"
+    assert results[0]["references_rewritten"] == 0
