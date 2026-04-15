@@ -10,6 +10,7 @@ from pal.protocol import (
     ToolProgressMessage,
     ResearchProposalMessage,
     ResearchApprovalResponseMessage,
+    ConsolidateProposalMessage,
     encode_message,
     decode_message,
 )
@@ -201,7 +202,6 @@ def test_reorg_proposal_message_roundtrip():
 
 
 def test_consolidate_proposal_roundtrip():
-    from pal.protocol import ConsolidateProposalMessage, encode_message, decode_message
     msg = ConsolidateProposalMessage(
         proposal_id="abc-123",
         source_paths=["Security/a.md", "Security/b.md"],
@@ -211,4 +211,10 @@ def test_consolidate_proposal_roundtrip():
     )
     encoded = encode_message(msg)
     decoded = decode_message(encoded.strip())
-    assert decoded == msg
+    assert isinstance(decoded, ConsolidateProposalMessage)
+    assert decoded.proposal_id == "abc-123"
+    assert decoded.source_paths == ["Security/a.md", "Security/b.md"]
+    assert decoded.target_path == "Security/Combined.md"
+    assert decoded.target_title == "Combined"
+    assert decoded.rationale == "Merge overlapping notes"
+    assert decoded.type == "consolidate_proposal"
