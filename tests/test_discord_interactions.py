@@ -311,3 +311,49 @@ def test_extract_modal_field_values_single_field():
 def test_extract_modal_field_values_handles_missing():
     assert extract_modal_field_values({}) == []
     assert extract_modal_field_values({"components": []}) == []
+
+
+from pal.discord_interactions import build_reorg_proposal_embed
+from pal.protocol import ReorgProposalMessage
+
+
+def test_reorg_embed_includes_operations_and_references_count():
+    msg = ReorgProposalMessage(
+        proposal_id="xyz-1",
+        operations=[
+            {"type": "move", "src": "A.md", "dst": "B.md"},
+            {"type": "merge", "src": "C.md", "dst": "D.md"},
+        ],
+        rationale="test rationale",
+        references_preview=4,
+    )
+    embed, view = build_reorg_proposal_embed(msg)
+    assert "reorg" in embed.title.lower()
+    ops_field = next(f for f in embed.fields if "Operations" in f.name)
+    assert "[move]" in ops_field.value
+    assert "[merge]" in ops_field.value
+    assert "A.md" in ops_field.value
+    assert "B.md" in ops_field.value
+    refs_field = next(f for f in embed.fields if "rewrite" in f.name.lower() or "link" in f.name.lower())
+    assert "4" in refs_field.value
+
+    custom_ids = [child.custom_id for child in view.children]
+    assert "reorg:approve:xyz-1" in custom_ids
+    assert "reorg:decline:xyz-1" in custom_ids
+    assert "reorg:edit:xyz-1" in custom_ids
+
+
+def test_reorg_embed_truncates_long_operation_lists():
+    ops = [
+        {"type": "move", "src": f"a-{i}.md", "dst": f"b-{i}.md"}
+        for i in range(15)
+    ]
+    msg = ReorgProposalMessage(
+        proposal_id="p1",
+        operations=ops,
+        rationale="r",
+        references_preview=0,
+    )
+    embed, view = build_reorg_proposal_embed(msg)
+    ops_field = next(f for f in embed.fields if "Operations" in f.name)
+    assert "+5 more" in ops_field.value or "+5" in ops_field.value

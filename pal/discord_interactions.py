@@ -15,6 +15,7 @@ import discord
 from pal.protocol import (
     CompileProposalMessage,
     ResearchProposalMessage,
+    ReorgProposalMessage,
 )
 
 ProposalKind = Literal["research", "compile"]
@@ -22,6 +23,9 @@ ProposalKind = Literal["research", "compile"]
 # Cap the number of summary paths shown in the compile embed to keep the
 # field value under Discord's 1024-char limit.
 _COMPILE_PATHS_DISPLAY_CAP = 10
+
+# Cap the number of operations shown in the reorg embed.
+_REORG_OPS_DISPLAY_CAP = 10
 
 
 @dataclass
@@ -117,6 +121,59 @@ def build_compile_proposal_embed(
         label="Edit",
         emoji="✏️",
         custom_id=f"compile:edit:{msg.proposal_id}",
+    ))
+    return embed, view
+
+
+def build_reorg_proposal_embed(
+    msg: ReorgProposalMessage,
+) -> tuple[discord.Embed, discord.ui.View]:
+    """Pure builder: returns the embed and a View with three buttons."""
+    embed = discord.Embed(
+        title="PAL proposes reorg",
+        color=discord.Color.orange(),
+    )
+    total = len(msg.operations)
+    shown = msg.operations[:_REORG_OPS_DISPLAY_CAP]
+    lines: list[str] = []
+    for op in shown:
+        op_type = op.get("type", "?")
+        src = op.get("src", "?")
+        dst = op.get("dst", "?")
+        lines.append(f"[{op_type}] {src}")
+        lines.append(f"         -> {dst}")
+    if total > _REORG_OPS_DISPLAY_CAP:
+        lines.append(f"+{total - _REORG_OPS_DISPLAY_CAP} more")
+    embed.add_field(
+        name=f"Operations ({total})",
+        value="\n".join(lines) if lines else "(empty)",
+        inline=False,
+    )
+    embed.add_field(name="Rationale", value=msg.rationale, inline=False)
+    embed.add_field(
+        name="Link rewrites",
+        value=str(msg.references_preview),
+        inline=False,
+    )
+
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.success,
+        label="Approve",
+        emoji="✅",
+        custom_id=f"reorg:approve:{msg.proposal_id}",
+    ))
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.danger,
+        label="Decline",
+        emoji="❌",
+        custom_id=f"reorg:decline:{msg.proposal_id}",
+    ))
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.secondary,
+        label="Edit",
+        emoji="✏️",
+        custom_id=f"reorg:edit:{msg.proposal_id}",
     ))
     return embed, view
 
@@ -324,7 +381,7 @@ def parse_button_custom_id(
     if len(parts) != 3:
         return None
     kind, action, proposal_id = parts
-    if kind not in ("research", "compile"):
+    if kind not in ("research", "compile", "reorg"):
         return None
     if action not in ("approve", "decline", "edit"):
         return None
@@ -339,7 +396,7 @@ def parse_modal_custom_id(cid: str) -> Optional[tuple[ProposalKind, str]]:
     if len(parts) != 2:
         return None
     kind, proposal_id = parts
-    if kind not in ("research", "compile"):
+    if kind not in ("research", "compile", "reorg"):
         return None
     if not proposal_id:
         return None
