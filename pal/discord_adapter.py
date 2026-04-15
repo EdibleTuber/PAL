@@ -262,10 +262,33 @@ class PalDiscordBot(discord.Client):
         if action == "edit":
             if kind == "research":
                 modal = build_research_edit_modal(ctx)
-            else:
+                await interaction.response.send_modal(modal)
+                return
+            elif kind == "compile":
                 modal = build_compile_edit_modal(ctx)
-            await interaction.response.send_modal(modal)
-            return
+                await interaction.response.send_modal(modal)
+                return
+            else:  # reorg — v1 edit-as-decline, no modal
+                try:
+                    client = await self.connections.get_client(str(interaction.user.id))
+                    await client.send(ResearchApprovalResponseMessage(
+                        proposal_id=proposal_id,
+                        decision="decline",
+                    ))
+                except Exception as exc:
+                    logger.exception("Failed to send reorg edit-decline: %s", exc)
+                    await interaction.response.send_message(
+                        "Something went wrong. Try again.", ephemeral=True,
+                    )
+                    return
+                try:
+                    await interaction.response.edit_message(
+                        content="✏️ Edit requested (reorg); re-propose in chat",
+                        view=None,
+                    )
+                except discord.HTTPException:
+                    pass
+                return
 
         # approve or decline
         try:

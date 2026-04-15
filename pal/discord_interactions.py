@@ -18,7 +18,7 @@ from pal.protocol import (
     ReorgProposalMessage,
 )
 
-ProposalKind = Literal["research", "compile"]
+ProposalKind = Literal["research", "compile", "reorg"]
 
 # Cap the number of summary paths shown in the compile embed to keep the
 # field value under Discord's 1024-char limit.
@@ -277,6 +277,8 @@ class DiscordStreamProcessor:
                 await self._handle_research_proposal(msg)
             elif isinstance(msg, CompileProposalMessage):
                 await self._handle_compile_proposal(msg)
+            elif isinstance(msg, ReorgProposalMessage):
+                await self._handle_reorg_proposal(msg)
             elif isinstance(msg, ToolProgressMessage):
                 if self.current_proposal_id is not None:
                     await self._post_progress_to_thread(msg)
@@ -330,6 +332,26 @@ class DiscordStreamProcessor:
         self.current_proposal_id = msg.proposal_id
         self.current_proposal_message = posted
 
+    async def _handle_reorg_proposal(
+        self, msg: ReorgProposalMessage,
+    ) -> None:
+        embed, view = build_reorg_proposal_embed(msg)
+        posted = await self.channel.send(embed=embed, view=view)
+        ctx = ProposalContext(
+            proposal_id=msg.proposal_id,
+            kind="reorg",
+            triggerer_id=self.triggerer_id,
+            rationale=msg.rationale,
+            discord_message_id=posted.id,
+            channel_id=getattr(self.channel, "id", None),
+        )
+        # Stash operations on the context for completeness even though
+        # v1 edit-as-decline does not use them.
+        setattr(ctx, "operations", [dict(op) for op in msg.operations])
+        self.bot.active_proposals[msg.proposal_id] = ctx
+        self.current_proposal_id = msg.proposal_id
+        self.current_proposal_message = posted
+
     async def _post_progress_to_thread(
         self, msg: ToolProgressMessage,
     ) -> None:
@@ -369,6 +391,9 @@ class DiscordStreamProcessor:
             return "progress"
         if ctx.kind == "research":
             return f"research: {ctx.topic[:80]}"
+        if ctx.kind == "reorg":
+            ops = getattr(ctx, "operations", [])
+            return f"reorg: {len(ops)} operations"
         return f"compile: {len(ctx.summary_paths)} summaries"
 
 
