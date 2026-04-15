@@ -125,3 +125,114 @@ class Reorganizer:
                 pattern = self._LINK_PATTERN_TEMPLATE.format(re.escape(path))
                 total += len(re.findall(pattern, content))
         return total
+
+    # ---- execution ----
+
+    def execute_operations(self, operations: list[dict]) -> list[dict]:
+        """Execute a batch of operations sequentially. Returns per-op results.
+
+        Sync variant -- only supports move ops. Merge ops must go through
+        execute_operations_async (added in R6)."""
+        results: list[dict] = []
+        for op in operations:
+            op_type = op.get("type")
+            if op_type == "move":
+                results.append(self._execute_move(op))
+            elif op_type == "merge":
+                results.append({
+                    "op": "merge",
+                    "src": op.get("src", ""),
+                    "dst": op.get("dst", ""),
+                    "status": "failed",
+                    "reason": "merge requires execute_operations_async",
+                    "references_rewritten": 0,
+                })
+            else:
+                results.append({
+                    "op": str(op_type),
+                    "src": op.get("src", ""),
+                    "dst": op.get("dst", ""),
+                    "status": "failed",
+                    "reason": f"unknown op type: {op_type!r}",
+                    "references_rewritten": 0,
+                })
+        if self.wiki is not None:
+            try:
+                self.wiki.rebuild_index()
+            except Exception as exc:
+                logger.warning("rebuild_index failed after reorg: %s", exc)
+        return results
+
+    def _execute_move(self, op: dict) -> dict:
+        src = op.get("src", "")
+        dst = op.get("dst", "")
+        src_full = self.vault_path / src
+        dst_full = self.vault_path / dst
+
+        if not src_full.exists():
+            return {
+                "op": "move", "src": src, "dst": dst,
+                "status": "failed",
+                "reason": f"src does not exist: {src}",
+                "references_rewritten": 0,
+            }
+        if dst_full.exists():
+            return {
+                "op": "move", "src": src, "dst": dst,
+                "status": "failed",
+                "reason": f"dst already exists: {dst}",
+                "references_rewritten": 0,
+            }
+
+        try:
+            refs = self._rewrite_references(src, dst)
+        except Exception as exc:
+            return {
+                "op": "move", "src": src, "dst": dst,
+                "status": "failed",
+                "reason": f"link rewrite failed: {exc}",
+                "references_rewritten": 0,
+            }
+
+        try:
+            dst_full.parent.mkdir(parents=True, exist_ok=True)
+            src_full.rename(dst_full)
+        except Exception as exc:
+            return {
+                "op": "move", "src": src, "dst": dst,
+                "status": "failed",
+                "reason": f"rename failed: {exc}",
+                "references_rewritten": refs,
+            }
+
+        if self.wiki is not None:
+            try:
+                self.wiki.git_commit(f"reorg: move {src} -> {dst}")
+            except Exception as exc:
+                logger.warning("git commit failed after move: %s", exc)
+
+        return {
+            "op": "move", "src": src, "dst": dst,
+            "status": "ok",
+            "references_rewritten": refs,
+        }
+
+    def _rewrite_references(self, old_path: str, new_path: str) -> int:
+        """Rewrite `](old_path)` occurrences to `](new_path)` across the
+        vault (excluding raw/archived/). Returns the number of rewrites."""
+        pattern = re.compile(self._LINK_PATTERN_TEMPLATE.format(re.escape(old_path)))
+        replacement = f"]({new_path})"
+        total = 0
+        for md_file in self.vault_path.rglob("*.md"):
+            rel = md_file.relative_to(self.vault_path)
+            if len(rel.parts) >= 2 and rel.parts[0] == "raw" and rel.parts[1] == "archived":
+                continue
+            try:
+                content = md_file.read_text(errors="replace")
+            except OSError:
+                continue
+            new_content, n = pattern.subn(replacement, content)
+            if n > 0:
+                md_file.write_text(new_content)
+                total += n
+        return total
