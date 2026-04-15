@@ -323,9 +323,13 @@ TOOL_DEFINITIONS = [
             "name": "propose_reorg",
             "description": (
                 "Propose a batch of vault reorganization operations "
-                "(move/rename articles or merge duplicates). Blocks "
-                "until the user approves, declines, or edits. After "
-                "approval, call reorg(proposal_id) to execute."
+                "(move/rename articles or merge duplicates). Prefer "
+                "batches of 3-5 operations so the approval prompt stays "
+                "scannable. Use exact filenames from list_directory output, "
+                "including any unicode characters — do not paraphrase or "
+                "approximate filename text. Blocks until the user approves, "
+                "declines, or edits. After approval, call reorg(proposal_id) "
+                "to execute."
             ),
             "parameters": {
                 "type": "object",

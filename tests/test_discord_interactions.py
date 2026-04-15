@@ -49,7 +49,7 @@ def test_research_embed_view_has_three_buttons_with_proposal_id():
     assert "research:edit:abc-123" in custom_ids
 
 
-def test_compile_embed_includes_truncated_path_list_and_buttons():
+def test_compile_embed_includes_path_list_and_buttons():
     paths = [f"raw/summaries/file-{i}.md" for i in range(15)]
     msg = CompileProposalMessage(
         proposal_id="xyz",
@@ -61,8 +61,9 @@ def test_compile_embed_includes_truncated_path_list_and_buttons():
     summaries_field = next(
         f for f in embed.fields if "Summaries" in f.name
     )
+    # Short paths all fit within the character budget; first path must be shown.
     assert "raw/summaries/file-0.md" in summaries_field.value
-    assert "+5 more" in summaries_field.value or "+5" in summaries_field.value
+    assert len(summaries_field.value) <= 1024
     custom_ids = [child.custom_id for child in view.children]
     assert "compile:approve:xyz" in custom_ids
     assert "compile:decline:xyz" in custom_ids
@@ -344,8 +345,9 @@ def test_reorg_embed_includes_operations_and_references_count():
 
 
 def test_reorg_embed_truncates_long_operation_lists():
+    # Use paths long enough to exhaust the character budget within 15 ops.
     ops = [
-        {"type": "move", "src": f"a-{i}.md", "dst": f"b-{i}.md"}
+        {"type": "move", "src": f"Category/{'a' * 60}-{i}.md", "dst": f"Category/{'b' * 60}-{i}.md"}
         for i in range(15)
     ]
     msg = ReorgProposalMessage(
@@ -356,4 +358,44 @@ def test_reorg_embed_truncates_long_operation_lists():
     )
     embed, view = build_reorg_proposal_embed(msg)
     ops_field = next(f for f in embed.fields if "Operations" in f.name)
-    assert "+5 more" in ops_field.value or "+5" in ops_field.value
+    assert len(ops_field.value) <= 1024
+    assert "more" in ops_field.value
+
+
+def test_reorg_embed_fits_under_discord_field_limit():
+    """Ops with very long paths must not exceed Discord's 1024-char field limit."""
+    long_src = "AI-Agents/" + ("x" * 300) + ".md"
+    long_dst = "AI-Agents/" + ("y" * 300) + ".md"
+    ops = [
+        {"type": "move", "src": long_src, "dst": long_dst}
+        for _ in range(10)
+    ]
+    msg = ReorgProposalMessage(
+        proposal_id="p1",
+        operations=ops,
+        rationale="r",
+        references_preview=0,
+    )
+    embed, _ = build_reorg_proposal_embed(msg)
+    ops_field = next(f for f in embed.fields if "Operations" in f.name)
+    assert len(ops_field.value) <= 1024, (
+        f"ops field is {len(ops_field.value)} chars; Discord limit is 1024"
+    )
+    # Should still include at least one operation
+    assert "[move]" in ops_field.value
+    # And indicate truncation
+    assert "more" in ops_field.value
+
+
+def test_compile_embed_fits_under_discord_field_limit():
+    """Compile summaries with very long paths must not exceed 1024 chars."""
+    long_paths = [f"raw/summaries/{'x' * 300}-{i}.md" for i in range(10)]
+    msg = CompileProposalMessage(
+        proposal_id="p2",
+        summary_paths=long_paths,
+        rationale="r",
+    )
+    embed, _ = build_compile_proposal_embed(msg)
+    summaries_field = next(f for f in embed.fields if "Summaries" in f.name)
+    assert len(summaries_field.value) <= 1024
+    assert "more" in summaries_field.value

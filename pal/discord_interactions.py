@@ -7,25 +7,25 @@ their responses).
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
 import discord
 
+logger = logging.getLogger(__name__)
+
 from pal.protocol import (
     CompileProposalMessage,
+    ResearchApprovalResponseMessage,
     ResearchProposalMessage,
     ReorgProposalMessage,
 )
 
 ProposalKind = Literal["research", "compile", "reorg"]
 
-# Cap the number of summary paths shown in the compile embed to keep the
-# field value under Discord's 1024-char limit.
-_COMPILE_PATHS_DISPLAY_CAP = 10
-
-# Cap the number of operations shown in the reorg embed.
-_REORG_OPS_DISPLAY_CAP = 10
+_DISCORD_FIELD_VALUE_LIMIT = 1024
+_FIELD_BUDGET_HEADROOM = 40  # "+NNN more" plus newlines
 
 
 @dataclass
@@ -92,13 +92,22 @@ def build_compile_proposal_embed(
         color=discord.Color.green(),
     )
     total = len(msg.summary_paths)
-    shown = msg.summary_paths[:_COMPILE_PATHS_DISPLAY_CAP]
-    paths_text = "\n".join(shown)
-    if total > _COMPILE_PATHS_DISPLAY_CAP:
-        paths_text += f"\n+{total - _COMPILE_PATHS_DISPLAY_CAP} more"
+    cap = _DISCORD_FIELD_VALUE_LIMIT - _FIELD_BUDGET_HEADROOM
+    fitted: list[str] = []
+    chars = 0
+    for path in msg.summary_paths:
+        add = len(path) + (1 if fitted else 0)  # +1 for newline separator
+        if chars + add > cap:
+            break
+        fitted.append(path)
+        chars += add
+    dropped = total - len(fitted)
+    paths_text = "\n".join(fitted)
+    if dropped > 0:
+        paths_text += f"\n+{dropped} more"
     embed.add_field(
         name=f"Summaries ({total})",
-        value=paths_text,
+        value=paths_text if paths_text else "(empty)",
         inline=False,
     )
     embed.add_field(name="Rationale", value=msg.rationale, inline=False)
@@ -134,19 +143,31 @@ def build_reorg_proposal_embed(
         color=discord.Color.orange(),
     )
     total = len(msg.operations)
-    shown = msg.operations[:_REORG_OPS_DISPLAY_CAP]
-    lines: list[str] = []
-    for op in shown:
+    # Build op-chunks as pairs of lines; fit whole chunks under budget.
+    op_chunks: list[tuple[str, str]] = []
+    for op in msg.operations:
         op_type = op.get("type", "?")
         src = op.get("src", "?")
         dst = op.get("dst", "?")
-        lines.append(f"[{op_type}] {src}")
-        lines.append(f"         -> {dst}")
-    if total > _REORG_OPS_DISPLAY_CAP:
-        lines.append(f"+{total - _REORG_OPS_DISPLAY_CAP} more")
+        op_chunks.append((f"[{op_type}] {src}", f"         -> {dst}"))
+
+    cap = _DISCORD_FIELD_VALUE_LIMIT - _FIELD_BUDGET_HEADROOM
+    fitted_lines: list[str] = []
+    chars = 0
+    dropped = 0
+    for line_a, line_b in op_chunks:
+        add = len(line_a) + 1 + len(line_b) + (1 if fitted_lines else 0)
+        if chars + add > cap:
+            dropped = len(op_chunks) - (len(fitted_lines) // 2)
+            break
+        fitted_lines.append(line_a)
+        fitted_lines.append(line_b)
+        chars += add
+    if dropped > 0:
+        fitted_lines.append(f"+{dropped} more")
     embed.add_field(
         name=f"Operations ({total})",
-        value="\n".join(lines) if lines else "(empty)",
+        value="\n".join(fitted_lines) if fitted_lines else "(empty)",
         inline=False,
     )
     embed.add_field(name="Rationale", value=msg.rationale, inline=False)
@@ -299,7 +320,25 @@ class DiscordStreamProcessor:
         self, msg: ResearchProposalMessage,
     ) -> None:
         embed, view = build_research_proposal_embed(msg)
-        posted = await self.channel.send(embed=embed, view=view)
+        try:
+            posted = await self.channel.send(embed=embed, view=view)
+        except Exception as exc:
+            logger.exception("Failed to post research proposal: %s", exc)
+            try:
+                await self.client.send(ResearchApprovalResponseMessage(
+                    proposal_id=msg.proposal_id,
+                    decision="decline",
+                ))
+            except Exception:
+                logger.exception("Also failed to send decline for failed research emit")
+            try:
+                await self.channel.send(
+                    f"Couldn't render research proposal ({exc}). Declined. "
+                    f"Try again with a shorter topic or rationale."
+                )
+            except Exception:
+                pass
+            return
         ctx = ProposalContext(
             proposal_id=msg.proposal_id,
             kind="research",
@@ -318,7 +357,25 @@ class DiscordStreamProcessor:
         self, msg: CompileProposalMessage,
     ) -> None:
         embed, view = build_compile_proposal_embed(msg)
-        posted = await self.channel.send(embed=embed, view=view)
+        try:
+            posted = await self.channel.send(embed=embed, view=view)
+        except Exception as exc:
+            logger.exception("Failed to post compile proposal: %s", exc)
+            try:
+                await self.client.send(ResearchApprovalResponseMessage(
+                    proposal_id=msg.proposal_id,
+                    decision="decline",
+                ))
+            except Exception:
+                logger.exception("Also failed to send decline for failed compile emit")
+            try:
+                await self.channel.send(
+                    f"Couldn't render compile proposal ({exc}). Declined. "
+                    f"Try again with fewer/shorter paths."
+                )
+            except Exception:
+                pass
+            return
         ctx = ProposalContext(
             proposal_id=msg.proposal_id,
             kind="compile",
@@ -336,7 +393,25 @@ class DiscordStreamProcessor:
         self, msg: ReorgProposalMessage,
     ) -> None:
         embed, view = build_reorg_proposal_embed(msg)
-        posted = await self.channel.send(embed=embed, view=view)
+        try:
+            posted = await self.channel.send(embed=embed, view=view)
+        except Exception as exc:
+            logger.exception("Failed to post reorg proposal: %s", exc)
+            try:
+                await self.client.send(ResearchApprovalResponseMessage(
+                    proposal_id=msg.proposal_id,
+                    decision="decline",
+                ))
+            except Exception:
+                logger.exception("Also failed to send decline for failed reorg emit")
+            try:
+                await self.channel.send(
+                    f"Couldn't render reorg proposal ({exc}). Declined. "
+                    f"Try again with fewer/shorter operations."
+                )
+            except Exception:
+                pass
+            return
         ctx = ProposalContext(
             proposal_id=msg.proposal_id,
             kind="reorg",
