@@ -177,21 +177,23 @@ def test_edit_file_git_commits(wiki_executor, vault):
 
 def test_create_file(wiki_executor, vault):
     result = wiki_executor.run("create_file", {
-        "path": "Research/newtons-laws.md",
+        "path": "raw/notes/newtons-laws.md",
         "title": "Newton's Laws",
         "content": "# Newton's Laws\n\nThree laws of motion.\n",
         "tags": ["physics"],
     })
     assert "created" in result.lower()
-    text = (vault / "Research" / "newtons-laws.md").read_text()
+    text = (vault / "raw" / "notes" / "newtons-laws.md").read_text()
     assert "Newton's Laws" in text
     assert "Three laws" in text
     assert "physics" in text
 
 
-def test_create_file_already_exists(wiki_executor):
+def test_create_file_already_exists(wiki_executor, vault):
+    (vault / "raw" / "notes").mkdir(parents=True, exist_ok=True)
+    (vault / "raw" / "notes" / "quantum.md").write_text("existing")
     result = wiki_executor.run("create_file", {
-        "path": "Research/quantum.md",
+        "path": "raw/notes/quantum.md",
         "title": "Quantum",
         "content": "duplicate",
     })
@@ -207,19 +209,28 @@ def test_create_file_system_dir(wiki_executor):
     assert "not allowed" in result.lower()
 
 
+def test_create_file_rejects_promoted_category(wiki_executor):
+    result = wiki_executor.run("create_file", {
+        "path": "Research/newtons-laws.md",
+        "title": "Newton's Laws",
+        "content": "# Newton's Laws\n\nThree laws.\n",
+    })
+    assert "scoped to raw/" in result
+
+
 def test_create_file_creates_parent_dirs(wiki_executor, vault):
     result = wiki_executor.run("create_file", {
-        "path": "NewTopic/subtopic/article.md",
+        "path": "raw/notes/subtopic/article.md",
         "title": "Deep Article",
         "content": "# Deep Article\n\nNested content.\n",
     })
     assert "created" in result.lower()
-    assert (vault / "NewTopic" / "subtopic" / "article.md").exists()
+    assert (vault / "raw" / "notes" / "subtopic" / "article.md").exists()
 
 
 def test_create_file_git_commits(wiki_executor, vault):
     wiki_executor.run("create_file", {
-        "path": "Research/new-article.md",
+        "path": "raw/notes/new-article.md",
         "title": "New Article",
         "content": "# New\n\nContent.\n",
     })

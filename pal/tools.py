@@ -115,13 +115,21 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "create_file",
-            "description": "Create a new file in the vault with proper frontmatter. Use for writing new notes or articles.",
+            "description": (
+                "Create a new scratch note under raw/notes/. Scoped to raw/ to "
+                "preserve the promotion discipline: wiki articles are produced by "
+                "compile_summary, compile_batch, or consolidate, never by create_file. "
+                "If the user asks you to write a new wiki article in a promoted "
+                "category (e.g. Security/, Reverse-Engineering/, Research/), say you "
+                "cannot do that directly and propose the right tool (research + "
+                "compile, or consolidate if merging existing articles)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "File path relative to vault root (e.g. 'Research/new-topic.md'). Must not already exist.",
+                        "description": "Path relative to vault root. Must begin with 'raw/' (e.g. 'raw/notes/my-note.md'). Must not already exist.",
                     },
                     "title": {
                         "type": "string",
@@ -322,14 +330,19 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "propose_reorg",
             "description": (
-                "Propose a batch of vault reorganization operations "
-                "(move/rename articles or merge duplicates). Prefer "
-                "batches of 3-5 operations so the approval prompt stays "
-                "scannable. Use exact filenames from list_directory output, "
-                "including any unicode characters — do not paraphrase or "
-                "approximate filename text. Blocks until the user approves, "
-                "declines, or edits. After approval, call reorg(proposal_id) "
-                "to execute."
+                "Propose a batch of vault reorganization operations. "
+                "Supported op types: 'move' renames src to dst (dst must "
+                "not exist); 'merge' combines src into an existing dst and "
+                "removes src after success. Use 'merge' to consolidate "
+                "duplicate articles and for cleanup after content has been "
+                "folded into a canonical article. There is no separate "
+                "delete op; merge into the target article is the only way "
+                "to remove a source file. Prefer batches of 3-5 operations "
+                "so the approval prompt stays scannable. Use exact filenames "
+                "from list_directory output, including any unicode characters. "
+                "Do not paraphrase or approximate filename text. Blocks until "
+                "the user approves, declines, or edits. After approval, call "
+                "reorg(proposal_id) to execute."
             ),
             "parameters": {
                 "type": "object",
@@ -547,6 +560,14 @@ class ToolExecutor:
             return f"Error: file already exists: {path} (use edit_file to modify)"
         if self.wiki is None:
             return "Error: write operations are not available (no wiki manager)."
+        if not path.startswith("raw/"):
+            return (
+                f"Error: create_file is scoped to raw/ (got: {path}). "
+                "Wiki articles are produced by compile_summary, compile_batch, "
+                "or consolidate. If you are trying to write a new article in "
+                "a promoted category, tell the user that create_file cannot do "
+                "this and propose the correct workflow."
+            )
         self.wiki.write_article(path, title, content, tags=tags)
         self.wiki.git_commit(f"Create {path} via chat")
         return f"Created: {path}"
@@ -801,6 +822,10 @@ class ToolExecutor:
                 entry["article_path"] = outcome["article_path_rel"]
             if "reason" in outcome:
                 entry["reason"] = outcome["reason"]
+            # Ground-truth echo: confirm the file actually exists on disk.
+            article_rel = outcome.get("article_path_rel")
+            if article_rel:
+                entry["vault_exists"] = (self.vault_path / article_rel).exists()
             per_file.append(entry)
             s = outcome.get("status")
             if s == "ok":
@@ -819,6 +844,10 @@ class ToolExecutor:
             "insufficient": insufficient,
             "error_count": error_count,
             "per_file": per_file,
+            "_note": (
+                "Trust vault_exists for each entry. If vault_exists is false, "
+                "the file is not on disk regardless of status."
+            ),
         }
         return _json.dumps(report)
 
@@ -930,6 +959,15 @@ class ToolExecutor:
         except Exception as exc:
             return f"Error: reorg execution failed: {exc}"
 
+        # Ground-truth echo: check on-disk state for every op.
+        for r in per_op:
+            src = r.get("src", "")
+            dst = r.get("dst", "")
+            if src:
+                r["src_exists_after"] = (self.vault_path / src).exists()
+            if dst:
+                r["dst_exists_after"] = (self.vault_path / dst).exists()
+
         ok = sum(1 for r in per_op if r.get("status") == "ok")
         failed = sum(1 for r in per_op if r.get("status") not in ("ok",))
         refs = sum(int(r.get("references_rewritten", 0)) for r in per_op)
@@ -940,5 +978,10 @@ class ToolExecutor:
             "failed": failed,
             "references_rewritten": refs,
             "per_op": per_op,
+            "_note": (
+                "Trust src_exists_after and dst_exists_after for each op. "
+                "A successful move or merge must show src_exists_after=false "
+                "and dst_exists_after=true."
+            ),
         }
         return _json.dumps(report)
