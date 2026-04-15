@@ -127,3 +127,9 @@ def test_base_prompt_routes_wiki_promotion_through_compile_tools():
     assert "compile_summary" in BASE_PROMPT
     assert "propose_compile_batch" in BASE_PROMPT
     assert "do not use create_file" in lower
+
+
+def test_base_prompt_mentions_consolidate_tool():
+    from pal.prompt_builder import BASE_PROMPT
+    assert "consolidate" in BASE_PROMPT.lower()
+    assert "propose_consolidate" in BASE_PROMPT
