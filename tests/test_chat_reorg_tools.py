@@ -112,3 +112,85 @@ async def test_propose_reorg_surfaces_validation_errors(tmp_path):
     assert "Error" in output
     assert "src does not exist" in output
     assert emitted == []  # no proposal emitted
+
+
+@pytest.mark.asyncio
+async def test_reorg_runs_approved_proposal(tmp_path):
+    registry = ApprovalRegistry()
+    ops = [{"type": "move", "src": "A.md", "dst": "B.md"}]
+    pid = registry.create_proposal(kind="reorg", operations=ops, rationale="r")
+    registry.approve(pid)
+
+    reorganizer = MagicMock()
+    async def fake_exec(ops):
+        return [{"op": "move", "src": "A.md", "dst": "B.md",
+                 "status": "ok", "references_rewritten": 2}]
+    reorganizer.execute_operations_async = fake_exec
+    reorganizer.validate_operations = MagicMock(return_value=[])
+
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        reorganizer=reorganizer,
+    )
+    output = await executor.run_async("reorg", {"proposal_id": pid})
+    assert '"total": 1' in output
+    assert '"ok": 1' in output
+    assert '"references_rewritten": 2' in output
+    assert registry.get(pid).status == "consumed"
+
+
+@pytest.mark.asyncio
+async def test_reorg_refuses_unknown_proposal(tmp_path):
+    registry = ApprovalRegistry()
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        reorganizer=MagicMock(),
+    )
+    output = await executor.run_async("reorg", {"proposal_id": "unknown"})
+    assert "unknown" in output.lower() or "not found" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_reorg_refuses_wrong_kind(tmp_path):
+    registry = ApprovalRegistry()
+    pid = registry.create_proposal(
+        kind="research", topic="t", depth=3, rationale="r",
+    )
+    registry.approve(pid)
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        reorganizer=MagicMock(),
+    )
+    output = await executor.run_async("reorg", {"proposal_id": pid})
+    assert "not a reorg proposal" in output.lower()
+
+
+@pytest.mark.asyncio
+async def test_reorg_pre_validation_blocks_execution(tmp_path):
+    """If validate_operations returns errors post-approval (e.g., vault
+    state changed between proposal and execute), reorg should not
+    run execute_operations_async."""
+    registry = ApprovalRegistry()
+    ops = [{"type": "move", "src": "A.md", "dst": "B.md"}]
+    pid = registry.create_proposal(kind="reorg", operations=ops, rationale="r")
+    registry.approve(pid)
+
+    reorganizer = MagicMock()
+    reorganizer.validate_operations = MagicMock(return_value=["src missing"])
+    reorganizer.execute_operations_async = AsyncMock()
+
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        approval_registry=registry,
+        reorganizer=reorganizer,
+    )
+    output = await executor.run_async("reorg", {"proposal_id": pid})
+    assert "invalid" in output.lower() or "src missing" in output.lower()
+    reorganizer.execute_operations_async.assert_not_called()

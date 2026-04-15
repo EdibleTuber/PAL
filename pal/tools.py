@@ -297,6 +297,29 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "reorg",
+            "description": (
+                "Execute a reorg batch previously approved via "
+                "propose_reorg. Pre-validates the operations against "
+                "current vault state before any mutation. Partial "
+                "failures don't abort the batch. Returns a structured "
+                "report."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "proposal_id": {
+                        "type": "string",
+                        "description": "proposal_id returned by propose_reorg.",
+                    },
+                },
+                "required": ["proposal_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "propose_reorg",
             "description": (
                 "Propose a batch of vault reorganization operations "
@@ -397,6 +420,8 @@ class ToolExecutor:
             return await self._compile_batch(arguments)
         if name == "propose_reorg":
             return await self._propose_reorg(arguments)
+        if name == "reorg":
+            return await self._reorg(arguments)
         return self.run(name, arguments)
 
     def _resolve_safe(self, path: str) -> Path | None:
@@ -860,3 +885,56 @@ class ToolExecutor:
         elif final.status == "approved":
             result["operations"] = list(final.operations or [])
         return _json.dumps(result)
+
+    async def _reorg(self, arguments: dict) -> str:
+        import json as _json
+        proposal_id = (arguments.get("proposal_id") or "").strip()
+        if not proposal_id:
+            return "Error: 'proposal_id' parameter is required."
+        if self.approval_registry is None or self.reorganizer is None:
+            return "Error: reorg execution is not available in this session."
+
+        proposal = self.approval_registry.get(proposal_id)
+        if proposal is None:
+            return f"Error: unknown proposal_id: {proposal_id}"
+        if proposal.kind != "reorg":
+            return f"Error: proposal_id {proposal_id} is not a reorg proposal."
+        if proposal.status == "pending":
+            return "Error: proposal is not approved yet."
+        if proposal.status == "declined":
+            return "Error: proposal was declined."
+        if proposal.status == "expired":
+            return "Error: proposal expired; propose again."
+        if proposal.status == "consumed":
+            return "Error: proposal was already used. Each proposal is single-use."
+        if proposal.status != "approved":
+            return f"Error: proposal in unexpected state: {proposal.status}"
+
+        # Consume first - single-use invariant
+        self.approval_registry.consume(proposal_id)
+
+        ops = list(proposal.operations or [])
+
+        # Re-validate against current vault state. State may have changed
+        # between proposal and execute.
+        validation_errors = self.reorganizer.validate_operations(ops)
+        if validation_errors:
+            return "Error: invalid operations:\n" + "\n".join(validation_errors)
+
+        try:
+            per_op = await self.reorganizer.execute_operations_async(ops)
+        except Exception as exc:
+            return f"Error: reorg execution failed: {exc}"
+
+        ok = sum(1 for r in per_op if r.get("status") == "ok")
+        failed = sum(1 for r in per_op if r.get("status") not in ("ok",))
+        refs = sum(int(r.get("references_rewritten", 0)) for r in per_op)
+
+        report = {
+            "total": len(per_op),
+            "ok": ok,
+            "failed": failed,
+            "references_rewritten": refs,
+            "per_op": per_op,
+        }
+        return _json.dumps(report)
