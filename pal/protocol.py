@@ -11,6 +11,7 @@ Message types:
     research_approval_response  — CLI-to-daemon approval decision
     compile_proposal            — daemon-to-CLI compile approval request
     reorg_proposal              — daemon-to-CLI reorganization approval request
+    consolidate_proposal        — daemon-to-CLI consolidation approval request
 
 All messages are serialized as a single JSON line terminated by newline.
 """
@@ -98,6 +99,16 @@ class ReorgProposalMessage:
     type: str = "reorg_proposal"
 
 
+@dataclass
+class ConsolidateProposalMessage:
+    proposal_id: str
+    source_paths: list[str]
+    target_path: str
+    target_title: str
+    rationale: str
+    type: str = "consolidate_proposal"
+
+
 _MESSAGE_TYPES: dict[str, type] = {
     "chat": ChatMessage,
     "command": CommandMessage,
@@ -109,6 +120,7 @@ _MESSAGE_TYPES: dict[str, type] = {
     "research_approval_response": ResearchApprovalResponseMessage,
     "compile_proposal": CompileProposalMessage,
     "reorg_proposal": ReorgProposalMessage,
+    "consolidate_proposal": ConsolidateProposalMessage,
 }
 
 Message = (
@@ -122,6 +134,7 @@ Message = (
     | ResearchApprovalResponseMessage
     | CompileProposalMessage
     | ReorgProposalMessage
+    | ConsolidateProposalMessage
 )
 
 

@@ -198,3 +198,17 @@ def test_reorg_proposal_message_roundtrip():
     assert decoded.rationale == "consolidate and rename"
     assert decoded.references_preview == 7
     assert decoded.type == "reorg_proposal"
+
+
+def test_consolidate_proposal_roundtrip():
+    from pal.protocol import ConsolidateProposalMessage, encode_message, decode_message
+    msg = ConsolidateProposalMessage(
+        proposal_id="abc-123",
+        source_paths=["Security/a.md", "Security/b.md"],
+        target_path="Security/Combined.md",
+        target_title="Combined",
+        rationale="Merge overlapping notes",
+    )
+    encoded = encode_message(msg)
+    decoded = decode_message(encoded.strip())
+    assert decoded == msg
