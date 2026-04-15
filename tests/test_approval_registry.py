@@ -323,3 +323,48 @@ def test_consolidate_requires_target():
             target_title="Combined",
             rationale="r",
         )
+
+
+def test_consolidate_requires_target_title():
+    import pytest
+    registry = ApprovalRegistry()
+    with pytest.raises(ValueError, match="target_title"):
+        registry.create_proposal(
+            kind="consolidate",
+            summary_paths=["Security/a.md", "Security/b.md"],
+            target_path="Security/Combined.md",
+            target_title="",
+            rationale="r",
+        )
+
+
+def test_consolidate_rejects_none_sources():
+    import pytest
+    registry = ApprovalRegistry()
+    with pytest.raises(ValueError, match="at least two"):
+        registry.create_proposal(
+            kind="consolidate",
+            summary_paths=None,
+            target_path="Security/Combined.md",
+            target_title="Combined",
+            rationale="r",
+        )
+
+
+def test_edit_consolidate_proposal_carries_fields():
+    registry = ApprovalRegistry()
+    old_pid = registry.create_proposal(
+        kind="consolidate",
+        summary_paths=["Security/a.md", "Security/b.md"],
+        target_path="Security/Combined.md",
+        target_title="Combined",
+        rationale="r",
+    )
+    new_pid = registry.edit(old_pid)
+    assert new_pid is not None
+    new = registry.get(new_pid)
+    assert new.kind == "consolidate"
+    assert new.summary_paths == ["Security/a.md", "Security/b.md"]
+    assert new.target_path == "Security/Combined.md"
+    assert new.target_title == "Combined"
+    assert new.status == "approved"
