@@ -97,6 +97,12 @@ class Daemon:
             categorizer=self.categorizer,
             prompt_builder=self.prompt_builder,
         )
+        from pal.reorg import Reorganizer
+        self.reorganizer = Reorganizer(
+            vault_path=config.vault_path,
+            wiki=self.wiki,
+            compiler=self.compiler,
+        )
         cleanup_archived(config.vault_path)
 
     async def serve(self) -> None:
@@ -178,6 +184,7 @@ class Daemon:
             researcher=researcher,
             proposal_emitter=emit_proposal,
             compiler=self.compiler,
+            reorganizer=self.reorganizer,
         )
 
         current_chat_task: asyncio.Task | None = None
