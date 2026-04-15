@@ -314,8 +314,8 @@ def test_extract_modal_field_values_handles_missing():
     assert extract_modal_field_values({"components": []}) == []
 
 
-from pal.discord_interactions import build_reorg_proposal_embed
-from pal.protocol import ReorgProposalMessage
+from pal.discord_interactions import build_consolidate_proposal_embed, build_reorg_proposal_embed
+from pal.protocol import ConsolidateProposalMessage, ReorgProposalMessage
 
 
 def test_reorg_embed_includes_operations_and_references_count():
@@ -399,3 +399,29 @@ def test_compile_embed_fits_under_discord_field_limit():
     summaries_field = next(f for f in embed.fields if "Summaries" in f.name)
     assert len(summaries_field.value) <= 1024
     assert "more" in summaries_field.value
+
+
+def test_parse_button_custom_id_accepts_consolidate():
+    assert parse_button_custom_id("consolidate:approve:abc-1") == ("consolidate", "approve", "abc-1")
+    assert parse_button_custom_id("consolidate:decline:abc-1") == ("consolidate", "decline", "abc-1")
+
+
+def test_build_consolidate_proposal_embed():
+    msg = ConsolidateProposalMessage(
+        proposal_id="abc-1",
+        source_paths=["Security/a.md", "Security/b.md"],
+        target_path="Security/Combined.md",
+        target_title="Combined",
+        rationale="merge overlapping notes",
+    )
+    embed, view = build_consolidate_proposal_embed(msg)
+    assert embed.title == "PAL proposes consolidate"
+    # sources are rendered as a field
+    field_names = [f.name for f in embed.fields]
+    assert any("Sources" in n for n in field_names)
+    assert any("Target" in n for n in field_names)
+    # buttons carry the consolidate kind
+    ids = [item.custom_id for item in view.children]
+    assert "consolidate:approve:abc-1" in ids
+    assert "consolidate:decline:abc-1" in ids
+    assert "consolidate:edit:abc-1" in ids

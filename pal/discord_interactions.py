@@ -17,12 +17,13 @@ logger = logging.getLogger(__name__)
 
 from pal.protocol import (
     CompileProposalMessage,
+    ConsolidateProposalMessage,
     ResearchApprovalResponseMessage,
     ResearchProposalMessage,
     ReorgProposalMessage,
 )
 
-ProposalKind = Literal["research", "compile", "reorg"]
+ProposalKind = Literal["research", "compile", "reorg", "consolidate"]
 
 _DISCORD_FIELD_VALUE_LIMIT = 1024
 _FIELD_BUDGET_HEADROOM = 40  # "+NNN more" plus newlines
@@ -199,6 +200,59 @@ def build_reorg_proposal_embed(
     return embed, view
 
 
+def build_consolidate_proposal_embed(
+    msg: ConsolidateProposalMessage,
+) -> tuple[discord.Embed, discord.ui.View]:
+    """Pure builder: returns the embed and a View with three buttons."""
+    embed = discord.Embed(
+        title="PAL proposes consolidate",
+        color=discord.Color.blurple(),
+    )
+    total = len(msg.source_paths)
+    cap = _DISCORD_FIELD_VALUE_LIMIT - _FIELD_BUDGET_HEADROOM
+    fitted: list[str] = []
+    chars = 0
+    for path in msg.source_paths:
+        add = len(path) + (1 if fitted else 0)
+        if chars + add > cap:
+            break
+        fitted.append(path)
+        chars += add
+    dropped = total - len(fitted)
+    paths_text = "\n".join(fitted)
+    if dropped > 0:
+        paths_text += f"\n+{dropped} more"
+    embed.add_field(
+        name=f"Sources ({total})",
+        value=paths_text if paths_text else "(empty)",
+        inline=False,
+    )
+    embed.add_field(name="Target", value=msg.target_path, inline=False)
+    embed.add_field(name="Title", value=msg.target_title, inline=False)
+    embed.add_field(name="Rationale", value=msg.rationale, inline=False)
+
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.success,
+        label="Approve",
+        emoji="✅",
+        custom_id=f"consolidate:approve:{msg.proposal_id}",
+    ))
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.danger,
+        label="Decline",
+        emoji="❌",
+        custom_id=f"consolidate:decline:{msg.proposal_id}",
+    ))
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.secondary,
+        label="Edit",
+        emoji="✏️",
+        custom_id=f"consolidate:edit:{msg.proposal_id}",
+    ))
+    return embed, view
+
+
 def build_research_edit_modal(ctx: ProposalContext) -> discord.ui.Modal:
     """Research-edit modal: new topic + new depth, with current values
     as defaults. custom_id format: 'research:<proposal_id>' so the
@@ -300,6 +354,8 @@ class DiscordStreamProcessor:
                 await self._handle_compile_proposal(msg)
             elif isinstance(msg, ReorgProposalMessage):
                 await self._handle_reorg_proposal(msg)
+            elif isinstance(msg, ConsolidateProposalMessage):
+                await self._handle_consolidate_proposal(msg)
             elif isinstance(msg, ToolProgressMessage):
                 if self.current_proposal_id is not None:
                     await self._post_progress_to_thread(msg)
@@ -427,6 +483,44 @@ class DiscordStreamProcessor:
         self.current_proposal_id = msg.proposal_id
         self.current_proposal_message = posted
 
+    async def _handle_consolidate_proposal(
+        self, msg: ConsolidateProposalMessage,
+    ) -> None:
+        embed, view = build_consolidate_proposal_embed(msg)
+        try:
+            posted = await self.channel.send(embed=embed, view=view)
+        except Exception as exc:
+            logger.exception("Failed to post consolidate proposal: %s", exc)
+            try:
+                await self.client.send(ResearchApprovalResponseMessage(
+                    proposal_id=msg.proposal_id,
+                    decision="decline",
+                ))
+            except Exception:
+                logger.exception("Also failed to send decline for failed consolidate emit")
+            try:
+                await self.channel.send(
+                    f"Couldn't render consolidate proposal ({exc}). Declined. "
+                    f"Try again with fewer/shorter source paths."
+                )
+            except Exception:
+                pass
+            return
+        ctx = ProposalContext(
+            proposal_id=msg.proposal_id,
+            kind="consolidate",
+            triggerer_id=self.triggerer_id,
+            rationale=msg.rationale,
+            summary_paths=list(msg.source_paths),
+            discord_message_id=posted.id,
+            channel_id=getattr(self.channel, "id", None),
+        )
+        setattr(ctx, "target_path", msg.target_path)
+        setattr(ctx, "target_title", msg.target_title)
+        self.bot.active_proposals[msg.proposal_id] = ctx
+        self.current_proposal_id = msg.proposal_id
+        self.current_proposal_message = posted
+
     async def _post_progress_to_thread(
         self, msg: ToolProgressMessage,
     ) -> None:
@@ -469,6 +563,9 @@ class DiscordStreamProcessor:
         if ctx.kind == "reorg":
             ops = getattr(ctx, "operations", [])
             return f"reorg: {len(ops)} operations"
+        if ctx.kind == "consolidate":
+            target = getattr(ctx, "target_path", "?")
+            return f"consolidate: {len(ctx.summary_paths)} sources -> {target}"
         return f"compile: {len(ctx.summary_paths)} summaries"
 
 
@@ -481,7 +578,7 @@ def parse_button_custom_id(
     if len(parts) != 3:
         return None
     kind, action, proposal_id = parts
-    if kind not in ("research", "compile", "reorg"):
+    if kind not in ("research", "compile", "reorg", "consolidate"):
         return None
     if action not in ("approve", "decline", "edit"):
         return None
@@ -496,7 +593,7 @@ def parse_modal_custom_id(cid: str) -> Optional[tuple[ProposalKind, str]]:
     if len(parts) != 2:
         return None
     kind, proposal_id = parts
-    if kind not in ("research", "compile", "reorg"):
+    if kind not in ("research", "compile", "reorg", "consolidate"):
         return None
     if not proposal_id:
         return None
