@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from pal.article import validate_compiled_truth
 from pal.frontmatter import parse_frontmatter
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,13 @@ class Consolidator:
                 "vault_exists": False,
             }
 
+        missing = validate_compiled_truth(content)
+        if missing:
+            logger.warning(
+                "Consolidated article missing sections (target=%s): %s",
+                target_path, ", ".join(missing),
+            )
+
         tags = ["consolidated"]
         try:
             self.wiki.write_article(target_path, target_title, content, tags=tags)
@@ -142,6 +150,7 @@ class Consolidator:
                 f"consolidate {len(source_bodies)} sources -> {target_path}"
             )
         except Exception as exc:
+            logger.exception("Consolidate write failed: %s", exc)
             return {
                 "status": "error",
                 "target_path": target_path,
