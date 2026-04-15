@@ -324,10 +324,12 @@ class _FakeInference:
         self.response = response
         self.calls = []
 
-    async def generate(self, *, system: str, user: str):
-        self.calls.append({"system": system, "user": user})
+    async def complete(self, messages, reasoning=None, tools=None, model=None):
+        self.calls.append({"messages": list(messages), "reasoning": reasoning})
         class R:
+            type = "text"
             content = self.response
+            reasoning = ""
         return R()
 
 
@@ -588,13 +590,14 @@ async def test_happy_path_writes_article(tmp_path):
     assert (tmp_path / "Security" / "Combined.md").exists()
     assert wiki.written and wiki.written[0]["title"] == "Combined"
 
-    # Inference saw both source bodies and the path labels
+    # Inference saw both source bodies and the path labels in the user message
     assert inference.calls, "inference was not invoked"
-    user_prompt = inference.calls[0]["user"]
-    assert "Security/a.md" in user_prompt
-    assert "Security/b.md" in user_prompt
-    assert "Body A" in user_prompt
-    assert "Body B" in user_prompt
+    messages = inference.calls[0]["messages"]
+    user_content = next(m["content"] for m in messages if m["role"] == "user")
+    assert "Security/a.md" in user_content
+    assert "Security/b.md" in user_content
+    assert "Body A" in user_content
+    assert "Body B" in user_content
 
 
 @pytest.mark.asyncio
@@ -629,10 +632,11 @@ async def test_prompt_demands_inline_citations(tmp_path):
         target_title="Combined",
     )
 
-    system = inference.calls[0]["system"]
-    assert "ONLY information" in system
-    assert "INSUFFICIENT" in system
-    assert "cite" in system.lower() or "citation" in system.lower()
+    messages = inference.calls[0]["messages"]
+    system_content = next(m["content"] for m in messages if m["role"] == "system")
+    assert "ONLY information" in system_content
+    assert "INSUFFICIENT" in system_content
+    assert "cite" in system_content.lower() or "citation" in system_content.lower()
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -668,9 +672,15 @@ Replace the placeholder return at the bottom of `consolidate()` in `pal/consolid
             f"SOURCES ({len(source_bodies)}):\n\n{labeled_sources}"
         )
 
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
         try:
-            response = await self.inference.generate(system=system_prompt, user=user_prompt)
+            result = await self.inference.complete(messages, reasoning="off")
         except Exception as exc:
+            logger.exception("Consolidate inference failed: %s", exc)
             return {
                 "status": "error",
                 "target_path": target_path,
@@ -678,7 +688,7 @@ Replace the placeholder return at the bottom of `consolidate()` in `pal/consolid
                 "vault_exists": False,
             }
 
-        content = (response.content or "").strip()
+        content = (getattr(result, "content", "") or "").strip()
         if content.startswith("INSUFFICIENT:"):
             reason = content[len("INSUFFICIENT:"):].strip() or "model reported insufficient material"
             return {
