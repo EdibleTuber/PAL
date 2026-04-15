@@ -280,3 +280,46 @@ def test_edit_reorg_proposal_carries_kind_and_operations():
     assert new.kind == "reorg"
     assert new.operations == new_ops
     assert new.status == "approved"
+
+
+def test_create_consolidate_proposal():
+    reg = ApprovalRegistry()
+    pid = reg.create_proposal(
+        kind="consolidate",
+        summary_paths=["Security/a.md", "Security/b.md"],
+        target_path="Security/Combined.md",
+        target_title="Combined",
+        rationale="merge overlapping notes",
+    )
+    p = reg.get(pid)
+    assert p.kind == "consolidate"
+    assert p.summary_paths == ["Security/a.md", "Security/b.md"]
+    assert p.target_path == "Security/Combined.md"
+    assert p.target_title == "Combined"
+    assert p.status == "pending"
+
+
+def test_consolidate_requires_two_sources():
+    import pytest
+    reg = ApprovalRegistry()
+    with pytest.raises(ValueError, match="at least two"):
+        reg.create_proposal(
+            kind="consolidate",
+            summary_paths=["Security/a.md"],
+            target_path="Security/Combined.md",
+            target_title="Combined",
+            rationale="r",
+        )
+
+
+def test_consolidate_requires_target():
+    import pytest
+    reg = ApprovalRegistry()
+    with pytest.raises(ValueError, match="target_path"):
+        reg.create_proposal(
+            kind="consolidate",
+            summary_paths=["Security/a.md", "Security/b.md"],
+            target_path="",
+            target_title="Combined",
+            rationale="r",
+        )

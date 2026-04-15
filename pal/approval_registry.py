@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
 ProposalStatus = Literal["pending", "approved", "declined", "consumed", "expired"]
-ProposalKind = Literal["research", "compile", "reorg"]
+ProposalKind = Literal["research", "compile", "reorg", "consolidate"]
 
 DEFAULT_EXPIRY_MINUTES = 15
 
@@ -35,6 +35,8 @@ class Proposal:
     successor_id: Optional[str] = None
     summary_paths: Optional[list[str]] = None
     operations: Optional[list[dict]] = None
+    target_path: Optional[str] = None
+    target_title: Optional[str] = None
     # asyncio.Event is set when the proposal reaches a terminal state
     # (approved, declined, or expired). Not part of the public dataclass
     # fields — carried separately for awaiting.
@@ -58,6 +60,8 @@ class ApprovalRegistry:
         rationale: str,
         summary_paths: Optional[list[str]] = None,
         operations: Optional[list[dict]] = None,
+        target_path: Optional[str] = None,
+        target_title: Optional[str] = None,
     ) -> str:
         if kind == "research" and not topic:
             raise ValueError("research proposals require a non-empty topic")
@@ -74,6 +78,13 @@ class ApprovalRegistry:
                     raise ValueError(f"operation type must be 'move' or 'merge', got {op.get('type')!r}")
                 if not op.get("src") or not op.get("dst"):
                     raise ValueError("every operation requires 'src' and 'dst' fields")
+        if kind == "consolidate":
+            if not summary_paths or len(summary_paths) < 2:
+                raise ValueError("consolidate proposals require at least two source paths")
+            if not target_path:
+                raise ValueError("consolidate proposals require target_path")
+            if not target_title:
+                raise ValueError("consolidate proposals require target_title")
 
         proposal_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -88,6 +99,8 @@ class ApprovalRegistry:
             kind=kind,
             summary_paths=list(summary_paths) if summary_paths else None,
             operations=[dict(op) for op in operations] if operations else None,
+            target_path=target_path,
+            target_title=target_title,
         )
         return proposal_id
 
@@ -172,6 +185,8 @@ class ApprovalRegistry:
                 [dict(op) for op in operations] if operations is not None
                 else ([dict(op) for op in old.operations] if old.operations else None)
             ),
+            target_path=old.target_path,
+            target_title=old.target_title,
         )
         new_proposal.event.set()
         self._proposals[new_id] = new_proposal
