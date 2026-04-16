@@ -133,3 +133,9 @@ def test_base_prompt_mentions_consolidate_tool():
     from pal.prompt_builder import BASE_PROMPT
     assert "consolidate" in BASE_PROMPT.lower()
     assert "propose_consolidate" in BASE_PROMPT
+
+
+def test_base_prompt_mentions_wait_for_reindex():
+    from pal.prompt_builder import BASE_PROMPT
+    assert "wait_for_reindex" in BASE_PROMPT
+    assert "reindex" in BASE_PROMPT.lower()

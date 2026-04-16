@@ -144,8 +144,11 @@ These are used automatically by the LLM during conversation. You don't invoke th
 | `search_vault` | Semantic search via retrieval API |
 | `edit_file` | Rewrite a file's body (preserves frontmatter) |
 | `create_file` | Create a new file with frontmatter |
+| `wait_for_reindex` | Poll a reindex job until done or timeout (use only when freshness matters mid-turn) |
 
 Write tools are restricted to non-system directories and every write is git-committed.
+
+Write tools (`compile_summary`, `compile_batch`, `consolidate`, `reorg`, `create_file`, `edit_file`) automatically trigger an incremental reindex on the inference server after success. The tool result includes a `reindex` field with a `job_id` and current status; the new content is typically searchable within a second or two without any further action. For mid-turn cases that require certainty, `wait_for_reindex` polls until the job completes.
 
 ## Vault Structure
 
