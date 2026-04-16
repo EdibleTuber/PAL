@@ -131,3 +131,33 @@ def test_list_excludes_ratings_file(learning):
     slugs = [e["slug"] for e in entries]
     assert "ratings" not in slugs
     assert "real-learning" in slugs
+
+
+def test_exists_returns_true_for_existing(tmp_path):
+    from pal.learning import LearningManager
+    lm = LearningManager(tmp_path)
+    slug = lm.add("My Lesson", "body text", source="conversation")
+    assert lm.exists(slug) is True
+
+
+def test_exists_returns_false_for_missing(tmp_path):
+    from pal.learning import LearningManager
+    lm = LearningManager(tmp_path)
+    assert lm.exists("no-such-slug") is False
+
+
+def test_get_meta_returns_frontmatter(tmp_path):
+    from pal.learning import LearningManager
+    lm = LearningManager(tmp_path)
+    slug = lm.add("My Lesson", "body text", source="conversation")
+    meta = lm.get_meta(slug)
+    assert meta["title"] == "My Lesson"
+    assert meta["status"] == "active"
+
+
+def test_get_meta_raises_for_missing(tmp_path):
+    from pal.learning import LearningManager
+    import pytest
+    lm = LearningManager(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        lm.get_meta("no-such-slug")

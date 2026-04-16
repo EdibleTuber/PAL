@@ -88,6 +88,18 @@ class LearningManager:
         path.write_text(serialize_frontmatter(meta, body if body.endswith("\n") else body + "\n"))
         logger.info("Marked learning as promoted: %s", slug)
 
+    def exists(self, slug: str) -> bool:
+        """Return True if a learning with this slug exists."""
+        return (self.learning_dir / f"{slug}.md").exists()
+
+    def get_meta(self, slug: str) -> dict:
+        """Return the frontmatter dict of a learning by slug."""
+        path = self.learning_dir / f"{slug}.md"
+        if not path.exists():
+            raise FileNotFoundError(f"Learning not found: {slug}")
+        meta, _ = parse_frontmatter(path.read_text())
+        return meta
+
     def add_rating(self, rating: str, comment: str = "") -> None:
         """Append a rating entry to the ratings log."""
         self.learning_dir.mkdir(parents=True, exist_ok=True)
