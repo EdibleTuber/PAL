@@ -52,8 +52,20 @@ from pal.protocol import (
     encode_message,
     decode_message,
 )
+from pal.commands import COMMANDS
 
 logger = logging.getLogger(__name__)
+
+
+def render_help_text() -> str:
+    """Render /help output from the COMMANDS registry."""
+    lines = ["Available commands:"]
+    max_name = max(len(f"/{c.name} {c.args}".rstrip()) for c in COMMANDS)
+    for cmd in COMMANDS:
+        prefix = f"/{cmd.name} {cmd.args}".rstrip()
+        padded = prefix.ljust(max_name)
+        lines.append(f"  {padded}  - {cmd.description}")
+    return "\n".join(lines)
 
 
 class Daemon:
@@ -406,32 +418,7 @@ class Daemon:
         """Handle a slash command."""
         if msg.name == "help":
             resp = ResponseMessage(
-                text=(
-                    "Available commands:\n"
-                    "  /help          — Show this message\n"
-                    "  /status        — Show daemon status (model, vault, etc.)\n"
-                    "  /read <title>  — Read a wiki article\n"
-                    "  /search <q>    — Search wiki articles\n"
-                    "  /get <title>   — Get article by exact title\n"
-                    "  /note <text>   — Save a quick note\n"
-                    "  /lint          — Lint wiki articles\n"
-                    "  /profile <q>   — Query your profile\n"
-                    "  /wisdom <q>    — Search wisdom entries\n"
-                    "  /search-web <q> — Web search via SearxNG\n"
-                    "  /fetch <url>   — Fetch and summarize a URL\n"
-                    "  /summarize <t> — Summarize a wiki article\n"
-                    "  /compile <t>   — Compile a wiki article\n"
-                    "  /compile-batch — Compile all summaries in raw/summaries/\n"
-                    "  /import <path> — Import a local document into the vault\n"
-                    "  /learn         — Extract learnings from conversation\n"
-                    "  /learnings     — List saved learnings\n"
-                    "  /promote <id>  — Promote a learning to wisdom\n"
-                    "  /rate <id> <n> — Rate a learning (1-5)\n"
-                    "  /model [name]  - Show or switch the active model\n"
-                    "  /think [mode]  - Control reasoning (on/off/auto/show/hide)\n"
-                    "  /research <t>  - Research a topic or file of topics\n"
-                    "  /quit          — End the session"
-                ),
+                text=render_help_text(),
                 command="help",
             )
             writer.write(encode_message(resp))
