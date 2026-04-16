@@ -110,3 +110,36 @@ async def extract_candidate(
     if not title or not body:
         return None
     return {"title": title, "body": body}
+
+
+def _slugify_title(title: str) -> str:
+    slug = title.lower().strip()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    return slug.strip("-")
+
+
+def _slug_tokens(slug: str) -> set[str]:
+    return {t for t in slug.split("-") if len(t) > 2}
+
+
+def is_duplicate_candidate(title: str, existing_slugs: list[str]) -> bool:
+    """True if the candidate title matches an existing learning by exact slug
+    or by high token overlap (Jaccard >= 0.6).
+    """
+    cand_slug = _slugify_title(title)
+    if not cand_slug:
+        return False
+    if cand_slug in existing_slugs:
+        return True
+    cand_tokens = _slug_tokens(cand_slug)
+    if not cand_tokens:
+        return False
+    for existing in existing_slugs:
+        ex_tokens = _slug_tokens(existing)
+        if not ex_tokens:
+            continue
+        overlap = len(cand_tokens & ex_tokens)
+        union = len(cand_tokens | ex_tokens)
+        if union and (overlap / union) >= 0.6:
+            return True
+    return False
