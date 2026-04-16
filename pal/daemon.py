@@ -535,6 +535,16 @@ class Daemon:
         writer.write(encode_message(resp))
         await writer.drain()
 
+    async def _trigger_reindex_for_paths(self, paths: list[str]) -> None:
+        """Best-effort reindex trigger for direct daemon writes (slash commands).
+        Logs warnings on failure; never raises."""
+        if not paths:
+            return
+        try:
+            await self.retrieval.trigger_reindex(paths=paths)
+        except Exception as exc:
+            logger.warning("daemon reindex trigger failed: %s", exc)
+
     async def _handle_note(
         self,
         topic: str,
@@ -605,6 +615,9 @@ class Daemon:
         self.wiki.write_article(path=path, title=topic, body=body + "\n")
         self.wiki.git_init()
         self.wiki.git_commit(f"note: {topic}")
+
+        absolute = str((self.config.vault_path / path).resolve())
+        await self._trigger_reindex_for_paths([absolute])
 
         resp = ResponseMessage(
             text=f"Created article: {path}\n\n{body}",
@@ -1156,6 +1169,12 @@ class Daemon:
         self.wiki.rebuild_index()
         self.wiki.git_init()
         self.wiki.git_commit(f"import: {convert_result.title} ({len(saved_articles)} articles)")
+
+        absolute_paths = [
+            str((self.config.vault_path / rel).resolve())
+            for rel in saved_articles
+        ]
+        await self._trigger_reindex_for_paths(absolute_paths)
 
         # Archive source file
         archive_raw_files(self.config.vault_path, raw_path=file_path)
