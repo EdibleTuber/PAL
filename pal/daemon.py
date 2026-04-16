@@ -96,12 +96,14 @@ class Daemon:
             inference=self.inference,
             categorizer=self.categorizer,
             prompt_builder=self.prompt_builder,
+            retrieval=self.retrieval,
         )
         from pal.reorg import Reorganizer
         self.reorganizer = Reorganizer(
             vault_path=config.vault_path,
             wiki=self.wiki,
             compiler=self.compiler,
+            retrieval=self.retrieval,
         )
         from pal.consolidator import Consolidator
         self.consolidator = Consolidator(
@@ -109,6 +111,7 @@ class Daemon:
             wiki=self.wiki,
             inference=self.inference,
             prompt_builder=self.prompt_builder,
+            retrieval=self.retrieval,
         )
         cleanup_archived(config.vault_path)
 
