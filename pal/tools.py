@@ -431,6 +431,34 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "wait_for_reindex",
+            "description": (
+                "Poll a reindex job until it finishes or times out. Use after "
+                "compile/consolidate/reorg/edit/create when you need to be sure "
+                "the new content is searchable via search_vault before answering. "
+                "Most of the time you do NOT need this -- the reindex runs "
+                "automatically and finishes within a second or two. Call this "
+                "only when latency to-searchable matters for the next answer."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string",
+                        "description": "job_id from a prior tool result's reindex field.",
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Max seconds to wait. Default 30.",
+                    },
+                },
+                "required": ["job_id"],
+            },
+        },
+    },
 ]
 
 
@@ -504,6 +532,8 @@ class ToolExecutor:
             return await self._propose_consolidate(arguments)
         if name == "consolidate":
             return await self._consolidate(arguments)
+        if name == "wait_for_reindex":
+            return await self._wait_for_reindex(arguments)
         # Sync tools — fall through to self.run, then trigger reindex
         # for tools that write files.
         if name in ("edit_file", "create_file"):
@@ -1176,3 +1206,37 @@ class ToolExecutor:
             "Trust vault_exists: if false, the target file was not written to disk."
         )
         return _json.dumps(outcome)
+
+    async def _wait_for_reindex(self, arguments: dict) -> str:
+        import asyncio
+        import json as _json
+
+        job_id = (arguments.get("job_id") or "").strip()
+        if not job_id:
+            return "Error: 'job_id' parameter is required."
+        if self.retrieval is None:
+            return "Error: retrieval client is not configured."
+
+        timeout_seconds = int(arguments.get("timeout_seconds") or 30)
+        timeout_seconds = max(1, min(timeout_seconds, 120))
+
+        deadline = asyncio.get_event_loop().time() + timeout_seconds
+        last_status = "unknown"
+        while True:
+            job = await self.retrieval.get_reindex_job(job_id)
+            if job is None:
+                return f"Error: unknown job_id (not found): {job_id}"
+            last_status = job.get("status", "unknown")
+            if last_status in ("done", "error"):
+                return _json.dumps(job)
+            if asyncio.get_event_loop().time() >= deadline:
+                return _json.dumps({
+                    "job_id": job_id,
+                    "status": "timeout",
+                    "last_seen_status": last_status,
+                    "_note": (
+                        "Job did not finish within timeout. The job may still complete; "
+                        "poll again with a longer timeout if needed."
+                    ),
+                })
+            await asyncio.sleep(0.25)

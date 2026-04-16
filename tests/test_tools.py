@@ -329,3 +329,60 @@ async def test_edit_file_triggers_reindex(vault):
     paths = call_args.kwargs.get("paths") if call_args.kwargs else (call_args.args[0] if call_args.args else None)
     assert paths is not None
     assert any("raw/notes/n.md" in p for p in paths)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_reindex_returns_done_when_finished(vault):
+    """Polls until the job reports done; returns the final status."""
+    from unittest.mock import AsyncMock
+    import json as _json
+
+    retrieval = AsyncMock()
+    retrieval.get_reindex_job = AsyncMock(side_effect=[
+        {"job_id": "j", "status": "running"},
+        {"job_id": "j", "status": "running"},
+        {"job_id": "j", "status": "done", "stats": {"new": 1}},
+    ])
+    executor = ToolExecutor(vault_path=vault, retrieval=retrieval)
+
+    result = await executor.run_async("wait_for_reindex", {
+        "job_id": "j",
+        "timeout_seconds": 5,
+    })
+    payload = _json.loads(result)
+    assert payload["status"] == "done"
+    assert payload["job_id"] == "j"
+    assert retrieval.get_reindex_job.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_wait_for_reindex_times_out(vault):
+    from unittest.mock import AsyncMock
+    import json as _json
+
+    retrieval = AsyncMock()
+    retrieval.get_reindex_job = AsyncMock(return_value={"job_id": "j", "status": "running"})
+    executor = ToolExecutor(vault_path=vault, retrieval=retrieval)
+
+    result = await executor.run_async("wait_for_reindex", {
+        "job_id": "j",
+        "timeout_seconds": 1,
+    })
+    payload = _json.loads(result)
+    assert payload["status"] == "timeout"
+    assert payload["last_seen_status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_reindex_unknown_job(vault):
+    from unittest.mock import AsyncMock
+
+    retrieval = AsyncMock()
+    retrieval.get_reindex_job = AsyncMock(return_value=None)
+    executor = ToolExecutor(vault_path=vault, retrieval=retrieval)
+
+    result = await executor.run_async("wait_for_reindex", {
+        "job_id": "missing",
+        "timeout_seconds": 1,
+    })
+    assert "not found" in result.lower() or "unknown" in result.lower()
