@@ -447,6 +447,12 @@ class Daemon:
             done = ResponseMessage(text=cap_msg)
             writer.write(encode_message(done))
             await writer.drain()
+            # Proactive learning scan (fire-and-forget).
+            recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
+            asyncio.create_task(scanner.maybe_scan(
+                recent_turns=recent_turns,
+                latest_user_message=msg.text,
+            ))
 
         except Exception as exc:
             logger.exception("Chat error: %s", exc)
