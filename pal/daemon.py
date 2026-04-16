@@ -197,6 +197,30 @@ class Daemon:
             on_progress=emit_progress,
         )
 
+        from pal.learning_scanner import LearningScanner, extract_candidate
+
+        async def _scanner_extractor(recent_turns, trigger_message):
+            async def call(prompt: str) -> str:
+                result = await self.inference.complete(
+                    messages=[{"role": "user", "content": prompt}],
+                    tools=None,
+                )
+                if result.type != "text":
+                    return ""
+                return result.content or ""
+            return await extract_candidate(
+                recent_turns=recent_turns,
+                trigger_message=trigger_message,
+                inference_call=call,
+                timeout=15.0,
+            )
+
+        scanner = LearningScanner(
+            learning_manager=self.learning,
+            extractor=_scanner_extractor,
+            emit=emit_proposal,
+        )
+
         tool_executor = ToolExecutor(
             vault_path=self.config.vault_path,
             retrieval=self.retrieval,
@@ -242,7 +266,7 @@ class Daemon:
                         await writer.drain()
                         continue
                     current_chat_task = asyncio.create_task(
-                        self._handle_chat(msg, conv, writer, tool_executor)
+                        self._handle_chat(msg, conv, writer, tool_executor, scanner)
                     )
                 elif isinstance(msg, CommandMessage):
                     if current_chat_task is not None and not current_chat_task.done():
@@ -298,6 +322,7 @@ class Daemon:
         conv: Conversation,
         writer: asyncio.StreamWriter,
         tool_executor,
+        scanner,  # NEW
     ) -> None:
         """Process a chat message with optional tool use.
 
@@ -332,6 +357,12 @@ class Daemon:
                     )
                     writer.write(encode_message(done))
                     await writer.drain()
+                    # Proactive learning scan (fire-and-forget).
+                    recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
+                    asyncio.create_task(scanner.maybe_scan(
+                        recent_turns=recent_turns,
+                        latest_user_message=msg.text,
+                    ))
                     return
                 tool_calls = completion.tool_calls
             else:
@@ -353,6 +384,12 @@ class Daemon:
                     done = ResponseMessage(text=response_text)
                     writer.write(encode_message(done))
                     await writer.drain()
+                    # Proactive learning scan (fire-and-forget).
+                    recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
+                    asyncio.create_task(scanner.maybe_scan(
+                        recent_turns=recent_turns,
+                        latest_user_message=msg.text,
+                    ))
                     return
 
             # Tool-use loop
@@ -394,6 +431,12 @@ class Daemon:
                     )
                     writer.write(encode_message(done))
                     await writer.drain()
+                    # Proactive learning scan (fire-and-forget).
+                    recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
+                    asyncio.create_task(scanner.maybe_scan(
+                        recent_turns=recent_turns,
+                        latest_user_message=msg.text,
+                    ))
                     return
 
                 tool_calls = completion.tool_calls
