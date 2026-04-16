@@ -12,7 +12,9 @@ import asyncio
 import json
 import logging
 import re
-from typing import Callable, Optional
+import uuid
+from collections import deque
+from typing import Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -143,3 +145,83 @@ def is_duplicate_candidate(title: str, existing_slugs: list[str]) -> bool:
         if union and (overlap / union) >= 0.6:
             return True
     return False
+
+
+from pal.protocol import LearningCandidateProposalMessage  # noqa: E402
+
+
+class LearningScanner:
+    """Orchestrates signal detection, extraction, dedupe, and proposal emission.
+
+    At most one proposal is active at a time. Additional candidates are
+    queued and drained when `clear_pending` is called.
+
+    `extractor` is an async callable with signature:
+        async (recent_turns: list[dict], trigger: str) -> dict | None
+    where the returned dict has keys "title" and "body", or None if no
+    durable lesson was found.
+    """
+
+    def __init__(
+        self,
+        learning_manager,
+        extractor: Callable[..., Awaitable],
+        emit: Callable[[LearningCandidateProposalMessage], None],
+    ) -> None:
+        self.lm = learning_manager
+        self.extractor = extractor
+        self.emit = emit
+        self._pending_id: str | None = None
+        self.queued: deque[LearningCandidateProposalMessage] = deque()
+
+    def mark_pending(self, proposal_id: str) -> None:
+        """Mark a proposal as pending; subsequent candidates will be queued."""
+        self._pending_id = proposal_id
+
+    def clear_pending(self) -> None:
+        """Clear the active pending proposal and drain the next queued item, if any."""
+        self._pending_id = None
+        self._drain_queue()
+
+    def _drain_queue(self) -> None:
+        """Emit the next queued proposal (if any) and mark it pending."""
+        if self._pending_id is None and self.queued:
+            msg = self.queued.popleft()
+            self._pending_id = msg.proposal_id
+            self.emit(msg)
+
+    async def maybe_scan(
+        self,
+        recent_turns: list[dict],
+        latest_user_message: str,
+    ) -> None:
+        """Run the full signal-extract-dedupe pipeline for one user turn.
+
+        If a candidate is found:
+        - When no proposal is pending, emit it immediately and mark it pending.
+        - When a proposal is already pending, enqueue for later drain.
+        """
+        if not has_signal(latest_user_message):
+            return
+
+        candidate = await self.extractor(recent_turns, latest_user_message)
+        if candidate is None:
+            return
+
+        existing = [e["slug"] for e in self.lm.list()]
+        if is_duplicate_candidate(candidate["title"], existing):
+            return
+
+        msg = LearningCandidateProposalMessage(
+            proposal_id=uuid.uuid4().hex,
+            title=candidate["title"],
+            body=candidate["body"],
+            trigger_excerpt=latest_user_message[:200],
+        )
+
+        if self._pending_id is not None:
+            self.queued.append(msg)
+            return
+
+        self._pending_id = msg.proposal_id
+        self.emit(msg)
