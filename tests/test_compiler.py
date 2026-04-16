@@ -135,3 +135,75 @@ async def test_merge_into_existing_updates_article_body(tmp_path):
     inference.complete.assert_awaited()
 
 
+@pytest.mark.asyncio
+async def test_compile_one_triggers_reindex_with_target_path(tmp_path):
+    """After a successful first-compile, Compiler calls retrieval.trigger_reindex
+    with the absolute path of the new article and includes the response in outcome."""
+    from unittest.mock import AsyncMock
+    from pal.compiler import Compiler
+    from pal.wiki import WikiManager
+
+    wiki = WikiManager(tmp_path)
+    wiki.init_vault()
+    raw_dir = tmp_path / "raw" / "summaries"
+    raw_dir.mkdir(parents=True)
+    raw_path = raw_dir / "test.md"
+    raw_path.write_text(
+        "---\ntitle: Test\nsource_url: https://example.com\nsource_hash: abc\n---\n\n"
+        "Substantive content for grounded compilation that has enough body to be promoted.\n"
+    )
+
+    inference = AsyncMock()
+    inference.complete = AsyncMock(return_value=type("R", (), {
+        "type": "text",
+        "content": "## Overview\n\nReal content.\n\n## Key Concepts\n\nA point.",
+        "reasoning": "",
+    })())
+
+    categorizer = AsyncMock()
+    categorizer.categorize = AsyncMock(return_value="Research")
+
+    prompt_builder = type("PB", (), {"build": lambda self: "BASE"})()
+
+    retrieval = AsyncMock()
+    retrieval.trigger_reindex = AsyncMock(return_value={
+        "job_id": "j1", "status": "queued", "paths": None,
+    })
+
+    compiler = Compiler(
+        vault_path=tmp_path,
+        wiki=wiki,
+        inference=inference,
+        categorizer=categorizer,
+        prompt_builder=prompt_builder,
+        retrieval=retrieval,
+    )
+
+    outcome = await compiler.compile_one("raw/summaries/test.md")
+    assert outcome["status"] == "ok", outcome
+    assert "reindex" in outcome
+    assert outcome["reindex"]["job_id"] == "j1"
+
+    # Trigger was called once with the absolute path of the new article.
+    retrieval.trigger_reindex.assert_awaited_once()
+    call_args = retrieval.trigger_reindex.await_args
+    paths = call_args.kwargs.get("paths") if call_args.kwargs else (call_args.args[0] if call_args.args else None)
+    assert paths is not None
+    assert any(str(tmp_path) in p and outcome["article_path_rel"] in p for p in paths)
+
+
+def test_compiler_constructor_default_retrieval_is_none():
+    """Compiler constructed without a retrieval kwarg has self.retrieval is None.
+    This protects every existing call site from breaking — they all omit the kwarg."""
+    from pathlib import Path
+    from pal.compiler import Compiler
+    from unittest.mock import MagicMock
+    compiler = Compiler(
+        vault_path=Path("/tmp"),
+        wiki=MagicMock(),
+        inference=MagicMock(),
+        categorizer=MagicMock(),
+        prompt_builder=MagicMock(),
+    )
+    assert compiler.retrieval is None
+

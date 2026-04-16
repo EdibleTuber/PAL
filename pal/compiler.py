@@ -60,12 +60,14 @@ class Compiler:
         inference,      # InferenceClient
         categorizer,    # Categorizer
         prompt_builder, # SystemPromptBuilder
+        retrieval=None, # RetrievalClient | None
     ) -> None:
         self.vault_path = vault_path
         self.wiki = wiki
         self.inference = inference
         self.categorizer = categorizer
         self.prompt_builder = prompt_builder
+        self.retrieval = retrieval
 
     async def compile_one(self, summary_path: str) -> dict[str, Any]:
         """Compile a single summary into a wiki article.
@@ -226,12 +228,16 @@ class Compiler:
         archive_raw_files(self.vault_path, raw_path=source_raw, summary_path=summary_path)
         self.wiki.git_commit(f"archive: {title}")
 
-        return {
+        outcome = {
             "status": "ok",
             "title": title,
             "article_path_rel": article_path_rel,
             "compiled_truth": compiled_truth.strip(),
         }
+        if self.retrieval is not None:
+            absolute_target = str((self.vault_path / article_path_rel).resolve())
+            outcome["reindex"] = await self.retrieval.trigger_reindex(paths=[absolute_target])
+        return outcome
 
     async def merge_into_existing(
         self,
@@ -340,9 +346,13 @@ class Compiler:
         self.wiki.git_init()
         self.wiki.git_commit(f"compile: {new_title}")
 
-        return {
+        outcome = {
             "status": "merged",
             "title": new_title,
             "article_path_rel": article_path_rel,
             "compiled_truth": compiled_truth.strip(),
         }
+        if self.retrieval is not None:
+            absolute_target = str((self.vault_path / article_path_rel).resolve())
+            outcome["reindex"] = await self.retrieval.trigger_reindex(paths=[absolute_target])
+        return outcome

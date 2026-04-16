@@ -23,11 +23,12 @@ def archive_raw_files(
     archive_dir = vault_path / "raw" / "archived"
     archive_dir.mkdir(parents=True, exist_ok=True)
 
-    raw_full = vault_path / raw_path
-    if raw_full.exists():
-        dest = archive_dir / raw_full.name
-        raw_full.rename(dest)
-        logger.info("Archived %s -> raw/archived/%s", raw_path, raw_full.name)
+    if raw_path:
+        raw_full = vault_path / raw_path
+        if raw_full.exists():
+            dest = archive_dir / raw_full.name
+            raw_full.rename(dest)
+            logger.info("Archived %s -> raw/archived/%s", raw_path, raw_full.name)
 
     if summary_path:
         summary_full = vault_path / summary_path
