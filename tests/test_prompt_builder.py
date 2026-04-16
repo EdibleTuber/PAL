@@ -24,7 +24,8 @@ def builder(vault) -> SystemPromptBuilder:
 
 def test_build_with_no_profile_or_wisdom(builder):
     prompt = builder.build()
-    assert prompt == BASE_PROMPT
+    assert BASE_PROMPT in prompt
+    assert "## Available Commands" in prompt
 
 
 def test_build_includes_profile(builder, vault):

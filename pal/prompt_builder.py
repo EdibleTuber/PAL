@@ -115,4 +115,15 @@ class SystemPromptBuilder:
             wisdom_text = "\n".join(f"- {body}" for body in wisdom_bodies)
             sections.append(f"## Active Wisdom\n\n{wisdom_text}")
 
+        from pal.commands import COMMANDS
+        cmd_lines = [f"- `/{c.name} {c.args}`".rstrip() + f" - {c.description}"
+                     for c in COMMANDS]
+        sections.append(
+            "## Available Commands\n\n"
+            "The user can invoke these slash commands (they appear as `!cmd` "
+            "in Discord). When the user asks what commands exist, cite from "
+            "this list verbatim.\n\n"
+            + "\n".join(cmd_lines)
+        )
+
         return "\n\n".join(sections)
