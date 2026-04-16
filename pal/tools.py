@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from pal.retrieval import RetrievalClient
 from pal.wiki import WikiManager
+from pal.learning import LearningManager
 
 if TYPE_CHECKING:
     from pal.approval_registry import ApprovalRegistry
@@ -459,6 +460,33 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_learning",
+            "description": (
+                "Save a durable lesson extracted from conversation into the "
+                "learning pool. Learnings stay as candidates until the user "
+                "promotes them to wisdom via /promote. Use when the user says "
+                "'make a learning out of that' or when you detect a correction "
+                "you want to remember across sessions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short, specific title of the lesson.",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "The lesson itself, in 1-4 sentences.",
+                    },
+                },
+                "required": ["title", "body"],
+            },
+        },
+    },
 ]
 
 
@@ -477,6 +505,7 @@ class ToolExecutor:
         compiler: "Compiler | None" = None,
         reorganizer: "Reorganizer | None" = None,
         consolidator: "Consolidator | None" = None,
+        learning: "LearningManager | None" = None,
     ) -> None:
         self.vault_path = vault_path.resolve()
         self.retrieval = retrieval
@@ -488,6 +517,7 @@ class ToolExecutor:
         self.compiler = compiler
         self.reorganizer = reorganizer
         self.consolidator = consolidator
+        self.learning = learning
 
     def run(self, name: str, arguments: dict) -> str:
         """Dispatch a tool call and return the result as a string.
@@ -501,6 +531,7 @@ class ToolExecutor:
             "search_content": self._search_content,
             "edit_file": self._edit_file,
             "create_file": self._create_file,
+            "add_learning": self._add_learning,
         }.get(name)
         if handler is not None:
             return handler(arguments)
@@ -676,6 +707,21 @@ class ToolExecutor:
         self.wiki.write_article(path, title, content, tags=tags)
         self.wiki.git_commit(f"Create {path} via chat")
         return f"Created: {path}"
+
+    def _add_learning(self, arguments: dict) -> str:
+        import json
+        if self.learning is None:
+            return json.dumps({"error": "learning manager not available"})
+        title = (arguments.get("title") or "").strip()
+        body = (arguments.get("body") or "").strip()
+        if not title:
+            return json.dumps({"error": "title is required"})
+        if not body:
+            return json.dumps({"error": "body is required"})
+        slug = self.learning.add(title=title, body=body, source="conversation")
+        if self.wiki is not None:
+            self.wiki.git_commit(f"learn: add {slug}")
+        return json.dumps({"slug": slug, "title": title})
 
     async def _search_vault(self, arguments: dict) -> str:
         query = arguments.get("query", "")
