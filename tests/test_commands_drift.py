@@ -45,6 +45,10 @@ def _collect_daemon_command_names() -> set[str]:
 
 def test_no_command_drift():
     daemon_cmds = _collect_daemon_command_names()
+    assert daemon_cmds, (
+        "drift check collected zero command names from pal/daemon.py - "
+        "the AST dispatch pattern is likely stale, review the matcher"
+    )
     registry_cmds = command_names()
 
     # "exit" is a quit alias handled in a tuple branch; exempt it.
