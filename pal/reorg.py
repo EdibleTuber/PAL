@@ -27,6 +27,31 @@ class Reorganizer:
         self.compiler = compiler
         self.retrieval = retrieval
 
+    # ---- single-op primitive ----
+
+    def move_single(self, src: str, dst: str) -> None:
+        """Rename a single vault file. Raises on missing src, existing dst,
+        or paths inside system directories (raw/ or underscore-prefixed).
+        """
+        def _is_system_path(p: str) -> bool:
+            parts = p.split("/")
+            return parts[0] == "raw" or (parts[0].startswith("_") if parts[0] else False)
+
+        if _is_system_path(src) or _is_system_path(dst):
+            raise ValueError(f"system directory: {src} or {dst}")
+
+        src_path = self.vault_path / src
+        dst_path = self.vault_path / dst
+
+        if not src_path.exists():
+            raise FileNotFoundError(f"source not found: {src}")
+        if dst_path.exists():
+            raise FileExistsError(f"destination exists: {dst}")
+
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        src_path.rename(dst_path)
+        logger.info("move_single: %s -> %s", src, dst)
+
     # ---- validation ----
 
     def validate_operations(self, operations: list[dict]) -> list[str]:
