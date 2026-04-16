@@ -119,6 +119,15 @@ class PromoteProposalMessage:
     type: str = "promote_proposal"
 
 
+@dataclass
+class LearningCandidateProposalMessage:
+    proposal_id: str
+    title: str
+    body: str
+    trigger_excerpt: str  # user-message fragment that triggered the scan
+    type: str = "learning_candidate_proposal"
+
+
 _MESSAGE_TYPES: dict[str, type] = {
     "chat": ChatMessage,
     "command": CommandMessage,
@@ -132,6 +141,7 @@ _MESSAGE_TYPES: dict[str, type] = {
     "reorg_proposal": ReorgProposalMessage,
     "consolidate_proposal": ConsolidateProposalMessage,
     "promote_proposal": PromoteProposalMessage,
+    "learning_candidate_proposal": LearningCandidateProposalMessage,
 }
 
 Message = (
@@ -147,6 +157,7 @@ Message = (
     | ReorgProposalMessage
     | ConsolidateProposalMessage
     | PromoteProposalMessage
+    | LearningCandidateProposalMessage
 )
 
 
