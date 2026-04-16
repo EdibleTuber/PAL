@@ -4,11 +4,13 @@ Bridges Discord messages to the PAL daemon via unix socket.
 Each allowed Discord user gets their own daemon connection.
 """
 import logging
+import re
 from pathlib import Path
 
 import discord
 
 from pal.client import PalClient
+from pal.commands import command_names
 from pal.discord_interactions import (
     DiscordStreamProcessor,
     ProposalContext,
@@ -58,6 +60,46 @@ class UserConnectionManager:
         for client in self._clients.values():
             await client.close()
         self._clients.clear()
+
+
+_FENCED_CODE = re.compile(r"```[\s\S]*?```")
+_INLINE_CODE = re.compile(r"`[^`\n]+`")
+
+
+def rewrite_slash_prefixes(text: str) -> str:
+    """Translate `/cmd` to `!cmd` for commands registered in COMMANDS.
+
+    Skips content inside fenced and inline code. Only rewrites tokens at
+    line start or immediately following whitespace/punctuation.
+    """
+    names = command_names()
+    if not names:
+        return text
+    # Build an alternation regex for known command names, longest first
+    # so `compile-batch` wins over `compile`.
+    sorted_names = sorted(names, key=len, reverse=True)
+    pattern = re.compile(
+        r"(?P<lead>^|[\s,.;:!?\(])/(?P<name>"
+        + "|".join(re.escape(n) for n in sorted_names)
+        + r")\b"
+    )
+
+    # Protect fenced code blocks and inline code by temporarily substituting.
+    placeholders: dict[str, str] = {}
+
+    def _stash(m: re.Match) -> str:
+        key = f"\x00PLACEHOLDER{len(placeholders)}\x00"
+        placeholders[key] = m.group(0)
+        return key
+
+    safe = _FENCED_CODE.sub(_stash, text)
+    safe = _INLINE_CODE.sub(_stash, safe)
+
+    rewritten = pattern.sub(lambda m: f"{m.group('lead')}!{m.group('name')}", safe)
+
+    for key, original in placeholders.items():
+        rewritten = rewritten.replace(key, original)
+    return rewritten
 
 
 _DISCORD_MSG_LIMIT = 2000
@@ -228,7 +270,7 @@ class PalDiscordBot(discord.Client):
                 reply_text = f"Something went wrong: {exc}"
 
         # Send response, splitting if needed
-        for chunk in split_message(reply_text):
+        for chunk in split_message(rewrite_slash_prefixes(reply_text)):
             await message.channel.send(chunk)
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
