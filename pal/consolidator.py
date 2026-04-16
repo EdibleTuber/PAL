@@ -27,11 +27,13 @@ class Consolidator:
         wiki,              # WikiManager
         inference,         # InferenceClient
         prompt_builder,    # SystemPromptBuilder
+        retrieval=None,    # RetrievalClient | None
     ) -> None:
         self.vault_path = vault_path
         self.wiki = wiki
         self.inference = inference
         self.prompt_builder = prompt_builder
+        self.retrieval = retrieval
 
     async def consolidate(
         self,
@@ -158,12 +160,16 @@ class Consolidator:
                 "vault_exists": (self.vault_path / target_path).exists(),
             }
 
-        return {
+        outcome = {
             "status": "ok",
             "target_path": target_path,
             "article_path_rel": target_path,
             "vault_exists": (self.vault_path / target_path).exists(),
         }
+        if self.retrieval is not None:
+            absolute_target = str((self.vault_path / target_path).resolve())
+            outcome["reindex"] = await self.retrieval.trigger_reindex(paths=[absolute_target])
+        return outcome
 
     def _validate_target(self, target_path: str) -> str | None:
         if not target_path:

@@ -180,3 +180,57 @@ async def test_prompt_demands_inline_citations(tmp_path):
     assert "ONLY information" in system_content
     assert "INSUFFICIENT" in system_content
     assert "cite" in system_content.lower() or "citation" in system_content.lower()
+
+
+@pytest.mark.asyncio
+async def test_consolidate_triggers_reindex_with_target_path(tmp_path):
+    from unittest.mock import AsyncMock
+
+    (tmp_path / "Security").mkdir()
+    (tmp_path / "Security" / "a.md").write_text("---\ntitle: A\n---\nBody A")
+    (tmp_path / "Security" / "b.md").write_text("---\ntitle: B\n---\nBody B")
+
+    inference = _FakeInference("## Overview\n\nFused.\n\n## Key Concepts\n\nA point.")
+    wiki = _FakeWiki(tmp_path)
+    retrieval = AsyncMock()
+    retrieval.trigger_reindex = AsyncMock(return_value={
+        "job_id": "j2", "status": "queued",
+    })
+
+    c = Consolidator(
+        vault_path=tmp_path,
+        wiki=wiki,
+        inference=inference,
+        prompt_builder=_StubPromptBuilder(),
+        retrieval=retrieval,
+    )
+
+    out = await c.consolidate(
+        source_paths=["Security/a.md", "Security/b.md"],
+        target_path="Security/Combined.md",
+        target_title="Combined",
+    )
+
+    assert out["status"] == "ok"
+    assert out.get("reindex", {}).get("job_id") == "j2"
+    retrieval.trigger_reindex.assert_awaited_once()
+    call_args = retrieval.trigger_reindex.await_args
+    paths = call_args.kwargs.get("paths") if call_args.kwargs else (call_args.args[0] if call_args.args else None)
+    assert paths is not None
+    assert any("Security/Combined.md" in p for p in paths)
+
+
+@pytest.mark.asyncio
+async def test_consolidate_no_retrieval_omits_reindex_key(tmp_path):
+    (tmp_path / "Security").mkdir()
+    (tmp_path / "Security" / "a.md").write_text("---\ntitle: A\n---\nBody A")
+    (tmp_path / "Security" / "b.md").write_text("---\ntitle: B\n---\nBody B")
+
+    c, _, _ = _make(tmp_path, inference_response="## Overview\n\nx\n\n## Key Concepts\n\ny")
+    out = await c.consolidate(
+        source_paths=["Security/a.md", "Security/b.md"],
+        target_path="Security/Combined.md",
+        target_title="Combined",
+    )
+    assert out["status"] == "ok"
+    assert "reindex" not in out or out.get("reindex") is None
