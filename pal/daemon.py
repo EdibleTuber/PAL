@@ -209,6 +209,7 @@ class Daemon:
             reorganizer=self.reorganizer,
             consolidator=self.consolidator,
             learning=self.learning,
+            wisdom=self.wisdom,
         )
 
         current_chat_task: asyncio.Task | None = None

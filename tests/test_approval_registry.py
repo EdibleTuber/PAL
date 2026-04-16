@@ -368,3 +368,36 @@ def test_edit_consolidate_proposal_carries_fields():
     assert new.target_path == "Security/Combined.md"
     assert new.target_title == "Combined"
     assert new.status == "approved"
+
+
+def test_create_promote_proposal_requires_all_fields():
+    import pytest
+    from pal.approval_registry import ApprovalRegistry
+    reg = ApprovalRegistry()
+
+    # Missing slug
+    with pytest.raises(ValueError, match="slug"):
+        reg.create_proposal(kind="promote", rationale="r", target_title="T", body="b")
+    # Missing target_title
+    with pytest.raises(ValueError, match="target_title"):
+        reg.create_proposal(kind="promote", rationale="r", slug="s", body="b")
+    # Missing body
+    with pytest.raises(ValueError, match="body"):
+        reg.create_proposal(kind="promote", rationale="r", slug="s", target_title="T")
+
+
+def test_create_promote_proposal_succeeds_with_all_fields():
+    from pal.approval_registry import ApprovalRegistry
+    reg = ApprovalRegistry()
+    pid = reg.create_proposal(
+        kind="promote",
+        rationale="r",
+        slug="s",
+        target_title="T",
+        body="b",
+    )
+    p = reg.get(pid)
+    assert p.kind == "promote"
+    assert p.slug == "s"
+    assert p.body == "b"
+    assert p.target_title == "T"

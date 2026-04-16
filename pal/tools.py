@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 from pal.retrieval import RetrievalClient
 from pal.wiki import WikiManager
 from pal.learning import LearningManager
+from pal.wisdom import WisdomManager
 
 if TYPE_CHECKING:
     from pal.approval_registry import ApprovalRegistry
@@ -517,6 +518,33 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_promote",
+            "description": (
+                "Propose promoting an existing learning (in _learning/) to "
+                "wisdom (_wisdom/). Wisdom is injected into every future system "
+                "prompt and should be treated as durable guidance. Requires "
+                "user approval. Call with the learning slug (from list_learnings "
+                "or the return of add_learning) and a brief rationale."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "slug": {
+                        "type": "string",
+                        "description": "Slug of the learning to promote.",
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "One-line reason shown in the approval prompt.",
+                    },
+                },
+                "required": ["slug", "rationale"],
+            },
+        },
+    },
 ]
 
 
@@ -536,6 +564,7 @@ class ToolExecutor:
         reorganizer: "Reorganizer | None" = None,
         consolidator: "Consolidator | None" = None,
         learning: "LearningManager | None" = None,
+        wisdom: "WisdomManager | None" = None,
     ) -> None:
         self.vault_path = vault_path.resolve()
         self.retrieval = retrieval
@@ -548,6 +577,7 @@ class ToolExecutor:
         self.reorganizer = reorganizer
         self.consolidator = consolidator
         self.learning = learning
+        self.wisdom = wisdom
 
     def run(self, name: str, arguments: dict) -> str:
         """Dispatch a tool call and return the result as a string.
@@ -587,6 +617,8 @@ class ToolExecutor:
             return await self._compile_batch(arguments)
         if name == "propose_reorg":
             return await self._propose_reorg(arguments)
+        if name == "propose_promote":
+            return await self._propose_promote(arguments)
         if name == "reorg":
             return await self._reorg(arguments)
         if name == "propose_consolidate":
@@ -1123,6 +1155,73 @@ class ToolExecutor:
         elif final.status == "approved":
             result["operations"] = list(final.operations or [])
         return _json.dumps(result)
+
+    async def _propose_promote(self, arguments: dict) -> str:
+        import json as _json
+        from pal.protocol import PromoteProposalMessage
+
+        if (self.approval_registry is None or self.proposal_emitter is None
+                or self.learning is None or self.wisdom is None):
+            return "Error: promote proposals are not available in this session."
+
+        slug = (arguments.get("slug") or "").strip()
+        rationale = (arguments.get("rationale") or "").strip()
+        if not slug:
+            return "Error: 'slug' parameter is required."
+        if not rationale:
+            return "Error: 'rationale' parameter is required."
+
+        if not self.learning.exists(slug):
+            return _json.dumps({"error": f"no such learning: {slug}"})
+        meta = self.learning.get_meta(slug)
+        if meta.get("status") == "promoted":
+            return _json.dumps({
+                "error": f"already promoted at {meta.get('promoted_at', 'unknown')}"
+            })
+
+        title = meta.get("title", slug)
+        body = self.learning.get(slug)
+
+        try:
+            proposal_id = self.approval_registry.create_proposal(
+                kind="promote",
+                rationale=rationale,
+                slug=slug,
+                target_title=title,
+                body=body,
+            )
+        except ValueError as exc:
+            return f"Error: {exc}"
+
+        proposal = self.approval_registry.get(proposal_id)
+        self.proposal_emitter(
+            PromoteProposalMessage(
+                proposal_id=proposal_id,
+                slug=slug,
+                title=title,
+                body=body,
+                rationale=rationale,
+            )
+        )
+
+        remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
+        try:
+            await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
+        except asyncio.TimeoutError:
+            self.approval_registry.expire_stale()
+
+        final = self.approval_registry.get(proposal_id)
+
+        if final.status != "approved":
+            return _json.dumps({"status": final.status, "slug": slug})
+
+        # Execute promotion.
+        self.approval_registry.consume(proposal_id)
+        self.learning.mark_promoted(slug)
+        self.wisdom.add(title=title, body=body)
+        if self.wiki is not None:
+            self.wiki.git_commit(f"promote: {slug} -> wisdom")
+        return _json.dumps({"status": "promoted", "slug": slug, "title": title})
 
     async def _reorg(self, arguments: dict) -> str:
         import json as _json

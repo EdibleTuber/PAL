@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
 ProposalStatus = Literal["pending", "approved", "declined", "consumed", "expired"]
-ProposalKind = Literal["research", "compile", "reorg", "consolidate"]
+ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote"]
 
 DEFAULT_EXPIRY_MINUTES = 15
 
@@ -37,6 +37,8 @@ class Proposal:
     operations: Optional[list[dict]] = None
     target_path: Optional[str] = None
     target_title: Optional[str] = None
+    slug: Optional[str] = None
+    body: Optional[str] = None
     # asyncio.Event is set when the proposal reaches a terminal state
     # (approved, declined, or expired). Not part of the public dataclass
     # fields — carried separately for awaiting.
@@ -62,6 +64,8 @@ class ApprovalRegistry:
         operations: Optional[list[dict]] = None,
         target_path: Optional[str] = None,
         target_title: Optional[str] = None,
+        slug: Optional[str] = None,
+        body: Optional[str] = None,
     ) -> str:
         if kind == "research" and not topic:
             raise ValueError("research proposals require a non-empty topic")
@@ -85,6 +89,13 @@ class ApprovalRegistry:
                 raise ValueError("consolidate proposals require target_path")
             if not target_title:
                 raise ValueError("consolidate proposals require target_title")
+        if kind == "promote":
+            if not slug:
+                raise ValueError("promote proposals require slug")
+            if not target_title:
+                raise ValueError("promote proposals require target_title")
+            if not body:
+                raise ValueError("promote proposals require body")
 
         proposal_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -101,6 +112,8 @@ class ApprovalRegistry:
             operations=[dict(op) for op in operations] if operations else None,
             target_path=target_path,
             target_title=target_title,
+            slug=slug,
+            body=body,
         )
         return proposal_id
 
