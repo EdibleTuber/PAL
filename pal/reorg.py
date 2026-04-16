@@ -33,11 +33,11 @@ class Reorganizer:
         """Rename a single vault file. Raises on missing src, existing dst,
         or paths inside system directories (raw/ or underscore-prefixed).
         """
-        def _is_system_path(p: str) -> bool:
+        def _is_top_level_system(p: str) -> bool:
             parts = p.split("/")
             return parts[0] == "raw" or (parts[0].startswith("_") if parts[0] else False)
 
-        if _is_system_path(src) or _is_system_path(dst):
+        if _is_top_level_system(src) or _is_top_level_system(dst):
             raise ValueError(f"system directory: {src} or {dst}")
 
         src_path = self.vault_path / src
