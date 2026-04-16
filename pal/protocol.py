@@ -109,6 +109,16 @@ class ConsolidateProposalMessage:
     type: str = "consolidate_proposal"
 
 
+@dataclass
+class PromoteProposalMessage:
+    proposal_id: str
+    slug: str
+    title: str
+    body: str
+    rationale: str
+    type: str = "promote_proposal"
+
+
 _MESSAGE_TYPES: dict[str, type] = {
     "chat": ChatMessage,
     "command": CommandMessage,
@@ -121,6 +131,7 @@ _MESSAGE_TYPES: dict[str, type] = {
     "compile_proposal": CompileProposalMessage,
     "reorg_proposal": ReorgProposalMessage,
     "consolidate_proposal": ConsolidateProposalMessage,
+    "promote_proposal": PromoteProposalMessage,
 }
 
 Message = (
@@ -135,6 +146,7 @@ Message = (
     | CompileProposalMessage
     | ReorgProposalMessage
     | ConsolidateProposalMessage
+    | PromoteProposalMessage
 )
 
 
