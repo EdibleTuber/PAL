@@ -15,6 +15,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCo
 from rich.text import Text
 
 from pal.client import PalClient
+from pal.commands import COMMANDS
 from pal.config import load_config
 from pal.protocol import (
     StreamChunkMessage,
@@ -30,6 +31,21 @@ from pal.protocol import (
 )
 
 _reasoning_display: str = "show"
+
+
+def render_splash_commands() -> str:
+    """Render the compact command list shown on CLI startup."""
+    names = [f"/{c.name}" for c in COMMANDS]
+    # Pack names into lines under ~90 chars.
+    lines: list[list[str]] = [[]]
+    current_len = 0
+    for name in names:
+        if current_len + len(name) + 1 > 88 and lines[-1]:
+            lines.append([])
+            current_len = 0
+        lines[-1].append(name)
+        current_len += len(name) + 1
+    return "\n          ".join(" ".join(line) for line in lines)
 
 
 def format_research_proposal(msg: ResearchProposalMessage) -> str:
@@ -205,9 +221,8 @@ async def run_repl() -> None:
         )
         sys.exit(1)
 
-    console.print("[dim]PAL — Personal Agentic Librarian[/dim]")
-    console.print("[dim]Commands: /note /read /search /get /search-web /fetch /import /summarize /compile[/dim]")
-    console.print("[dim]          /learn /learnings /promote /rate /profile /wisdom /lint /status /quit[/dim]\n")
+    console.print("[dim]PAL - Personal Agentic Librarian[/dim]")
+    console.print(f"[dim]Commands: {render_splash_commands()}[/dim]\n")
 
     try:
         while True:
