@@ -265,3 +265,47 @@ async def test_execute_merge_leaves_files_on_insufficient(tmp_path):
     assert "(src.md)" in (vault / "Other.md").read_text()
     assert results[0]["status"] == "insufficient"
     assert results[0]["references_rewritten"] == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_operations_async_triggers_reindex(tmp_path):
+    """After move/merge ops succeed, Reorganizer fires one reindex covering
+    all dst paths and returns a dict stashed on per_op[0]."""
+    from unittest.mock import AsyncMock
+    from pal.reorg import Reorganizer
+    from pal.wiki import WikiManager
+
+    wiki = WikiManager(tmp_path)
+    wiki.init_vault()
+
+    src = tmp_path / "Research" / "old.md"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("---\ntitle: Old\n---\nBody")
+
+    retrieval = AsyncMock()
+    retrieval.trigger_reindex = AsyncMock(return_value={
+        "job_id": "rj1", "status": "queued",
+    })
+
+    reorg = Reorganizer(vault_path=tmp_path, wiki=wiki, compiler=None, retrieval=retrieval)
+    per_op = await reorg.execute_operations_async([
+        {"type": "move", "src": "Research/old.md", "dst": "Research/new.md"},
+    ])
+
+    assert per_op[0]["status"] == "ok"
+    retrieval.trigger_reindex.assert_awaited_once()
+    call_args = retrieval.trigger_reindex.await_args
+    paths = call_args.kwargs.get("paths") if call_args.kwargs else (call_args.args[0] if call_args.args else None)
+    assert paths is not None
+    assert any("Research/new.md" in p for p in paths)
+    assert any("Research/old.md" in p for p in paths)
+    assert "_reindex" in per_op[0]
+    assert per_op[0]["_reindex"]["job_id"] == "rj1"
+
+
+def test_reorganizer_constructor_default_retrieval_is_none():
+    from pathlib import Path
+    from unittest.mock import MagicMock
+    from pal.reorg import Reorganizer
+    r = Reorganizer(vault_path=Path("/tmp"), wiki=MagicMock(), compiler=None)
+    assert r.retrieval is None

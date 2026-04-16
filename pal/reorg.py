@@ -20,10 +20,12 @@ class Reorganizer:
         vault_path: Path,
         wiki,              # WikiManager or None (tests may pass None)
         compiler,          # Compiler or None (only needed for merge ops)
+        retrieval=None,    # RetrievalClient | None
     ) -> None:
         self.vault_path = vault_path
         self.wiki = wiki
         self.compiler = compiler
+        self.retrieval = retrieval
 
     # ---- validation ----
 
@@ -104,6 +106,23 @@ class Reorganizer:
     def _is_system_path(self, rel: str) -> bool:
         parts = Path(rel).parts
         return any(p.startswith("_") for p in parts)
+
+    def _collect_touched_paths(self, per_op: list[dict]) -> list[str]:
+        """Absolute paths of every src/dst from successful ops."""
+        touched: list[str] = []
+        seen: set[str] = set()
+        for r in per_op:
+            if r.get("status") != "ok":
+                continue
+            for key in ("src", "dst"):
+                rel = r.get(key, "")
+                if not rel:
+                    continue
+                full = str((self.vault_path / rel).resolve())
+                if full not in seen:
+                    seen.add(full)
+                    touched.append(full)
+        return touched
 
     # ---- reference scanning ----
 
@@ -241,6 +260,12 @@ class Reorganizer:
                 self.wiki.rebuild_index()
             except Exception as exc:
                 logger.warning("rebuild_index failed after reorg: %s", exc)
+        if self.retrieval is not None:
+            touched = self._collect_touched_paths(results)
+            if touched:
+                reindex_result = await self.retrieval.trigger_reindex(paths=touched)
+                if results and reindex_result is not None:
+                    results[0]["_reindex"] = reindex_result
         return results
 
     async def _execute_merge(self, op: dict) -> dict:

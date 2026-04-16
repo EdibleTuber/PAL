@@ -1049,6 +1049,11 @@ class ToolExecutor:
                 "and dst_exists_after=true."
             ),
         }
+        # Promote per-op _reindex (if any) to top-level
+        for r in per_op:
+            if "_reindex" in r:
+                report["reindex"] = r.pop("_reindex")
+                break
         return _json.dumps(report)
 
     async def _propose_consolidate(self, arguments: dict) -> str:
