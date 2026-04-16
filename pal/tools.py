@@ -504,6 +504,16 @@ class ToolExecutor:
             return await self._propose_consolidate(arguments)
         if name == "consolidate":
             return await self._consolidate(arguments)
+        # Sync tools — fall through to self.run, then trigger reindex
+        # for tools that write files.
+        if name in ("edit_file", "create_file"):
+            result = self.run(name, arguments)
+            if self.retrieval is not None and "error" not in result.lower()[:30]:
+                path = (arguments.get("path") or "").strip()
+                if path:
+                    absolute = str((self.vault_path / path).resolve())
+                    await self.retrieval.trigger_reindex(paths=[absolute])
+            return result
         return self.run(name, arguments)
 
     def _resolve_safe(self, path: str) -> Path | None:

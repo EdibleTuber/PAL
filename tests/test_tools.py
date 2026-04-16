@@ -260,3 +260,72 @@ def test_create_file_path_traversal(wiki_executor):
         "content": "hacked",
     })
     assert "escapes" in result.lower() or "outside vault" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_create_file_triggers_reindex(vault):
+    """After a successful create_file via run_async, reindex is triggered."""
+    from unittest.mock import AsyncMock
+    from pal.tools import ToolExecutor
+    from pal.wiki import WikiManager
+
+    wiki = WikiManager(vault)
+    wiki.init_vault()
+    retrieval = AsyncMock()
+    retrieval.trigger_reindex = AsyncMock(return_value={
+        "job_id": "j", "status": "queued",
+    })
+    executor = ToolExecutor(
+        vault_path=vault,
+        retrieval=retrieval,
+        wiki=wiki,
+    )
+
+    result = await executor.run_async("create_file", {
+        "path": "raw/notes/scratch.md",
+        "title": "Scratch",
+        "content": "# Scratch\n\nNote content.\n",
+    })
+    assert "created" in result.lower()
+    retrieval.trigger_reindex.assert_awaited_once()
+    call_args = retrieval.trigger_reindex.await_args
+    paths = call_args.kwargs.get("paths") if call_args.kwargs else (call_args.args[0] if call_args.args else None)
+    assert paths is not None
+    assert any("raw/notes/scratch.md" in p for p in paths)
+
+
+@pytest.mark.asyncio
+async def test_edit_file_triggers_reindex(vault):
+    """After a successful edit_file via run_async, reindex is triggered."""
+    from unittest.mock import AsyncMock
+    from pal.tools import ToolExecutor
+    from pal.wiki import WikiManager
+
+    wiki = WikiManager(vault)
+    wiki.init_vault()
+
+    # Seed a file to edit
+    (vault / "raw" / "notes").mkdir(parents=True, exist_ok=True)
+    wiki.write_article("raw/notes/n.md", "N", "old body")
+    wiki.git_commit("seed")
+
+    retrieval = AsyncMock()
+    retrieval.trigger_reindex = AsyncMock(return_value={
+        "job_id": "j2", "status": "queued",
+    })
+    executor = ToolExecutor(
+        vault_path=vault,
+        retrieval=retrieval,
+        wiki=wiki,
+    )
+
+    result = await executor.run_async("edit_file", {
+        "path": "raw/notes/n.md",
+        "content": "new body",
+    })
+    assert "updated" in result.lower() or "edit" in result.lower()
+    retrieval.trigger_reindex.assert_awaited_once()
+    call_args = retrieval.trigger_reindex.await_args
+    paths = call_args.kwargs.get("paths") if call_args.kwargs else (call_args.args[0] if call_args.args else None)
+    assert paths is not None
+    assert any("raw/notes/n.md" in p for p in paths)
