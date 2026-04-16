@@ -4,9 +4,12 @@ Defines tool schemas (OpenAI function-calling format) and a ToolExecutor
 that runs tool calls against the vault.
 """
 import asyncio
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 from pal.retrieval import RetrievalClient
 from pal.wiki import WikiManager
@@ -487,6 +490,33 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "move_file",
+            "description": (
+                "Move a single vault article from src to dst. Use for quick "
+                "re-categorization (for example, moving a mis-categorized "
+                "article from Security/ to IoT/). For batch moves or merges, "
+                "use propose_reorg instead. Triggers reindex. Rejects paths "
+                "inside raw/ or underscore-prefixed system directories."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "src": {
+                        "type": "string",
+                        "description": "Current path (relative to vault root).",
+                    },
+                    "dst": {
+                        "type": "string",
+                        "description": "Destination path (relative to vault root). Must not exist.",
+                    },
+                },
+                "required": ["src", "dst"],
+            },
+        },
+    },
 ]
 
 
@@ -565,6 +595,8 @@ class ToolExecutor:
             return await self._consolidate(arguments)
         if name == "wait_for_reindex":
             return await self._wait_for_reindex(arguments)
+        if name == "move_file":
+            return await self._move_file(arguments)
         # Sync tools — fall through to self.run, then trigger reindex
         # for tools that write files.
         if name in ("edit_file", "create_file"):
@@ -722,6 +754,28 @@ class ToolExecutor:
         if self.wiki is not None:
             self.wiki.git_commit(f"learn: add {slug}")
         return json.dumps({"slug": slug, "title": title})
+
+    async def _move_file(self, arguments: dict) -> str:
+        import json
+        if self.reorganizer is None:
+            return json.dumps({"error": "reorganizer not available"})
+        src = (arguments.get("src") or "").strip()
+        dst = (arguments.get("dst") or "").strip()
+        if not src or not dst:
+            return json.dumps({"error": "src and dst are required"})
+        try:
+            self.reorganizer.move_single(src, dst)
+        except (FileNotFoundError, FileExistsError, ValueError) as exc:
+            return json.dumps({"error": str(exc)})
+        if self.wiki is not None:
+            self.wiki.git_commit(f"move: {src} -> {dst}")
+        if self.retrieval is not None:
+            try:
+                absolute_dst = str((self.vault_path / dst).resolve())
+                await self.retrieval.trigger_reindex(paths=[absolute_dst])
+            except Exception as exc:
+                logger.warning("reindex trigger failed after move: %s", exc)
+        return json.dumps({"moved": f"{src} -> {dst}", "reindex_queued": True})
 
     async def _search_vault(self, arguments: dict) -> str:
         query = arguments.get("query", "")
