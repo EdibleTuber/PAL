@@ -83,6 +83,78 @@ def test_clip_title_for_slug_very_long_single_word():
 
 
 @pytest.mark.asyncio
+async def test_compile_one_archives_summary_after_merge(tmp_path: Path, monkeypatch):
+    """When compile_one takes the merge-into-existing branch, the source
+    summary must be archived to raw/archived/, matching the new-article path.
+    """
+    from pal.compiler import Compiler
+
+    # Seed vault with an existing article in the target category.
+    (tmp_path / "AI-Security").mkdir()
+    article_rel = "AI-Security/mcp-notes.md"
+    (tmp_path / article_rel).write_text(
+        "---\ntitle: MCP Notes\n---\n\n## Overview\n\nExisting.\n"
+    )
+
+    # Seed summary in raw/summaries/ with a source_raw pointer.
+    (tmp_path / "raw" / "summaries").mkdir(parents=True)
+    summary_rel = "raw/summaries/mcp-extra.md"
+    (tmp_path / summary_rel).write_text(
+        "---\n"
+        "title: MCP Extra\n"
+        "source_raw: raw/mcp-extra.md\n"
+        "source_url: https://example.com/mcp\n"
+        "source_hash: abc123\n"
+        "---\n"
+        "Additional MCP material worth folding in.\n"
+    )
+    (tmp_path / "raw").mkdir(exist_ok=True)
+    (tmp_path / "raw" / "mcp-extra.md").write_text("raw content")
+
+    wiki = MagicMock()
+    wiki.list_articles = MagicMock(return_value=[
+        {"path": article_rel, "title": "MCP Notes"},
+    ])
+    wiki.rebuild_index = MagicMock()
+    wiki.git_init = MagicMock()
+    wiki.git_commit = MagicMock()
+
+    inference = MagicMock()
+    inference.complete = AsyncMock(return_value=(
+        "## Overview\n\n## Key Concepts\n\nMerged body.\n"
+    ))
+
+    categorizer = MagicMock()
+    categorizer.categorize = AsyncMock(return_value="AI-Security")
+
+    prompt_builder = MagicMock()
+    prompt_builder.build = MagicMock(return_value="system prompt")
+
+    async def _fake_find(**kwargs):
+        return {"path": article_rel, "title": "MCP Notes"}
+
+    monkeypatch.setattr("pal.compiler.find_existing_article", _fake_find)
+
+    compiler = Compiler(
+        vault_path=tmp_path,
+        wiki=wiki,
+        inference=inference,
+        categorizer=categorizer,
+        prompt_builder=prompt_builder,
+    )
+
+    result = await compiler.compile_one(summary_rel)
+
+    assert result["status"] == "merged"
+    # Summary must have been moved to raw/archived/
+    assert not (tmp_path / summary_rel).exists()
+    assert (tmp_path / "raw" / "archived" / "mcp-extra.summary.md").exists()
+    # Raw source file was also archived
+    assert not (tmp_path / "raw" / "mcp-extra.md").exists()
+    assert (tmp_path / "raw" / "archived" / "mcp-extra.md").exists()
+
+
+@pytest.mark.asyncio
 async def test_merge_into_existing_updates_article_body(tmp_path):
     """The extracted merge_into_existing method should run the LLM
     synthesis against an existing article and write the merged body."""

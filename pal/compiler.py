@@ -120,13 +120,22 @@ class Compiler:
         base_prompt = self.prompt_builder.build()
 
         if existing_match:
-            return await self.merge_into_existing(
+            result = await self.merge_into_existing(
                 new_content=summary_body,
                 new_title=title,
                 existing_article_path=existing_match["path"],
                 source_url=source_url,
                 source_hash=source_hash,
             )
+            if result.get("status") == "merged":
+                source_raw = summary_meta.get("source_raw", "")
+                archive_raw_files(
+                    self.vault_path,
+                    raw_path=source_raw,
+                    summary_path=summary_path,
+                )
+                self.wiki.git_commit(f"archive: {title}")
+            return result
         else:
             # First compile
             system_prompt = (
