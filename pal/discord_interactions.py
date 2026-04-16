@@ -18,12 +18,13 @@ logger = logging.getLogger(__name__)
 from pal.protocol import (
     CompileProposalMessage,
     ConsolidateProposalMessage,
+    PromoteProposalMessage,
     ResearchApprovalResponseMessage,
     ResearchProposalMessage,
     ReorgProposalMessage,
 )
 
-ProposalKind = Literal["research", "compile", "reorg", "consolidate"]
+ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote"]
 
 _DISCORD_FIELD_VALUE_LIMIT = 1024
 _FIELD_BUDGET_HEADROOM = 40  # "+NNN more" plus newlines
@@ -253,6 +254,38 @@ def build_consolidate_proposal_embed(
     return embed, view
 
 
+def build_promote_proposal_embed(
+    msg: PromoteProposalMessage,
+) -> tuple[discord.Embed, discord.ui.View]:
+    """Pure builder: returns the embed and a View with two buttons (no Edit)."""
+    embed = discord.Embed(
+        title="PAL proposes promoting to wisdom",
+        color=discord.Color.gold(),
+    )
+    embed.add_field(name="Title", value=msg.title, inline=False)
+    body_preview = msg.body if len(msg.body) <= _DISCORD_FIELD_VALUE_LIMIT - _FIELD_BUDGET_HEADROOM else (
+        msg.body[: _DISCORD_FIELD_VALUE_LIMIT - _FIELD_BUDGET_HEADROOM - 3] + "..."
+    )
+    embed.add_field(name="Body", value=body_preview, inline=False)
+    embed.add_field(name="Rationale", value=msg.rationale, inline=False)
+    embed.add_field(name="Slug", value=f"`{msg.slug}`", inline=True)
+
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.success,
+        label="Approve",
+        emoji="✅",
+        custom_id=f"promote:approve:{msg.proposal_id}",
+    ))
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.danger,
+        label="Decline",
+        emoji="❌",
+        custom_id=f"promote:decline:{msg.proposal_id}",
+    ))
+    return embed, view
+
+
 def build_research_edit_modal(ctx: ProposalContext) -> discord.ui.Modal:
     """Research-edit modal: new topic + new depth, with current values
     as defaults. custom_id format: 'research:<proposal_id>' so the
@@ -356,6 +389,8 @@ class DiscordStreamProcessor:
                 await self._handle_reorg_proposal(msg)
             elif isinstance(msg, ConsolidateProposalMessage):
                 await self._handle_consolidate_proposal(msg)
+            elif isinstance(msg, PromoteProposalMessage):
+                await self._handle_promote_proposal(msg)
             elif isinstance(msg, ToolProgressMessage):
                 if self.current_proposal_id is not None:
                     await self._post_progress_to_thread(msg)
@@ -521,6 +556,43 @@ class DiscordStreamProcessor:
         self.current_proposal_id = msg.proposal_id
         self.current_proposal_message = posted
 
+    async def _handle_promote_proposal(
+        self, msg: PromoteProposalMessage,
+    ) -> None:
+        embed, view = build_promote_proposal_embed(msg)
+        try:
+            posted = await self.channel.send(embed=embed, view=view)
+        except Exception as exc:
+            logger.exception("Failed to post promote proposal: %s", exc)
+            try:
+                await self.client.send(ResearchApprovalResponseMessage(
+                    proposal_id=msg.proposal_id,
+                    decision="decline",
+                ))
+            except Exception:
+                logger.exception("Also failed to send decline for failed promote emit")
+            try:
+                await self.channel.send(
+                    f"Couldn't render promote proposal ({exc}). Declined."
+                )
+            except Exception:
+                pass
+            return
+        ctx = ProposalContext(
+            proposal_id=msg.proposal_id,
+            kind="promote",
+            triggerer_id=self.triggerer_id,
+            rationale=msg.rationale,
+            discord_message_id=posted.id,
+            channel_id=getattr(self.channel, "id", None),
+        )
+        setattr(ctx, "slug", msg.slug)
+        setattr(ctx, "title", msg.title)
+        setattr(ctx, "body", msg.body)
+        self.bot.active_proposals[msg.proposal_id] = ctx
+        self.current_proposal_id = msg.proposal_id
+        self.current_proposal_message = posted
+
     async def _post_progress_to_thread(
         self, msg: ToolProgressMessage,
     ) -> None:
@@ -578,7 +650,7 @@ def parse_button_custom_id(
     if len(parts) != 3:
         return None
     kind, action, proposal_id = parts
-    if kind not in ("research", "compile", "reorg", "consolidate"):
+    if kind not in ("research", "compile", "reorg", "consolidate", "promote"):
         return None
     if action not in ("approve", "decline", "edit"):
         return None
@@ -593,7 +665,7 @@ def parse_modal_custom_id(cid: str) -> Optional[tuple[ProposalKind, str]]:
     if len(parts) != 2:
         return None
     kind, proposal_id = parts
-    if kind not in ("research", "compile", "reorg", "consolidate"):
+    if kind not in ("research", "compile", "reorg", "consolidate", "promote"):
         return None
     if not proposal_id:
         return None
