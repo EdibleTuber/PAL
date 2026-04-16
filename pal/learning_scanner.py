@@ -172,6 +172,7 @@ class LearningScanner:
         self.extractor = extractor
         self.emit = emit
         self._pending_id: str | None = None
+        self._pending_candidate: LearningCandidateProposalMessage | None = None
         self.queued: deque[LearningCandidateProposalMessage] = deque()
 
     def mark_pending(self, proposal_id: str) -> None:
@@ -181,13 +182,29 @@ class LearningScanner:
     def clear_pending(self) -> None:
         """Clear the active pending proposal and drain the next queued item, if any."""
         self._pending_id = None
+        self._pending_candidate = None
         self._drain_queue()
+
+    def take_pending(
+        self, proposal_id: str,
+    ) -> LearningCandidateProposalMessage | None:
+        """Return and clear the pending candidate if proposal_id matches.
+        Callers use this to reconstruct title/body on approve.
+        """
+        if self._pending_id != proposal_id:
+            return None
+        msg = self._pending_candidate
+        self._pending_id = None
+        self._pending_candidate = None
+        self._drain_queue()
+        return msg
 
     def _drain_queue(self) -> None:
         """Emit the next queued proposal (if any) and mark it pending."""
         if self._pending_id is None and self.queued:
             msg = self.queued.popleft()
             self._pending_id = msg.proposal_id
+            self._pending_candidate = msg
             self.emit(msg)
 
     async def maybe_scan(
@@ -224,4 +241,5 @@ class LearningScanner:
             return
 
         self._pending_id = msg.proposal_id
+        self._pending_candidate = msg
         self.emit(msg)

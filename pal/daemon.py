@@ -256,7 +256,7 @@ class Daemon:
                     # Fast, synchronous registry update. Processed immediately
                     # so the tool coroutine awaiting the proposal event can
                     # proceed even while a chat turn is in flight.
-                    self._route_approval_response(msg, approval_registry)
+                    self._route_approval_response(msg, approval_registry, scanner)
                 elif isinstance(msg, ChatMessage):
                     if current_chat_task is not None and not current_chat_task.done():
                         error = ErrorMessage(
@@ -301,7 +301,23 @@ class Daemon:
         self,
         msg: ResearchApprovalResponseMessage,
         registry: ApprovalRegistry,
+        scanner=None,  # LearningScanner | None
     ) -> None:
+        # If the proposal_id matches a scanner pending candidate, handle
+        # it as a learning candidate rather than a registry proposal.
+        candidate = scanner.take_pending(msg.proposal_id) if scanner is not None else None
+        if candidate is not None:
+            if msg.decision == "approve":
+                self.learning.add(
+                    title=candidate.title,
+                    body=candidate.body,
+                    source="scanner",
+                )
+                self.wiki.git_commit(f"learn: scanner-captured {candidate.title}")
+            # decline/skip: do nothing, candidate is already cleared
+            return
+
+        # Existing registry-backed routing.
         if msg.decision == "approve":
             registry.approve(msg.proposal_id)
         elif msg.decision == "decline":

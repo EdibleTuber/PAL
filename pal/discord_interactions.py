@@ -18,13 +18,14 @@ logger = logging.getLogger(__name__)
 from pal.protocol import (
     CompileProposalMessage,
     ConsolidateProposalMessage,
+    LearningCandidateProposalMessage,
     PromoteProposalMessage,
     ResearchApprovalResponseMessage,
     ResearchProposalMessage,
     ReorgProposalMessage,
 )
 
-ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote"]
+ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote", "learning_candidate"]
 
 _DISCORD_FIELD_VALUE_LIMIT = 1024
 _FIELD_BUDGET_HEADROOM = 40  # "+NNN more" plus newlines
@@ -286,6 +287,37 @@ def build_promote_proposal_embed(
     return embed, view
 
 
+def build_learning_candidate_embed(
+    msg: LearningCandidateProposalMessage,
+) -> tuple[discord.Embed, discord.ui.View]:
+    """Pure builder: returns the embed and a View with two buttons (Approve, Skip)."""
+    embed = discord.Embed(
+        title="PAL spotted a possible learning",
+        color=discord.Color.green(),
+    )
+    embed.add_field(name="Title", value=msg.title, inline=False)
+    cap = _DISCORD_FIELD_VALUE_LIMIT - _FIELD_BUDGET_HEADROOM
+    body_preview = msg.body if len(msg.body) <= cap else msg.body[: cap - 3] + "..."
+    embed.add_field(name="Body", value=body_preview, inline=False)
+    trigger_preview = msg.trigger_excerpt[:300]
+    embed.add_field(name="Triggered by", value=f"> {trigger_preview}", inline=False)
+
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.success,
+        label="Approve",
+        emoji="✅",
+        custom_id=f"learning_candidate:approve:{msg.proposal_id}",
+    ))
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.secondary,
+        label="Skip",
+        emoji="⏭️",
+        custom_id=f"learning_candidate:decline:{msg.proposal_id}",
+    ))
+    return embed, view
+
+
 def build_research_edit_modal(ctx: ProposalContext) -> discord.ui.Modal:
     """Research-edit modal: new topic + new depth, with current values
     as defaults. custom_id format: 'research:<proposal_id>' so the
@@ -391,6 +423,8 @@ class DiscordStreamProcessor:
                 await self._handle_consolidate_proposal(msg)
             elif isinstance(msg, PromoteProposalMessage):
                 await self._handle_promote_proposal(msg)
+            elif isinstance(msg, LearningCandidateProposalMessage):
+                await self._handle_learning_candidate_proposal(msg)
             elif isinstance(msg, ToolProgressMessage):
                 if self.current_proposal_id is not None:
                     await self._post_progress_to_thread(msg)
@@ -593,6 +627,42 @@ class DiscordStreamProcessor:
         self.current_proposal_id = msg.proposal_id
         self.current_proposal_message = posted
 
+    async def _handle_learning_candidate_proposal(
+        self, msg: LearningCandidateProposalMessage,
+    ) -> None:
+        embed, view = build_learning_candidate_embed(msg)
+        try:
+            posted = await self.channel.send(embed=embed, view=view)
+        except Exception as exc:
+            logger.exception("Failed to post learning candidate proposal: %s", exc)
+            try:
+                await self.client.send(ResearchApprovalResponseMessage(
+                    proposal_id=msg.proposal_id,
+                    decision="decline",
+                ))
+            except Exception:
+                logger.exception("Also failed to send decline for failed learning candidate emit")
+            try:
+                await self.channel.send(
+                    f"Couldn't render learning candidate proposal ({exc}). Declined."
+                )
+            except Exception:
+                pass
+            return
+        ctx = ProposalContext(
+            proposal_id=msg.proposal_id,
+            kind="learning_candidate",
+            triggerer_id=self.triggerer_id,
+            rationale="",
+            discord_message_id=posted.id,
+            channel_id=getattr(self.channel, "id", None),
+        )
+        setattr(ctx, "title", msg.title)
+        setattr(ctx, "body", msg.body)
+        self.bot.active_proposals[msg.proposal_id] = ctx
+        self.current_proposal_id = msg.proposal_id
+        self.current_proposal_message = posted
+
     async def _post_progress_to_thread(
         self, msg: ToolProgressMessage,
     ) -> None:
@@ -650,7 +720,7 @@ def parse_button_custom_id(
     if len(parts) != 3:
         return None
     kind, action, proposal_id = parts
-    if kind not in ("research", "compile", "reorg", "consolidate", "promote"):
+    if kind not in ("research", "compile", "reorg", "consolidate", "promote", "learning_candidate"):
         return None
     if action not in ("approve", "decline", "edit"):
         return None
@@ -665,7 +735,7 @@ def parse_modal_custom_id(cid: str) -> Optional[tuple[ProposalKind, str]]:
     if len(parts) != 2:
         return None
     kind, proposal_id = parts
-    if kind not in ("research", "compile", "reorg", "consolidate", "promote"):
+    if kind not in ("research", "compile", "reorg", "consolidate", "promote", "learning_candidate"):
         return None
     if not proposal_id:
         return None
