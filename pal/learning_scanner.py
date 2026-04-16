@@ -8,8 +8,11 @@ proposals via LearningCandidateProposalMessage.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import re
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -37,3 +40,73 @@ def has_signal(message: str) -> bool:
     if not message:
         return False
     return _SIGNAL_RE.search(message) is not None
+
+
+_EXTRACTION_PROMPT = """You review a short conversation excerpt and decide whether a durable lesson is present.
+
+A durable lesson is a behavioral preference, a correction, or a confirmed approach that should shape PAL's future behavior across sessions. It is NOT a one-off factual answer, a research topic, or a fleeting emotion.
+
+Recent conversation (most recent last):
+{conversation}
+
+User signal message:
+{trigger}
+
+If a durable lesson is present, respond with JSON:
+{{"title": "<short specific title>", "body": "<1-3 sentence lesson>"}}
+
+If no durable lesson is present, respond with the bare word:
+null
+
+Respond with ONLY the JSON object or the word null. No prose."""
+
+
+def _format_conversation(turns: list[dict]) -> str:
+    if not turns:
+        return "(no prior turns)"
+    lines = []
+    for t in turns:
+        role = t.get("role", "user")
+        content = (t.get("content") or "").strip()
+        if content:
+            lines.append(f"{role}: {content}")
+    return "\n".join(lines) if lines else "(empty)"
+
+
+async def extract_candidate(
+    recent_turns: list[dict],
+    trigger_message: str,
+    inference_call: Callable,
+    timeout: float = 15.0,
+) -> Optional[dict]:
+    """Ask the inference server whether a durable lesson is present.
+
+    Returns {"title": str, "body": str} or None. Never raises.
+    inference_call is an async callable that takes a single prompt string
+    and returns the model's response text.
+    """
+    prompt = _EXTRACTION_PROMPT.format(
+        conversation=_format_conversation(recent_turns),
+        trigger=trigger_message,
+    )
+    try:
+        raw = await asyncio.wait_for(inference_call(prompt), timeout=timeout)
+    except (asyncio.TimeoutError, Exception) as exc:
+        logger.warning("learning extraction failed: %s", exc)
+        return None
+
+    text = (raw or "").strip()
+    if text.lower() == "null" or not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        logger.info("learning extraction returned non-JSON: %s", text[:100])
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    title = (parsed.get("title") or "").strip()
+    body = (parsed.get("body") or "").strip()
+    if not title or not body:
+        return None
+    return {"title": title, "body": body}
