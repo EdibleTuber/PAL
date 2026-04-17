@@ -127,6 +127,37 @@ async def test_search_vault_no_retrieval(vault):
     assert "not available" in result.lower()
 
 
+class _FakeRetrieval:
+    def __init__(self, results):
+        self._results = results
+
+    async def search(self, query, limit=5, tags=None):
+        return self._results
+
+
+@pytest.mark.asyncio
+async def test_search_vault_surfaces_vault_relative_path(vault):
+    """The output must include a path a follow-up tool (edit_file, consolidate) can use.
+
+    Regression: previously only the `name` field (bare filename stem or title) was
+    shown, forcing the model to guess the directory and causing 'source not found'
+    when the guess was passed to consolidate.
+    """
+    retrieval = _FakeRetrieval([
+        {
+            "id": "Security/comparison-of-container-isolation",
+            "name": "Comparison of Container Isolation",
+            "collection": "wiki",
+            "summary": "gVisor vs Kata vs Firecracker sandboxing tradeoffs",
+            "tags": ["security"],
+            "score": 0.87,
+        },
+    ])
+    executor = ToolExecutor(vault_path=vault, retrieval=retrieval)
+    result = await executor.run_async("search_vault", {"query": "sandboxing"})
+    assert "Security/comparison-of-container-isolation.md" in result
+
+
 def test_edit_file(wiki_executor, vault):
     result = wiki_executor.run("edit_file", {
         "path": "Research/quantum.md",

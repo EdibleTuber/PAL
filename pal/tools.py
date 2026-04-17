@@ -823,7 +823,11 @@ class ToolExecutor:
             return f"No results for: {query}"
         lines = [f"Found {len(results)} result(s) for '{query}':"]
         for r in results:
-            lines.append(f"  [{r.get('score', 0):.2f}] {r.get('name', '?')} — {r.get('summary', '')[:100]}")
+            doc_id = r.get("id")
+            path = f"{doc_id}.md" if doc_id else "?"
+            name = r.get("name", "")
+            summary = (r.get("summary") or "")[:100]
+            lines.append(f"  [{r.get('score', 0):.2f}] {path} — {name} — {summary}")
         return "\n".join(lines)
 
     async def _search_web(self, arguments: dict) -> str:
