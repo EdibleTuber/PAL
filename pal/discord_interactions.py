@@ -7,6 +7,7 @@ their responses).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Literal, Optional
@@ -404,6 +405,61 @@ class DiscordStreamProcessor:
         self.current_proposal_message: Optional[discord.Message] = None
         self.current_thread: Optional[discord.Thread] = None
 
+    def _schedule_button_expiry(
+        self, message: discord.Message, proposal_id: str, timeout_seconds: int = 15 * 60,
+    ) -> None:
+        """Schedule removal of proposal buttons after the expiry window."""
+        async def _expire():
+            await asyncio.sleep(timeout_seconds)
+            self.bot.active_proposals.pop(proposal_id, None)
+            try:
+                await message.edit(content="Proposal expired.", view=None)
+            except Exception:
+                pass
+        asyncio.create_task(_expire())
+
+    async def _post_proposal(
+        self,
+        embed: discord.Embed,
+        view: discord.ui.View,
+        proposal_id: str,
+        kind: ProposalKind,
+        rationale: str = "",
+        ctx_kwargs: dict | None = None,
+        ctx_extras: dict | None = None,
+    ) -> None:
+        """Shared helper: post a proposal embed, handle failure, stash context, schedule expiry."""
+        try:
+            posted = await self.channel.send(embed=embed, view=view)
+        except Exception as exc:
+            logger.exception("Failed to post %s proposal: %s", kind, exc)
+            try:
+                await self.client.send(ResearchApprovalResponseMessage(
+                    proposal_id=proposal_id, decision="decline",
+                ))
+            except Exception:
+                logger.exception("Also failed to send decline for failed %s emit", kind)
+            try:
+                await self.channel.send(f"Couldn't render {kind} proposal ({exc}). Declined.")
+            except Exception:
+                pass
+            return
+        ctx = ProposalContext(
+            proposal_id=proposal_id,
+            kind=kind,
+            triggerer_id=self.triggerer_id,
+            rationale=rationale,
+            discord_message_id=posted.id,
+            channel_id=getattr(self.channel, "id", None),
+            **(ctx_kwargs or {}),
+        )
+        for key, value in (ctx_extras or {}).items():
+            setattr(ctx, key, value)
+        self.bot.active_proposals[proposal_id] = ctx
+        self.current_proposal_id = proposal_id
+        self.current_proposal_message = posted
+        self._schedule_button_expiry(posted, proposal_id)
+
     async def run(
         self,
         stream: AsyncGenerator[Message, None],
@@ -441,227 +497,43 @@ class DiscordStreamProcessor:
 
         return progress_buffer, final_text
 
-    async def _handle_research_proposal(
-        self, msg: ResearchProposalMessage,
-    ) -> None:
+    async def _handle_research_proposal(self, msg: ResearchProposalMessage) -> None:
         embed, view = build_research_proposal_embed(msg)
-        try:
-            posted = await self.channel.send(embed=embed, view=view)
-        except Exception as exc:
-            logger.exception("Failed to post research proposal: %s", exc)
-            try:
-                await self.client.send(ResearchApprovalResponseMessage(
-                    proposal_id=msg.proposal_id,
-                    decision="decline",
-                ))
-            except Exception:
-                logger.exception("Also failed to send decline for failed research emit")
-            try:
-                await self.channel.send(
-                    f"Couldn't render research proposal ({exc}). Declined. "
-                    f"Try again with a shorter topic or rationale."
-                )
-            except Exception:
-                pass
-            return
-        ctx = ProposalContext(
-            proposal_id=msg.proposal_id,
-            kind="research",
-            triggerer_id=self.triggerer_id,
-            rationale=msg.rationale,
-            topic=msg.topic,
-            depth=msg.depth,
-            discord_message_id=posted.id,
-            channel_id=getattr(self.channel, "id", None),
-        )
-        self.bot.active_proposals[msg.proposal_id] = ctx
-        self.current_proposal_id = msg.proposal_id
-        self.current_proposal_message = posted
+        await self._post_proposal(embed, view, msg.proposal_id, "research",
+                                  rationale=msg.rationale,
+                                  ctx_kwargs={"topic": msg.topic, "depth": msg.depth})
 
-    async def _handle_compile_proposal(
-        self, msg: CompileProposalMessage,
-    ) -> None:
+    async def _handle_compile_proposal(self, msg: CompileProposalMessage) -> None:
         embed, view = build_compile_proposal_embed(msg)
-        try:
-            posted = await self.channel.send(embed=embed, view=view)
-        except Exception as exc:
-            logger.exception("Failed to post compile proposal: %s", exc)
-            try:
-                await self.client.send(ResearchApprovalResponseMessage(
-                    proposal_id=msg.proposal_id,
-                    decision="decline",
-                ))
-            except Exception:
-                logger.exception("Also failed to send decline for failed compile emit")
-            try:
-                await self.channel.send(
-                    f"Couldn't render compile proposal ({exc}). Declined. "
-                    f"Try again with fewer/shorter paths."
-                )
-            except Exception:
-                pass
-            return
-        ctx = ProposalContext(
-            proposal_id=msg.proposal_id,
-            kind="compile",
-            triggerer_id=self.triggerer_id,
-            rationale=msg.rationale,
-            summary_paths=list(msg.summary_paths),
-            discord_message_id=posted.id,
-            channel_id=getattr(self.channel, "id", None),
-        )
-        self.bot.active_proposals[msg.proposal_id] = ctx
-        self.current_proposal_id = msg.proposal_id
-        self.current_proposal_message = posted
+        await self._post_proposal(embed, view, msg.proposal_id, "compile",
+                                  rationale=msg.rationale,
+                                  ctx_kwargs={"summary_paths": list(msg.summary_paths)})
 
-    async def _handle_reorg_proposal(
-        self, msg: ReorgProposalMessage,
-    ) -> None:
+    async def _handle_reorg_proposal(self, msg: ReorgProposalMessage) -> None:
         embed, view = build_reorg_proposal_embed(msg)
-        try:
-            posted = await self.channel.send(embed=embed, view=view)
-        except Exception as exc:
-            logger.exception("Failed to post reorg proposal: %s", exc)
-            try:
-                await self.client.send(ResearchApprovalResponseMessage(
-                    proposal_id=msg.proposal_id,
-                    decision="decline",
-                ))
-            except Exception:
-                logger.exception("Also failed to send decline for failed reorg emit")
-            try:
-                await self.channel.send(
-                    f"Couldn't render reorg proposal ({exc}). Declined. "
-                    f"Try again with fewer/shorter operations."
-                )
-            except Exception:
-                pass
-            return
-        ctx = ProposalContext(
-            proposal_id=msg.proposal_id,
-            kind="reorg",
-            triggerer_id=self.triggerer_id,
-            rationale=msg.rationale,
-            discord_message_id=posted.id,
-            channel_id=getattr(self.channel, "id", None),
-        )
-        # Stash operations on the context for completeness even though
-        # v1 edit-as-decline does not use them.
-        setattr(ctx, "operations", [dict(op) for op in msg.operations])
-        self.bot.active_proposals[msg.proposal_id] = ctx
-        self.current_proposal_id = msg.proposal_id
-        self.current_proposal_message = posted
+        await self._post_proposal(embed, view, msg.proposal_id, "reorg",
+                                  rationale=msg.rationale,
+                                  ctx_extras={"operations": [dict(op) for op in msg.operations]})
 
-    async def _handle_consolidate_proposal(
-        self, msg: ConsolidateProposalMessage,
-    ) -> None:
+    async def _handle_consolidate_proposal(self, msg: ConsolidateProposalMessage) -> None:
         embed, view = build_consolidate_proposal_embed(msg)
-        try:
-            posted = await self.channel.send(embed=embed, view=view)
-        except Exception as exc:
-            logger.exception("Failed to post consolidate proposal: %s", exc)
-            try:
-                await self.client.send(ResearchApprovalResponseMessage(
-                    proposal_id=msg.proposal_id,
-                    decision="decline",
-                ))
-            except Exception:
-                logger.exception("Also failed to send decline for failed consolidate emit")
-            try:
-                await self.channel.send(
-                    f"Couldn't render consolidate proposal ({exc}). Declined. "
-                    f"Try again with fewer/shorter source paths."
-                )
-            except Exception:
-                pass
-            return
-        ctx = ProposalContext(
-            proposal_id=msg.proposal_id,
-            kind="consolidate",
-            triggerer_id=self.triggerer_id,
-            rationale=msg.rationale,
-            summary_paths=list(msg.source_paths),
-            discord_message_id=posted.id,
-            channel_id=getattr(self.channel, "id", None),
-        )
-        setattr(ctx, "target_path", msg.target_path)
-        setattr(ctx, "target_title", msg.target_title)
-        self.bot.active_proposals[msg.proposal_id] = ctx
-        self.current_proposal_id = msg.proposal_id
-        self.current_proposal_message = posted
+        await self._post_proposal(embed, view, msg.proposal_id, "consolidate",
+                                  rationale=msg.rationale,
+                                  ctx_kwargs={"summary_paths": list(msg.source_paths)},
+                                  ctx_extras={"target_path": msg.target_path,
+                                              "target_title": msg.target_title})
 
-    async def _handle_promote_proposal(
-        self, msg: PromoteProposalMessage,
-    ) -> None:
+    async def _handle_promote_proposal(self, msg: PromoteProposalMessage) -> None:
         embed, view = build_promote_proposal_embed(msg)
-        try:
-            posted = await self.channel.send(embed=embed, view=view)
-        except Exception as exc:
-            logger.exception("Failed to post promote proposal: %s", exc)
-            try:
-                await self.client.send(ResearchApprovalResponseMessage(
-                    proposal_id=msg.proposal_id,
-                    decision="decline",
-                ))
-            except Exception:
-                logger.exception("Also failed to send decline for failed promote emit")
-            try:
-                await self.channel.send(
-                    f"Couldn't render promote proposal ({exc}). Declined."
-                )
-            except Exception:
-                pass
-            return
-        ctx = ProposalContext(
-            proposal_id=msg.proposal_id,
-            kind="promote",
-            triggerer_id=self.triggerer_id,
-            rationale=msg.rationale,
-            discord_message_id=posted.id,
-            channel_id=getattr(self.channel, "id", None),
-        )
-        setattr(ctx, "slug", msg.slug)
-        setattr(ctx, "title", msg.title)
-        setattr(ctx, "body", msg.body)
-        self.bot.active_proposals[msg.proposal_id] = ctx
-        self.current_proposal_id = msg.proposal_id
-        self.current_proposal_message = posted
+        await self._post_proposal(embed, view, msg.proposal_id, "promote",
+                                  rationale=msg.rationale,
+                                  ctx_extras={"slug": msg.slug, "title": msg.title,
+                                              "body": msg.body})
 
-    async def _handle_learning_candidate_proposal(
-        self, msg: LearningCandidateProposalMessage,
-    ) -> None:
+    async def _handle_learning_candidate_proposal(self, msg: LearningCandidateProposalMessage) -> None:
         embed, view = build_learning_candidate_embed(msg)
-        try:
-            posted = await self.channel.send(embed=embed, view=view)
-        except Exception as exc:
-            logger.exception("Failed to post learning candidate proposal: %s", exc)
-            try:
-                await self.client.send(ResearchApprovalResponseMessage(
-                    proposal_id=msg.proposal_id,
-                    decision="decline",
-                ))
-            except Exception:
-                logger.exception("Also failed to send decline for failed learning candidate emit")
-            try:
-                await self.channel.send(
-                    f"Couldn't render learning candidate proposal ({exc}). Declined."
-                )
-            except Exception:
-                pass
-            return
-        ctx = ProposalContext(
-            proposal_id=msg.proposal_id,
-            kind="learning_candidate",
-            triggerer_id=self.triggerer_id,
-            rationale="",
-            discord_message_id=posted.id,
-            channel_id=getattr(self.channel, "id", None),
-        )
-        setattr(ctx, "title", msg.title)
-        setattr(ctx, "body", msg.body)
-        self.bot.active_proposals[msg.proposal_id] = ctx
-        self.current_proposal_id = msg.proposal_id
-        self.current_proposal_message = posted
+        await self._post_proposal(embed, view, msg.proposal_id, "learning_candidate",
+                                  ctx_extras={"title": msg.title, "body": msg.body})
 
     async def _post_progress_to_thread(
         self, msg: ToolProgressMessage,

@@ -25,6 +25,7 @@ class PalClient:
         self.socket_path = socket_path
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
+        self._read_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         """Connect to the daemon's unix socket."""
@@ -52,53 +53,60 @@ class PalClient:
         await self._writer.drain()
 
     async def chat(self, text: str) -> AsyncGenerator[Message, None]:
-        """Send a chat message and yield streaming chunks + final response."""
+        """Send a chat message and yield streaming chunks + final response.
+
+        Acquires a read lock so concurrent callers (e.g. multiple Discord
+        channels) wait instead of crashing with concurrent readline().
+        """
         if not self._writer or not self._reader:
             raise RuntimeError("Not connected")
-        msg = ChatMessage(text=text)
-        self._writer.write(encode_message(msg))
-        await self._writer.drain()
+        async with self._read_lock:
+            msg = ChatMessage(text=text)
+            self._writer.write(encode_message(msg))
+            await self._writer.drain()
 
-        while True:
-            line = await self._reader.readline()
-            if not line:
-                break
-            decoded = decode_message(line.strip())
-            yield decoded
-            if isinstance(decoded, (ResponseMessage, ErrorMessage)):
-                break
+            while True:
+                line = await self._reader.readline()
+                if not line:
+                    break
+                decoded = decode_message(line.strip())
+                yield decoded
+                if isinstance(decoded, (ResponseMessage, ErrorMessage)):
+                    break
 
     async def command(self, name: str, args: str = "") -> ResponseMessage:
         """Send a slash command and return the response."""
         if not self._writer or not self._reader:
             raise RuntimeError("Not connected")
-        msg = CommandMessage(name=name, args=args)
-        self._writer.write(encode_message(msg))
-        await self._writer.drain()
+        async with self._read_lock:
+            msg = CommandMessage(name=name, args=args)
+            self._writer.write(encode_message(msg))
+            await self._writer.drain()
 
-        while True:
-            line = await self._reader.readline()
-            if not line:
-                raise ConnectionError("Connection closed")
-            decoded = decode_message(line.strip())
-            if isinstance(decoded, ResponseMessage):
-                return decoded
-            if isinstance(decoded, ErrorMessage):
-                raise RuntimeError(decoded.error)
+            while True:
+                line = await self._reader.readline()
+                if not line:
+                    raise ConnectionError("Connection closed")
+                decoded = decode_message(line.strip())
+                if isinstance(decoded, ResponseMessage):
+                    return decoded
+                if isinstance(decoded, ErrorMessage):
+                    raise RuntimeError(decoded.error)
 
     async def command_stream(self, name: str, args: str = "") -> AsyncGenerator[Message, None]:
         """Send a slash command and yield all messages including progress."""
         if not self._writer or not self._reader:
             raise RuntimeError("Not connected")
-        msg = CommandMessage(name=name, args=args)
-        self._writer.write(encode_message(msg))
-        await self._writer.drain()
+        async with self._read_lock:
+            msg = CommandMessage(name=name, args=args)
+            self._writer.write(encode_message(msg))
+            await self._writer.drain()
 
-        while True:
-            line = await self._reader.readline()
-            if not line:
-                break
-            decoded = decode_message(line.strip())
-            yield decoded
-            if isinstance(decoded, (ResponseMessage, ErrorMessage)):
-                break
+            while True:
+                line = await self._reader.readline()
+                if not line:
+                    break
+                decoded = decode_message(line.strip())
+                yield decoded
+                if isinstance(decoded, (ResponseMessage, ErrorMessage)):
+                    break
