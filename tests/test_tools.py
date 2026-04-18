@@ -89,6 +89,56 @@ def test_list_directory_not_found(vault):
     assert "not found" in result.lower()
 
 
+@pytest.fixture()
+def big_dir_vault(tmp_path) -> Path:
+    """A vault with one directory holding 120 files (bigger than default limit=50)."""
+    big = tmp_path / "AI"
+    big.mkdir()
+    for i in range(120):
+        stem = f"{i:03d}-topic"
+        (big / f"{stem}.md").write_text(f"---\ntitle: {stem}\n---\n\nbody\n")
+    for name in ("alpha-note.md", "beta-note.md"):
+        (big / name).write_text(f"---\ntitle: {Path(name).stem}\n---\n\nbody\n")
+    return tmp_path
+
+
+def test_list_directory_truncates_large_dir(big_dir_vault):
+    executor = ToolExecutor(vault_path=big_dir_vault, retrieval=None)
+    result = executor.run("list_directory", {"path": "AI"})
+    assert "000-topic.md" in result
+    assert "049-topic.md" in result
+    assert "050-topic.md" not in result
+    assert "showing 1-50 of 122" in result.lower()
+    assert "offset=50" in result
+
+
+def test_list_directory_offset_paging(big_dir_vault):
+    executor = ToolExecutor(vault_path=big_dir_vault, retrieval=None)
+    result = executor.run("list_directory", {"path": "AI", "offset": 50})
+    assert "050-topic.md" in result
+    assert "099-topic.md" in result
+    assert "049-topic.md" not in result
+    # Still 122 total, 72 remaining at this offset (50-121) - fits under default limit of 50
+    assert "showing" in result.lower()
+
+
+def test_list_directory_prefix_filter(big_dir_vault):
+    executor = ToolExecutor(vault_path=big_dir_vault, retrieval=None)
+    result = executor.run("list_directory", {"path": "AI", "prefix": "alpha"})
+    assert "alpha-note.md" in result
+    assert "beta-note.md" not in result
+    assert "000-topic.md" not in result
+
+
+def test_list_directory_custom_limit(big_dir_vault):
+    executor = ToolExecutor(vault_path=big_dir_vault, retrieval=None)
+    result = executor.run("list_directory", {"path": "AI", "limit": 10})
+    assert "000-topic.md" in result
+    assert "009-topic.md" in result
+    assert "010-topic.md" not in result
+    assert "showing 1-10 of 122" in result.lower()
+
+
 def test_unknown_tool(vault):
     executor = ToolExecutor(vault_path=vault, retrieval=None)
     result = executor.run("delete_everything", {})

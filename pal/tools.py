@@ -49,13 +49,29 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "list_directory",
-            "description": "List files and subdirectories in a vault directory. Omit path to list the vault root.",
+            "description": (
+                "List files and subdirectories in a vault directory. Paginated: by default "
+                "returns up to 50 entries with a footer indicating the total and how to "
+                "continue. Use prefix to filter when reorganizing large directories."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
                         "description": "Directory path relative to vault root (e.g. 'Research'). Empty or omitted for root.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max entries to return (default 50, cap 500).",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Skip this many entries before returning (for paging).",
+                    },
+                    "prefix": {
+                        "type": "string",
+                        "description": "Only return entries whose filename starts with this string (e.g. 'agent-').",
                     },
                 },
                 "required": [],
@@ -677,19 +693,56 @@ class ToolExecutor:
             return f"Directory not found: {path}"
         if not target.is_dir():
             return f"Not a directory: {path} (use read_file for files)"
-        entries = []
+
+        prefix = (arguments.get("prefix") or "").strip()
+        try:
+            offset = max(0, int(arguments.get("offset") or 0))
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            limit = int(arguments.get("limit") or 50)
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(1, min(limit, 500))
+
+        all_entries: list[str] = []
         for child in sorted(target.iterdir()):
             name = child.name
             if name.startswith("_") or name.startswith("."):
                 continue
-            if child.is_dir():
-                entries.append(f"  {name}/")
-            else:
-                entries.append(f"  {name}")
-        if not entries:
-            return f"Directory is empty: {path or '(vault root)'}"
-        header = f"Contents of {path or '(vault root)'}:"
-        return header + "\n" + "\n".join(entries)
+            if prefix and not name.startswith(prefix):
+                continue
+            all_entries.append(f"  {name}/" if child.is_dir() else f"  {name}")
+
+        label = path or "(vault root)"
+        if not all_entries:
+            if prefix:
+                return f"No entries in {label} with prefix '{prefix}'."
+            return f"Directory is empty: {label}"
+
+        total = len(all_entries)
+        page = all_entries[offset : offset + limit]
+        if not page:
+            return (
+                f"offset {offset} is past the end ({total} entries"
+                f"{' matching prefix ' + repr(prefix) if prefix else ''}). "
+                f"Use offset < {total}."
+            )
+
+        shown_start = offset + 1
+        shown_end = offset + len(page)
+        filter_note = f" matching prefix '{prefix}'" if prefix else ""
+        header = f"Contents of {label}{filter_note}:"
+        body = "\n".join(page)
+
+        if total > shown_end or offset > 0:
+            footer_parts = [f"Showing {shown_start}-{shown_end} of {total}{filter_note}."]
+            if total > shown_end:
+                footer_parts.append(f"Call again with offset={shown_end} to continue.")
+            if not prefix and total > limit:
+                footer_parts.append("Narrow with prefix='<start-of-filename>'.")
+            return f"{header}\n{body}\n{' '.join(footer_parts)}"
+        return f"{header}\n{body}"
 
     def _search_content(self, arguments: dict) -> str:
         query = arguments.get("query", "")
