@@ -123,6 +123,27 @@ def test_detect_from_toc_ignores_level_two_plus():
     assert [b.title for b in boundaries] == ["Chapter One", "Chapter Two"]
 
 
+def test_detect_from_toc_filters_invalid_entries():
+    """Malformed TOC entries (page <= 0, empty title) should be filtered
+    rather than leaking into boundaries."""
+    doc = MagicMock()
+    doc.get_toc.return_value = [
+        [1, "Good One", 3],
+        [1, "Broken Link", 0],       # page 0 = broken destination
+        [1, "", 10],                  # empty title
+        [1, "   ", 15],               # whitespace-only title
+        [1, "Negative", -1],          # negative page
+        [1, "Good Two", 20],
+    ]
+    boundaries = detect_from_toc(doc)
+    assert boundaries is not None
+    assert len(boundaries) == 2
+    assert boundaries[0].title == "Good One"
+    assert boundaries[0].start_page == 2
+    assert boundaries[1].title == "Good Two"
+    assert boundaries[1].start_page == 19
+
+
 def test_detect_from_typography_finds_chapters_at_large_font():
     # Three pages: each starts with a big heading then body text
     pages = [

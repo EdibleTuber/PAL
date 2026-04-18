@@ -55,7 +55,7 @@ def detect_from_toc(doc) -> list[ChapterBoundary] | None:
     level_one = [
         ChapterBoundary(title=title.strip(), start_page=page - 1)
         for level, title, page in toc
-        if level == 1
+        if level == 1 and isinstance(page, int) and page >= 1 and title and title.strip()
     ]
     if len(level_one) < 2:
         return None
