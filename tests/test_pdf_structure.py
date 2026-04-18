@@ -1,7 +1,17 @@
 """Tests for pal.pdf_structure: PDF chapter detection and extraction."""
+import json
 from unittest.mock import MagicMock
 
-from pal.pdf_structure import ChapterBoundary, detect_from_toc, detect_from_typography
+import pytest
+
+from pal.inference import CompletionResult
+from pal.pdf_structure import (
+    ChapterBoundary,
+    build_llm_sample,
+    detect_from_llm_toc,
+    detect_from_toc,
+    detect_from_typography,
+)
 
 
 def _fake_page(blocks):
@@ -193,3 +203,73 @@ def test_detect_from_typography_preserves_multiline_title():
     assert boundaries[0].title == "Chapter One: A Beginning"
     assert boundaries[0].start_page == 0
     assert boundaries[1].title == "Chapter Two"
+
+
+def test_build_llm_sample_compact_per_page():
+    pages = [
+        _fake_page([(14, "Front Matter", 50), (11, "Acknowledgements text.", 100)]),
+        _fake_page([(18, "Introduction", 50), (11, "Welcome to the book.", 100)]),
+        _fake_page([(11, "Body continues.", 50)]),
+    ]
+    doc = _fake_doc(pages)
+    sample = build_llm_sample(doc, head_chars=40)
+    # Each line has page number, leading font size, snippet.
+    lines = sample.strip().splitlines()
+    assert len(lines) == 3
+    assert lines[0].startswith("p.1")
+    assert "Front Matter" in lines[0]
+    assert lines[1].startswith("p.2")
+    assert "Introduction" in lines[1]
+    assert lines[2].startswith("p.3")
+
+
+@pytest.mark.asyncio
+async def test_detect_from_llm_toc_parses_page_numbers():
+    pages = [
+        _fake_page([(18, "Chapter One", 50), (11, "Body.", 100)]),
+        _fake_page([(11, "More body.", 50)]),
+        _fake_page([(18, "Chapter Two", 50), (11, "Body.", 100)]),
+    ]
+    doc = _fake_doc(pages)
+
+    class FakeInference:
+        async def complete(self, messages, **kwargs):
+            return CompletionResult(
+                type="text",
+                content=json.dumps([
+                    {"page": 1, "title": "Chapter One"},
+                    {"page": 3, "title": "Chapter Two"},
+                ]),
+            )
+
+    boundaries = await detect_from_llm_toc(doc, FakeInference())
+    assert boundaries is not None
+    assert len(boundaries) == 2
+    assert boundaries[0].title == "Chapter One"
+    assert boundaries[0].start_page == 0  # 1-indexed in LLM response, 0-indexed internally
+    assert boundaries[1].title == "Chapter Two"
+    assert boundaries[1].start_page == 2
+
+
+@pytest.mark.asyncio
+async def test_detect_from_llm_toc_returns_none_on_empty_response():
+    pages = [_fake_page([(11, "Body.", 50)])]
+    doc = _fake_doc(pages)
+
+    class FakeInference:
+        async def complete(self, messages, **kwargs):
+            return CompletionResult(type="text", content="[]")
+
+    assert await detect_from_llm_toc(doc, FakeInference()) is None
+
+
+@pytest.mark.asyncio
+async def test_detect_from_llm_toc_returns_none_on_malformed_json():
+    pages = [_fake_page([(11, "Body.", 50)])]
+    doc = _fake_doc(pages)
+
+    class FakeInference:
+        async def complete(self, messages, **kwargs):
+            return CompletionResult(type="text", content="not json at all")
+
+    assert await detect_from_llm_toc(doc, FakeInference()) is None

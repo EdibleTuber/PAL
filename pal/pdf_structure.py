@@ -16,6 +16,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections import Counter
+import json as _json
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Tunable thresholds. Module-level so they're easy to find and adjust
 # once we have real-corpus feedback.
@@ -137,3 +141,85 @@ def detect_from_typography(doc) -> list[ChapterBoundary] | None:
     if len(candidates) < TYPOGRAPHY_MIN_CANDIDATES:
         return None
     return candidates
+
+
+def build_llm_sample(doc, head_chars: int = 120) -> str:
+    """Build a compact per-page sample for LLM-TOC reconstruction.
+
+    One line per page: `p.<1-indexed-num> [size=NN] <first head_chars of text>`.
+    Intended to be small enough to fit in ctx even for long books.
+    """
+    lines = []
+    for page_index in range(len(doc)):
+        page = doc[page_index]
+        page_dict = page.get_text("dict")
+        first_text = ""
+        first_size = 0.0
+        for block in page_dict.get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            parsed = _block_text_and_size(block)
+            if parsed is None:
+                continue
+            first_text, first_size = parsed
+            break
+        snippet = first_text[:head_chars].replace("\n", " ")
+        lines.append(f"p.{page_index + 1} [size={first_size:.0f}] {snippet}")
+    return "\n".join(lines)
+
+
+async def detect_from_llm_toc(doc, inference) -> list[ChapterBoundary] | None:
+    """Tier 3: ask the LLM to reconstruct a TOC from a compact per-page sample.
+
+    Used only when tiers 1 and 2 both return None. Returns None on empty
+    response, malformed JSON, or zero/one candidate.
+    """
+    sample = build_llm_sample(doc)
+    system_prompt = (
+        "You are given a page-by-page sample of a PDF. Each line shows a "
+        "page number, the font size of the first text block on that page, "
+        "and up to 120 characters of that first block. Identify the pages "
+        "that look like chapter starts based on font-size jumps, short "
+        "title-like text, and position at the top of a page. Return ONLY "
+        'a JSON array of objects: [{"page": <1-indexed-page>, "title": "..."}]. '
+        "Return an empty array [] if you cannot find clear chapter boundaries."
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": sample},
+    ]
+    try:
+        result = await inference.complete(messages, reasoning="off")
+    except Exception as exc:
+        logger.warning("LLM-TOC detection inference failed: %s", exc)
+        return None
+
+    content = (getattr(result, "content", "") or "").strip()
+    # Accept either a bare JSON array or one wrapped in extra prose.
+    first_bracket = content.find("[")
+    last_bracket = content.rfind("]")
+    if first_bracket == -1 or last_bracket == -1 or last_bracket < first_bracket:
+        return None
+    try:
+        entries = _json.loads(content[first_bracket : last_bracket + 1])
+    except _json.JSONDecodeError:
+        return None
+
+    if not isinstance(entries, list) or len(entries) < 2:
+        return None
+
+    boundaries: list[ChapterBoundary] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        page = entry.get("page")
+        title = entry.get("title")
+        if not isinstance(page, int) or not isinstance(title, str) or not title.strip():
+            continue
+        if page < 1 or page > len(doc):
+            continue
+        boundaries.append(ChapterBoundary(title=title.strip(), start_page=page - 1))
+
+    if len(boundaries) < 2:
+        return None
+    return boundaries
