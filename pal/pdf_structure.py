@@ -312,11 +312,21 @@ def extract_chapters(
     """Extract per-chapter markdown using pymupdf4llm.
 
     Each chapter's markdown covers the page range computed from the
-    boundary list. Caller is responsible for writing these to disk.
+    boundary list. Boundaries whose computed range is empty (end < start,
+    which happens when two boundaries collide on the same page) or
+    entirely out of bounds (start >= total_pages) are skipped with a
+    warning. Caller is responsible for writing the returned chapters to
+    disk.
     """
     ranges = compute_chapter_ranges(boundaries, total_pages)
     chapters: list[Chapter] = []
     for b, (start, end) in zip(boundaries, ranges):
+        if start >= total_pages or end < start:
+            logger.warning(
+                "skipping chapter %r with invalid range p.%d-p.%d (total_pages=%d)",
+                b.title, start, end, total_pages,
+            )
+            continue
         pages = list(range(start, end + 1))
         markdown = _pymupdf4llm_to_markdown(pdf_path, pages=pages)
         chapters.append(Chapter(

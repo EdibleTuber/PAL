@@ -1173,6 +1173,16 @@ class Daemon:
         doc_slug = slugify(full_path.stem)
 
         target_dir = self.config.vault_path / "raw" / "sources" / doc_slug
+        if target_dir.exists() and any(target_dir.iterdir()):
+            error = ErrorMessage(
+                error=(
+                    f"raw/sources/{doc_slug}/ already exists and is not empty; "
+                    f"remove it to re-import {full_path.name}."
+                ),
+            )
+            writer.write(encode_message(error))
+            await writer.drain()
+            return
         target_dir.mkdir(parents=True, exist_ok=True)
 
         from datetime import datetime, timezone

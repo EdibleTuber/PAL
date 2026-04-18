@@ -459,3 +459,48 @@ def test_extract_chapters_uses_pymupdf4llm_per_range(monkeypatch):
     assert "pages 3-5" in chapters[1].markdown
     assert calls[0] == ("/fake/path.pdf", (0, 1, 2))
     assert calls[1] == ("/fake/path.pdf", (3, 4, 5))
+
+
+def test_extract_chapters_skips_invalid_ranges(monkeypatch):
+    """Boundaries producing an empty range (e.g. duplicate start_page) or
+    pointing past total_pages should be skipped rather than crashing."""
+    calls = []
+
+    def fake_to_markdown(path, pages=None):
+        calls.append(tuple(pages))
+        return f"## content for pages {pages[0]}-{pages[-1]}\n"
+
+    import pal.pdf_structure as ps
+    monkeypatch.setattr(ps, "_pymupdf4llm_to_markdown", fake_to_markdown)
+
+    # Two boundaries collide on the same page (first has empty range: p.5 to p.4).
+    boundaries = [
+        ChapterBoundary(title="A", start_page=5),
+        ChapterBoundary(title="B", start_page=5),
+        ChapterBoundary(title="C", start_page=8),
+    ]
+    chapters = extract_chapters("/fake/path.pdf", boundaries, total_pages=10)
+    assert len(chapters) == 2  # "A" skipped (empty range), "B" and "C" kept
+    assert chapters[0].title == "B"
+    assert chapters[1].title == "C"
+    assert calls == [(5, 6, 7), (8, 9)]
+
+
+def test_extract_chapters_skips_start_beyond_total(monkeypatch):
+    """A boundary whose start_page is at or beyond total_pages is skipped."""
+    calls = []
+
+    def fake_to_markdown(path, pages=None):
+        calls.append(tuple(pages))
+        return f"## content\n"
+
+    import pal.pdf_structure as ps
+    monkeypatch.setattr(ps, "_pymupdf4llm_to_markdown", fake_to_markdown)
+
+    boundaries = [
+        ChapterBoundary(title="A", start_page=0),
+        ChapterBoundary(title="B", start_page=20),  # past total_pages
+    ]
+    chapters = extract_chapters("/fake/path.pdf", boundaries, total_pages=10)
+    assert len(chapters) == 1
+    assert chapters[0].title == "A"
