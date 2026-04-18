@@ -31,6 +31,12 @@ from pal.compiler import Compiler
 from pal.archive import archive_raw_files, cleanup_archived
 from pal.summarizer import summarize_raw_file
 from pal.chunker import chunk_markdown
+import fitz  # pymupdf
+from pal.pdf_structure import (
+    detect_chapters,
+    extract_chapters,
+    slugify,
+)
 from pal.reasoning import decide_mode
 from pal.researcher import Researcher, parse_topic_file
 from pal.tools import ToolExecutor
@@ -1114,7 +1120,14 @@ class Daemon:
         await writer.drain()
 
     async def _handle_import(self, file_path: str, writer: asyncio.StreamWriter) -> None:
-        """Handle /import <path> — convert, summarize, compile a local document."""
+        """Handle /import <path> - raw-first ingestion.
+
+        Converts the source to markdown, splits into sections using
+        format-appropriate detection, writes each section to
+        raw/sources/<doc-slug>/NN-slug.md, archives the source, and
+        triggers reindex. No categorization, no wiki-article writes.
+        Promotion to wiki articles is a separate user/agent-driven step.
+        """
         file_path = file_path.strip()
         if not file_path:
             error = ErrorMessage(error="Usage: /import <path-in-raw/>")
@@ -1122,14 +1135,12 @@ class Daemon:
             await writer.drain()
             return
 
-        # Must be under raw/
         if not file_path.startswith("raw/"):
             error = ErrorMessage(error=f"Files must be in raw/ directory: {file_path}")
             writer.write(encode_message(error))
             await writer.drain()
             return
 
-        # Path traversal guard
         if ".." in file_path.split("/") or file_path.startswith("/"):
             error = ErrorMessage(error=f"Invalid path: {file_path}")
             writer.write(encode_message(error))
@@ -1143,7 +1154,6 @@ class Daemon:
             await writer.drain()
             return
 
-        # Resolve + boundary check
         try:
             resolved = full_path.resolve()
             vault_resolved = self.config.vault_path.resolve()
@@ -1158,74 +1168,165 @@ class Daemon:
             await writer.drain()
             return
 
-        # Step 1: Convert to markdown
-        progress = ToolProgressMessage(tool="import", arguments={"status": f"Converting {full_path.name}..."})
-        writer.write(encode_message(progress))
-        await writer.drain()
+        ext = full_path.suffix.lower()
+        is_pdf = ext == ".pdf"
+        doc_slug = slugify(full_path.stem)
 
-        try:
-            loop = asyncio.get_running_loop()
-            convert_result = await loop.run_in_executor(
-                None, self.converter.convert, full_path,
-            )
-        except ConversionError as exc:
-            error = ErrorMessage(error=f"Conversion failed: {exc}")
-            writer.write(encode_message(error))
-            await writer.drain()
-            return
+        target_dir = self.config.vault_path / "raw" / "sources" / doc_slug
+        target_dir.mkdir(parents=True, exist_ok=True)
 
-        # Step 2: Split into chunks
-        chunks = chunk_markdown(convert_result.text, fallback_title=convert_result.title)
-        if not chunks:
-            error = ErrorMessage(error="Conversion produced no content.")
-            writer.write(encode_message(error))
-            await writer.drain()
-            return
-
-        # Step 3: Categorize (one LLM call for the whole document)
-        progress = ToolProgressMessage(tool="import", arguments={"status": "Categorizing..."})
-        writer.write(encode_message(progress))
-        await writer.drain()
-
-        # Use the first chunk's content for categorization
-        category = await self.categorizer.categorize(
-            title=convert_result.title,
-            body=chunks[0].body,
-            vault_path=self.config.vault_path,
-        )
-
-        # Step 4: Save all chunks directly
         from datetime import datetime, timezone
         from pal.frontmatter import serialize_frontmatter
-
-        target_dir = self.config.vault_path / category
-        target_dir.mkdir(parents=True, exist_ok=True)
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
         saved_articles: list[str] = []
-        for chunk in chunks:
-            slug = chunk.title.lower().replace("_", "-").replace(" ", "-")
-            slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-") or "untitled"
+        detection_method: str
 
-            article_path_rel = f"{category}/{slug}.md"
-            article_full_path = target_dir / f"{slug}.md"
+        if is_pdf:
+            # PDF path: pymupdf4llm + structural detection.
+            progress = ToolProgressMessage(
+                tool="import",
+                arguments={"status": f"Converting {full_path.name} (pymupdf4llm)..."},
+            )
+            writer.write(encode_message(progress))
+            await writer.drain()
 
-            article_meta = {
-                "title": chunk.title,
-                "created": now,
-                "updated": now,
-                "source_file": file_path,
-                "status": "imported",
-            }
+            try:
+                loop = asyncio.get_running_loop()
+                doc = await loop.run_in_executor(None, fitz.open, str(full_path))
+            except Exception as exc:
+                error = ErrorMessage(error=f"PDF open failed: {exc}")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
 
-            article_full_path.write_text(serialize_frontmatter(article_meta, chunk.body.strip() + "\n"))
-            saved_articles.append(article_path_rel)
-            logger.info("Imported chunk '%s' -> %s", chunk.title, article_path_rel)
+            try:
+                total_pages = len(doc)
 
-        # Rebuild index and commit
-        self.wiki.rebuild_index()
+                progress = ToolProgressMessage(
+                    tool="import",
+                    arguments={"status": "Detecting chapters..."},
+                )
+                writer.write(encode_message(progress))
+                await writer.drain()
+
+                detection = await detect_chapters(doc, inference=self.inference)
+                detection_method = detection.method
+
+                if detection.method == "single-file":
+                    progress = ToolProgressMessage(
+                        tool="import",
+                        arguments={"status": "No chapters detected; writing single file..."},
+                    )
+                    writer.write(encode_message(progress))
+                    await writer.drain()
+
+                    full_markdown = await loop.run_in_executor(
+                        None,
+                        lambda: __import__("pymupdf4llm").to_markdown(str(full_path)),
+                    )
+                    article_path_rel = f"raw/sources/{doc_slug}/full.md"
+                    article_full = target_dir / "full.md"
+                    meta = {
+                        "title": full_path.stem,
+                        "source_file": file_path,
+                        "source_type": "pdf",
+                        "section_number": 1,
+                        "detection_method": detection_method,
+                        "imported": now,
+                    }
+                    article_full.write_text(
+                        serialize_frontmatter(meta, full_markdown.strip() + "\n"),
+                    )
+                    saved_articles.append(article_path_rel)
+                else:
+                    chapters = await loop.run_in_executor(
+                        None,
+                        extract_chapters,
+                        str(full_path),
+                        detection.boundaries,
+                        total_pages,
+                    )
+                    for i, ch in enumerate(chapters, start=1):
+                        progress = ToolProgressMessage(
+                            tool="import",
+                            arguments={
+                                "status": f"Writing chapter {i} of {len(chapters)}: {ch.title}",
+                            },
+                        )
+                        writer.write(encode_message(progress))
+                        await writer.drain()
+
+                        section_slug = slugify(ch.title)
+                        filename = f"{i:02d}-{section_slug}.md"
+                        article_path_rel = f"raw/sources/{doc_slug}/{filename}"
+                        article_full = target_dir / filename
+                        meta = {
+                            "title": ch.title,
+                            "source_file": file_path,
+                            "source_type": "pdf",
+                            "section_number": i,
+                            "section_range": f"p.{ch.start_page + 1}-p.{ch.end_page + 1}",
+                            "detection_method": detection_method,
+                            "imported": now,
+                        }
+                        article_full.write_text(
+                            serialize_frontmatter(meta, ch.markdown.strip() + "\n"),
+                        )
+                        saved_articles.append(article_path_rel)
+            finally:
+                doc.close()
+        else:
+            # Non-PDF path: existing MarkItDown + chunk_markdown flow, re-homed to raw/sources/.
+            progress = ToolProgressMessage(
+                tool="import",
+                arguments={"status": f"Converting {full_path.name}..."},
+            )
+            writer.write(encode_message(progress))
+            await writer.drain()
+
+            try:
+                loop = asyncio.get_running_loop()
+                convert_result = await loop.run_in_executor(
+                    None, self.converter.convert, full_path,
+                )
+            except ConversionError as exc:
+                error = ErrorMessage(error=f"Conversion failed: {exc}")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+
+            chunks = chunk_markdown(convert_result.text, fallback_title=convert_result.title)
+            if not chunks:
+                error = ErrorMessage(error="Conversion produced no content.")
+                writer.write(encode_message(error))
+                await writer.drain()
+                return
+
+            detection_method = "headings"
+            source_type = ext.lstrip(".")
+
+            for i, chunk in enumerate(chunks, start=1):
+                section_slug = slugify(chunk.title)
+                filename = f"{i:02d}-{section_slug}.md"
+                article_path_rel = f"raw/sources/{doc_slug}/{filename}"
+                article_full = target_dir / filename
+                meta = {
+                    "title": chunk.title,
+                    "source_file": file_path,
+                    "source_type": source_type,
+                    "section_number": i,
+                    "detection_method": detection_method,
+                    "imported": now,
+                }
+                article_full.write_text(
+                    serialize_frontmatter(meta, chunk.body.strip() + "\n"),
+                )
+                saved_articles.append(article_path_rel)
+
+        # Commit and reindex.
         self.wiki.git_init()
-        self.wiki.git_commit(f"import: {convert_result.title} ({len(saved_articles)} articles)")
+        self.wiki.git_commit(f"import: {full_path.stem} ({len(saved_articles)} sections)")
 
         absolute_paths = [
             str((self.config.vault_path / rel).resolve())
@@ -1233,19 +1334,25 @@ class Daemon:
         ]
         await self._trigger_reindex_for_paths(absolute_paths)
 
-        # Archive source file
-        archive_raw_files(self.config.vault_path, raw_path=file_path)
-        self.wiki.git_commit(f"archive: {convert_result.title}")
-
-        # Build response
-        article_list = "\n".join(f"- {a}" for a in saved_articles)
-
-        resp = ResponseMessage(
-            text=(
-                f"Imported {len(saved_articles)} articles from {full_path.name}:\n{article_list}"
-            ),
-            command="import",
+        # Archive source.
+        progress = ToolProgressMessage(
+            tool="import",
+            arguments={"status": "Archiving source..."},
         )
+        writer.write(encode_message(progress))
+        await writer.drain()
+        archive_raw_files(self.config.vault_path, raw_path=file_path)
+        self.wiki.git_commit(f"archive: {full_path.stem}")
+
+        # Build detection report.
+        lines = [
+            f"Imported {len(saved_articles)} section(s) from {full_path.name} "
+            f"(detection: {detection_method}):"
+        ]
+        for rel in saved_articles:
+            lines.append(f"- {rel}")
+
+        resp = ResponseMessage(text="\n".join(lines), command="import")
         writer.write(encode_message(resp))
         await writer.drain()
 
