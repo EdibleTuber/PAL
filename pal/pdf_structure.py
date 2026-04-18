@@ -212,9 +212,17 @@ async def detect_from_llm_toc(doc, inference) -> list[ChapterBoundary] | None:
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        page = entry.get("page")
+        raw_page = entry.get("page")
         title = entry.get("title")
-        if not isinstance(page, int) or not isinstance(title, str) or not title.strip():
+        if not isinstance(title, str) or not title.strip():
+            continue
+        # Coerce page to int: tolerate float (1.0) and string ("1") from the LLM.
+        # bool is a subclass of int in Python; reject it explicitly.
+        if isinstance(raw_page, bool):
+            continue
+        try:
+            page = int(raw_page)
+        except (TypeError, ValueError):
             continue
         if page < 1 or page > len(doc):
             continue

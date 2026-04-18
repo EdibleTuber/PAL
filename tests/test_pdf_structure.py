@@ -273,3 +273,51 @@ async def test_detect_from_llm_toc_returns_none_on_malformed_json():
             return CompletionResult(type="text", content="not json at all")
 
     assert await detect_from_llm_toc(doc, FakeInference()) is None
+
+
+@pytest.mark.asyncio
+async def test_detect_from_llm_toc_coerces_page_types():
+    """Tolerate float and string pages in LLM output (1.0 and '1' both mean page 1)."""
+    pages = [
+        _fake_page([(18, "Chapter One", 50), (11, "Body.", 100)]),
+        _fake_page([(11, "More body.", 50)]),
+        _fake_page([(18, "Chapter Two", 50), (11, "Body.", 100)]),
+    ]
+    doc = _fake_doc(pages)
+
+    class FakeInference:
+        async def complete(self, messages, **kwargs):
+            return CompletionResult(
+                type="text",
+                content=json.dumps([
+                    {"page": 1.0, "title": "Chapter One"},
+                    {"page": "3", "title": "Chapter Two"},
+                ]),
+            )
+
+    boundaries = await detect_from_llm_toc(doc, FakeInference())
+    assert boundaries is not None
+    assert len(boundaries) == 2
+    assert boundaries[0].title == "Chapter One"
+    assert boundaries[0].start_page == 0
+    assert boundaries[1].title == "Chapter Two"
+    assert boundaries[1].start_page == 2
+
+
+@pytest.mark.asyncio
+async def test_detect_from_llm_toc_rejects_bool_page():
+    """bool is int in Python; reject it explicitly to avoid confusing True -> page 1."""
+    pages = [_fake_page([(11, "Body.", 50)])]
+    doc = _fake_doc(pages)
+
+    class FakeInference:
+        async def complete(self, messages, **kwargs):
+            return CompletionResult(
+                type="text",
+                content=json.dumps([
+                    {"page": True, "title": "A"},
+                    {"page": False, "title": "B"},
+                ]),
+            )
+
+    assert await detect_from_llm_toc(doc, FakeInference()) is None
