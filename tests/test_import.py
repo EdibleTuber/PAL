@@ -202,3 +202,47 @@ async def test_import_single_chunk_still_works(import_daemon, socket_path, monke
 
     articles = list((vault / "raw" / "sources" / "simple").glob("*.md"))
     assert len(articles) == 1
+
+
+@pytest.mark.asyncio
+async def test_import_pdf_with_toc_produces_chapters(import_daemon, socket_path, tmp_path):
+    import fitz
+
+    daemon, vault = import_daemon
+
+    # Build a synthetic PDF with a TOC and three trivial pages.
+    pdf_path_on_disk = vault / "raw" / "test-book.pdf"
+    pdf_path_on_disk.parent.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open()
+    for i, title in enumerate(["Introduction page", "Pattern page", "Conclusion page"]):
+        page = doc.new_page()
+        page.insert_text((72, 72), title, fontsize=18)
+        page.insert_text((72, 120), f"Body text for page {i + 1}.", fontsize=11)
+    doc.set_toc([
+        [1, "Introduction", 1],
+        [1, "The Pattern", 2],
+        [1, "Conclusion", 3],
+    ])
+    doc.save(str(pdf_path_on_disk))
+    doc.close()
+
+    client = PalClient(socket_path)
+    await client.connect()
+    resp = await client.command("import", "raw/test-book.pdf")
+    await client.close()
+
+    assert "detection: toc" in resp.text
+    out_dir = vault / "raw" / "sources" / "test-book"
+    assert out_dir.exists()
+    files = sorted(f.name for f in out_dir.glob("*.md"))
+    assert files == ["01-introduction.md", "02-the-pattern.md", "03-conclusion.md"]
+
+    # Archived source.
+    assert not pdf_path_on_disk.exists()
+    assert (vault / "raw" / "archived" / "test-book.pdf").exists()
+
+    # Frontmatter sanity on one chapter.
+    first = (out_dir / "01-introduction.md").read_text()
+    assert "source_type: pdf" in first
+    assert "detection_method: toc" in first
+    assert "section_range: p.1-p.1" in first
