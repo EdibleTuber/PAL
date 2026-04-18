@@ -20,6 +20,8 @@ from typing import Literal
 import json as _json
 import logging
 
+import pymupdf4llm
+
 logger = logging.getLogger(__name__)
 
 # Tunable thresholds. Module-level so they're easy to find and adjust
@@ -268,3 +270,58 @@ async def detect_chapters(doc, inference=None) -> DetectionResult:
             return DetectionResult(method="llm-toc", boundaries=llm_result)
 
     return DetectionResult(method="single-file", boundaries=[])
+
+
+# Indirect so tests can monkeypatch without poking pymupdf4llm directly.
+def _pymupdf4llm_to_markdown(path: str, pages: list[int]) -> str:
+    return pymupdf4llm.to_markdown(path, pages=pages)
+
+
+@dataclass
+class Chapter:
+    title: str
+    start_page: int  # 0-indexed, inclusive
+    end_page: int    # 0-indexed, inclusive
+    markdown: str
+
+
+def compute_chapter_ranges(
+    boundaries: list[ChapterBoundary], total_pages: int
+) -> list[tuple[int, int]]:
+    """For each boundary, return (start_page, end_page) spanning to the
+    page before the next boundary, or to the last page for the final one.
+    Both ends inclusive, 0-indexed.
+    """
+    ranges: list[tuple[int, int]] = []
+    for i, b in enumerate(boundaries):
+        start = b.start_page
+        if i + 1 < len(boundaries):
+            end = boundaries[i + 1].start_page - 1
+        else:
+            end = total_pages - 1
+        ranges.append((start, end))
+    return ranges
+
+
+def extract_chapters(
+    pdf_path: str,
+    boundaries: list[ChapterBoundary],
+    total_pages: int,
+) -> list[Chapter]:
+    """Extract per-chapter markdown using pymupdf4llm.
+
+    Each chapter's markdown covers the page range computed from the
+    boundary list. Caller is responsible for writing these to disk.
+    """
+    ranges = compute_chapter_ranges(boundaries, total_pages)
+    chapters: list[Chapter] = []
+    for b, (start, end) in zip(boundaries, ranges):
+        pages = list(range(start, end + 1))
+        markdown = _pymupdf4llm_to_markdown(pdf_path, pages=pages)
+        chapters.append(Chapter(
+            title=b.title,
+            start_page=start,
+            end_page=end,
+            markdown=markdown,
+        ))
+    return chapters

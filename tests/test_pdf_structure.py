@@ -13,6 +13,7 @@ from pal.pdf_structure import (
     detect_from_typography,
 )
 from pal.pdf_structure import DetectionResult, detect_chapters
+from pal.pdf_structure import Chapter, compute_chapter_ranges, extract_chapters
 
 
 def _fake_page(blocks):
@@ -393,3 +394,46 @@ async def test_detect_chapters_skips_llm_when_inference_is_none():
     doc.get_toc.return_value = []
     result = await detect_chapters(doc, inference=None)
     assert result.method == "single-file"
+
+
+def test_compute_chapter_ranges_spans_from_boundary_to_next_start():
+    boundaries = [
+        ChapterBoundary(title="A", start_page=0),
+        ChapterBoundary(title="B", start_page=5),
+        ChapterBoundary(title="C", start_page=12),
+    ]
+    ranges = compute_chapter_ranges(boundaries, total_pages=20)
+    assert ranges == [(0, 4), (5, 11), (12, 19)]
+
+
+def test_compute_chapter_ranges_single_chapter_spans_whole_doc():
+    boundaries = [ChapterBoundary(title="Only", start_page=2)]
+    ranges = compute_chapter_ranges(boundaries, total_pages=10)
+    assert ranges == [(2, 9)]
+
+
+def test_extract_chapters_uses_pymupdf4llm_per_range(monkeypatch):
+    calls = []
+
+    def fake_to_markdown(path, pages=None):
+        calls.append((path, tuple(pages)))
+        return f"## content for pages {pages[0]}-{pages[-1]}\n"
+
+    import pal.pdf_structure as ps
+    monkeypatch.setattr(ps, "_pymupdf4llm_to_markdown", fake_to_markdown)
+
+    boundaries = [
+        ChapterBoundary(title="A", start_page=0),
+        ChapterBoundary(title="B", start_page=3),
+    ]
+    chapters = extract_chapters("/fake/path.pdf", boundaries, total_pages=6)
+    assert len(chapters) == 2
+    assert chapters[0].title == "A"
+    assert chapters[0].start_page == 0
+    assert chapters[0].end_page == 2
+    assert "pages 0-2" in chapters[0].markdown
+    assert chapters[1].start_page == 3
+    assert chapters[1].end_page == 5
+    assert "pages 3-5" in chapters[1].markdown
+    assert calls[0] == ("/fake/path.pdf", (0, 1, 2))
+    assert calls[1] == ("/fake/path.pdf", (3, 4, 5))
