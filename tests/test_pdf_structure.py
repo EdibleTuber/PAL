@@ -1,7 +1,38 @@
 """Tests for pal.pdf_structure: PDF chapter detection and extraction."""
 from unittest.mock import MagicMock
 
-from pal.pdf_structure import ChapterBoundary, detect_from_toc
+from pal.pdf_structure import ChapterBoundary, detect_from_toc, detect_from_typography
+
+
+def _fake_page(blocks):
+    """Build a fake page whose get_text("dict") returns the given blocks.
+
+    `blocks` is a list of (size, text, bbox_y_top) tuples. Each becomes a
+    single-line, single-span block in the dict shape pymupdf returns.
+    """
+    page = MagicMock()
+    page_dict = {
+        "blocks": [
+            {
+                "type": 0,
+                "bbox": [0, bbox_y, 100, bbox_y + size + 2],
+                "lines": [{
+                    "spans": [{"size": size, "text": text, "font": "TestFont", "flags": 0}],
+                }],
+            }
+            for size, text, bbox_y in blocks
+        ]
+    }
+    page.get_text.return_value = page_dict
+    return page
+
+
+def _fake_doc(pages):
+    doc = MagicMock()
+    doc.__len__.return_value = len(pages)
+    doc.__iter__.return_value = iter(pages)
+    doc.__getitem__.side_effect = lambda i: pages[i]
+    return doc
 
 
 def test_chapter_boundary_has_title_and_start_page():
@@ -56,3 +87,64 @@ def test_detect_from_toc_ignores_level_two_plus():
     boundaries = detect_from_toc(doc)
     assert boundaries is not None
     assert [b.title for b in boundaries] == ["Chapter One", "Chapter Two"]
+
+
+def test_detect_from_typography_finds_chapters_at_large_font():
+    # Three pages: each starts with a big heading then body text
+    pages = [
+        _fake_page([
+            (18, "Introduction", 50),
+            (11, "Body paragraph one.", 100),
+            (11, "Body paragraph two.", 150),
+        ]),
+        _fake_page([
+            (11, "More body text.", 50),
+            (11, "Still body text.", 100),
+        ]),
+        _fake_page([
+            (18, "The First Pattern", 50),
+            (11, "Pattern body.", 100),
+        ]),
+    ]
+    doc = _fake_doc(pages)
+    boundaries = detect_from_typography(doc)
+    assert boundaries is not None
+    assert len(boundaries) == 2
+    assert boundaries[0].title == "Introduction"
+    assert boundaries[0].start_page == 0
+    assert boundaries[1].title == "The First Pattern"
+    assert boundaries[1].start_page == 2
+
+
+def test_detect_from_typography_returns_none_when_flat_typography():
+    # All body size, no candidates.
+    pages = [
+        _fake_page([(11, "All body.", 50), (11, "More.", 100)]),
+        _fake_page([(11, "Still body.", 50)]),
+    ]
+    doc = _fake_doc(pages)
+    assert detect_from_typography(doc) is None
+
+
+def test_detect_from_typography_requires_at_least_two_candidates():
+    # Only one big-font block across the whole doc.
+    pages = [
+        _fake_page([(18, "Only Heading", 50), (11, "Body.", 100)]),
+        _fake_page([(11, "All body.", 50)]),
+    ]
+    doc = _fake_doc(pages)
+    assert detect_from_typography(doc) is None
+
+
+def test_detect_from_typography_skips_long_blocks():
+    # A big-font block but longer than the 150-char ceiling should not count.
+    long_text = "x" * 200
+    pages = [
+        _fake_page([(18, long_text, 50), (11, "Body.", 100)]),
+        _fake_page([(18, "Real Heading Two", 50), (11, "Body.", 100)]),
+        _fake_page([(18, "Real Heading Three", 50), (11, "Body.", 100)]),
+    ]
+    doc = _fake_doc(pages)
+    boundaries = detect_from_typography(doc)
+    assert boundaries is not None
+    assert [b.title for b in boundaries] == ["Real Heading Two", "Real Heading Three"]
