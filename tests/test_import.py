@@ -48,12 +48,6 @@ def _place_csv_in_raw(vault: Path, name: str, content: str) -> str:
 async def test_import_csv_creates_article(import_daemon, socket_path, monkeypatch):
     daemon, vault = import_daemon
 
-    async def fake_complete(messages, **kwargs):
-        # Only call: categorization
-        return CompletionResult(type="text", content="Research")
-
-    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
-
     rel_path = _place_csv_in_raw(
         vault, "employees.csv",
         "Name,Role,Department\nAlice,Engineer,Platform\nBob,Designer,Product\n"
@@ -62,35 +56,38 @@ async def test_import_csv_creates_article(import_daemon, socket_path, monkeypatc
     client = PalClient(socket_path)
     await client.connect()
     resp = await client.command("import", rel_path)
-    assert "Research/" in resp.text
+    assert "raw/sources/employees/" in resp.text
     await client.close()
 
-    articles = list((vault / "Research").glob("*.md"))
-    assert len(articles) == 1
-    # Content should be the raw MarkItDown output
+    articles = list((vault / "raw" / "sources" / "employees").glob("*.md"))
+    assert len(articles) >= 1
     content = articles[0].read_text()
     assert "Alice" in content
+    # Frontmatter should reflect raw-first shape.
+    assert "source_file: raw/employees.csv" in content
+    assert "source_type: csv" in content
+    assert "detection_method: headings" in content
 
 
 @pytest.mark.asyncio
 async def test_import_archives_source(import_daemon, socket_path, monkeypatch):
     daemon, vault = import_daemon
 
-    async def fake_complete(messages, **kwargs):
-        return CompletionResult(type="text", content="Research")
-
-    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
-
-    rel_path = _place_csv_in_raw(vault, "data.csv", "A,B\n1,2\n")
+    rel_path = _place_csv_in_raw(
+        vault, "data.csv",
+        "a,b\n1,2\n"
+    )
 
     client = PalClient(socket_path)
     await client.connect()
-    await client.command("import", rel_path)
+    resp = await client.command("import", rel_path)
     await client.close()
 
-    # Source file should be archived
-    assert not (vault / "raw" / "data.csv").exists()
+    # Source has been moved to raw/archived/
+    assert not (vault / rel_path).exists()
     assert (vault / "raw" / "archived" / "data.csv").exists()
+    # Raw-sources output exists.
+    assert (vault / "raw" / "sources" / "data").exists()
 
 
 @pytest.mark.asyncio
@@ -144,13 +141,8 @@ async def test_import_path_traversal(import_daemon, socket_path):
 
 @pytest.mark.asyncio
 async def test_import_converts_underscores_to_hyphens_in_slug(import_daemon, socket_path, monkeypatch):
-    """Filenames with underscores should produce hyphenated slugs."""
+    """Filenames with underscores should produce hyphenated doc slugs."""
     daemon, vault = import_daemon
-
-    async def fake_complete(messages, **kwargs):
-        return CompletionResult(type="text", content="Research")
-
-    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     rel_path = _place_csv_in_raw(
         vault, "Agentic_Design_Patterns.csv",
@@ -162,21 +154,17 @@ async def test_import_converts_underscores_to_hyphens_in_slug(import_daemon, soc
     resp = await client.command("import", rel_path)
     await client.close()
 
-    articles = list((vault / "Research").glob("*.md"))
-    assert len(articles) == 1
-    assert "agentic-design-patterns" in articles[0].name
+    # The doc slug should hyphenate the underscored filename.
+    doc_dir = vault / "raw" / "sources" / "agentic-design-patterns"
+    assert doc_dir.exists()
+    articles = list(doc_dir.glob("*.md"))
+    assert len(articles) >= 1
 
 
 @pytest.mark.asyncio
 async def test_import_splits_multi_heading_document(import_daemon, socket_path, monkeypatch):
     """A document with multiple H1 headings should produce multiple articles."""
     daemon, vault = import_daemon
-
-    async def fake_complete(messages, **kwargs):
-        # Single categorization call for the whole document
-        return CompletionResult(type="text", content="Research")
-
-    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     # Create an HTML file with two H1 headings
     raw_dir = vault / "raw"
@@ -194,21 +182,16 @@ async def test_import_splits_multi_heading_document(import_daemon, socket_path, 
     resp = await client.command("import", "raw/multi-chapter.html")
     await client.close()
 
-    # Should have created 2 articles
-    articles = list((vault / "Research").glob("*.md"))
+    # Should have created 2 articles under raw/sources/multi-chapter/
+    articles = list((vault / "raw" / "sources" / "multi-chapter").glob("*.md"))
     assert len(articles) == 2
-    assert "2 articles" in resp.text
+    assert "2 section" in resp.text
 
 
 @pytest.mark.asyncio
 async def test_import_single_chunk_still_works(import_daemon, socket_path, monkeypatch):
     """A document with no headings still produces a single article."""
     daemon, vault = import_daemon
-
-    async def fake_complete(messages, **kwargs):
-        return CompletionResult(type="text", content="Research")
-
-    monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     rel_path = _place_csv_in_raw(vault, "simple.csv", "A,B\n1,2\n3,4\n")
 
@@ -217,5 +200,5 @@ async def test_import_single_chunk_still_works(import_daemon, socket_path, monke
     resp = await client.command("import", rel_path)
     await client.close()
 
-    articles = list((vault / "Research").glob("*.md"))
+    articles = list((vault / "raw" / "sources" / "simple").glob("*.md"))
     assert len(articles) == 1
