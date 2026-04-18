@@ -148,3 +148,48 @@ def test_detect_from_typography_skips_long_blocks():
     boundaries = detect_from_typography(doc)
     assert boundaries is not None
     assert [b.title for b in boundaries] == ["Real Heading Two", "Real Heading Three"]
+
+
+def test_detect_from_typography_preserves_multiline_title():
+    """A chapter title that wraps across two lines within one block
+    should be preserved as "line one line two", not collapsed."""
+    page_one = MagicMock()
+    page_one.get_text.return_value = {
+        "blocks": [
+            {
+                "type": 0,
+                "bbox": [0, 50, 100, 90],
+                "lines": [
+                    {"spans": [{"size": 18, "text": "Chapter One:", "font": "F", "flags": 0}]},
+                    {"spans": [{"size": 18, "text": "A Beginning", "font": "F", "flags": 0}]},
+                ],
+            },
+            {
+                "type": 0,
+                "bbox": [0, 100, 100, 120],
+                "lines": [{"spans": [{"size": 11, "text": "Body text.", "font": "F", "flags": 0}]}],
+            },
+        ]
+    }
+    page_two = MagicMock()
+    page_two.get_text.return_value = {
+        "blocks": [
+            {
+                "type": 0,
+                "bbox": [0, 50, 100, 90],
+                "lines": [{"spans": [{"size": 18, "text": "Chapter Two", "font": "F", "flags": 0}]}],
+            },
+            {
+                "type": 0,
+                "bbox": [0, 100, 100, 120],
+                "lines": [{"spans": [{"size": 11, "text": "Body text.", "font": "F", "flags": 0}]}],
+            },
+        ]
+    }
+    doc = _fake_doc([page_one, page_two])
+    boundaries = detect_from_typography(doc)
+    assert boundaries is not None
+    assert len(boundaries) == 2
+    assert boundaries[0].title == "Chapter One: A Beginning"
+    assert boundaries[0].start_page == 0
+    assert boundaries[1].title == "Chapter Two"

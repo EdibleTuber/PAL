@@ -66,16 +66,26 @@ def _iter_blocks(doc):
 
 
 def _block_text_and_size(block) -> tuple[str, float] | None:
-    """Extract the concatenated text and max span size for a text block."""
-    texts = []
+    """Extract the concatenated text and max span size for a text block.
+
+    Spans within a single line are joined without a separator (they are
+    typically run-of-text). Lines within a block are joined with a space
+    so multi-line chapter titles like "The First / Pattern" do not
+    collapse to "The FirstPattern".
+    """
+    line_texts: list[str] = []
     max_size = 0.0
     for line in block.get("lines", []):
+        spans_text: list[str] = []
         for span in line.get("spans", []):
-            texts.append(span.get("text", ""))
+            spans_text.append(span.get("text", ""))
             size = float(span.get("size", 0))
             if size > max_size:
                 max_size = size
-    text = "".join(texts).strip()
+        joined_line = "".join(spans_text).strip()
+        if joined_line:
+            line_texts.append(joined_line)
+    text = " ".join(line_texts).strip()
     if not text or max_size <= 0:
         return None
     return text, max_size
