@@ -12,6 +12,7 @@ from pal.pdf_structure import (
     detect_from_toc,
     detect_from_typography,
 )
+from pal.pdf_structure import DetectionResult, detect_chapters
 
 
 def _fake_page(blocks):
@@ -321,3 +322,74 @@ async def test_detect_from_llm_toc_rejects_bool_page():
             )
 
     assert await detect_from_llm_toc(doc, FakeInference()) is None
+
+
+@pytest.mark.asyncio
+async def test_detect_chapters_uses_toc_when_available():
+    doc = MagicMock()
+    doc.get_toc.return_value = [
+        [1, "A", 1], [1, "B", 10], [1, "C", 20],
+    ]
+    doc.__len__.return_value = 30
+    result = await detect_chapters(doc, inference=None)
+    assert result.method == "toc"
+    assert len(result.boundaries) == 3
+
+
+@pytest.mark.asyncio
+async def test_detect_chapters_falls_through_to_typography():
+    pages = [
+        _fake_page([(18, "Intro", 50), (11, "body", 100)]),
+        _fake_page([(18, "Next", 50), (11, "body", 100)]),
+    ]
+    doc = _fake_doc(pages)
+    doc.get_toc.return_value = []
+    result = await detect_chapters(doc, inference=None)
+    assert result.method == "typography"
+    assert len(result.boundaries) == 2
+
+
+@pytest.mark.asyncio
+async def test_detect_chapters_falls_through_to_llm_when_no_typography():
+    # Flat typography (no font-size transitions).
+    pages = [_fake_page([(11, "body", 50)]), _fake_page([(11, "body", 50)])]
+    doc = _fake_doc(pages)
+    doc.get_toc.return_value = []
+
+    class FakeInference:
+        async def complete(self, messages, **kwargs):
+            return CompletionResult(
+                type="text",
+                content=json.dumps([
+                    {"page": 1, "title": "One"},
+                    {"page": 2, "title": "Two"},
+                ]),
+            )
+
+    result = await detect_chapters(doc, inference=FakeInference())
+    assert result.method == "llm-toc"
+    assert len(result.boundaries) == 2
+
+
+@pytest.mark.asyncio
+async def test_detect_chapters_returns_single_file_when_all_tiers_fail():
+    pages = [_fake_page([(11, "body", 50)])]
+    doc = _fake_doc(pages)
+    doc.get_toc.return_value = []
+
+    class FakeInference:
+        async def complete(self, messages, **kwargs):
+            return CompletionResult(type="text", content="[]")
+
+    result = await detect_chapters(doc, inference=FakeInference())
+    assert result.method == "single-file"
+    assert result.boundaries == []
+
+
+@pytest.mark.asyncio
+async def test_detect_chapters_skips_llm_when_inference_is_none():
+    pages = [_fake_page([(11, "body", 50)])]
+    doc = _fake_doc(pages)
+    doc.get_toc.return_value = []
+    result = await detect_chapters(doc, inference=None)
+    assert result.method == "single-file"

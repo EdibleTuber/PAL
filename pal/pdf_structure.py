@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections import Counter
+from typing import Literal
 import json as _json
 import logging
 
@@ -231,3 +232,39 @@ async def detect_from_llm_toc(doc, inference) -> list[ChapterBoundary] | None:
     if len(boundaries) < 2:
         return None
     return boundaries
+
+
+@dataclass
+class DetectionResult:
+    """The outcome of detect_chapters.
+
+    `method` names which tier won. `boundaries` is empty iff method is
+    'single-file', signaling the caller should write the whole markdown
+    as one raw/sources/<slug>/full.md file.
+    """
+    method: Literal["toc", "typography", "llm-toc", "single-file"]
+    boundaries: list[ChapterBoundary]
+
+
+async def detect_chapters(doc, inference=None) -> DetectionResult:
+    """Run the three detection tiers in order; return the first hit.
+
+    `inference` is optional; when None, tier 3 is skipped and we fall
+    straight to single-file. This keeps the function testable without
+    an inference client and gives callers a lightweight path when they
+    don't want to spend an LLM call on ingestion.
+    """
+    toc_result = detect_from_toc(doc)
+    if toc_result is not None:
+        return DetectionResult(method="toc", boundaries=toc_result)
+
+    typo_result = detect_from_typography(doc)
+    if typo_result is not None:
+        return DetectionResult(method="typography", boundaries=typo_result)
+
+    if inference is not None:
+        llm_result = await detect_from_llm_toc(doc, inference)
+        if llm_result is not None:
+            return DetectionResult(method="llm-toc", boundaries=llm_result)
+
+    return DetectionResult(method="single-file", boundaries=[])
