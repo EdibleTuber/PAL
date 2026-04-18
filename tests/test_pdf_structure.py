@@ -14,6 +14,28 @@ from pal.pdf_structure import (
 )
 from pal.pdf_structure import DetectionResult, detect_chapters
 from pal.pdf_structure import Chapter, compute_chapter_ranges, extract_chapters
+from pal.pdf_structure import slugify
+
+
+def test_slugify_lowercases_and_replaces_spaces():
+    assert slugify("Agentic Design Patterns") == "agentic-design-patterns"
+
+
+def test_slugify_strips_punctuation():
+    assert slugify("Chapter 1: The Pattern!") == "chapter-1-the-pattern"
+
+
+def test_slugify_collapses_multiple_separators():
+    assert slugify("foo --- bar   baz") == "foo-bar-baz"
+
+
+def test_slugify_trims_leading_trailing_hyphens():
+    assert slugify("-foo-") == "foo"
+
+
+def test_slugify_handles_empty_and_whitespace_only():
+    assert slugify("") == "untitled"
+    assert slugify("   ") == "untitled"
 
 
 def _fake_page(blocks):

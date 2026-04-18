@@ -19,6 +19,7 @@ from collections import Counter
 from typing import Literal
 import json as _json
 import logging
+import re
 
 import pymupdf4llm
 
@@ -325,3 +326,17 @@ def extract_chapters(
             markdown=markdown,
         ))
     return chapters
+
+
+_SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
+
+
+def slugify(text: str) -> str:
+    """Lowercase, non-alphanumerics -> hyphens, collapse runs, trim ends.
+
+    Returns 'untitled' for empty or whitespace-only input so callers
+    always get a valid path component.
+    """
+    lowered = text.lower()
+    collapsed = _SLUG_STRIP_RE.sub("-", lowered).strip("-")
+    return collapsed or "untitled"
