@@ -425,3 +425,87 @@ def test_build_consolidate_proposal_embed():
     assert "consolidate:approve:abc-1" in ids
     assert "consolidate:decline:abc-1" in ids
     assert "consolidate:edit:abc-1" in ids
+
+
+def test_batch_fallback_view_has_three_buttons():
+    from pal.discord_interactions import BatchFallbackView
+
+    async def noop_send(pid, choice):
+        pass
+
+    view = BatchFallbackView(
+        proposal_id="p1",
+        caller="categorizer",
+        send_choice_callback=noop_send,
+    )
+    labels = [c.label for c in view.children]
+    assert any("retry" in l.lower() for l in labels)
+    assert any("main" in l.lower() for l in labels)
+    assert any("skip" in l.lower() for l in labels)
+
+
+@pytest.mark.asyncio
+async def test_batch_fallback_view_retry_button_sends_retry():
+    from pal.discord_interactions import BatchFallbackView
+
+    sent = []
+
+    async def capture_send(pid, choice):
+        sent.append((pid, choice))
+
+    view = BatchFallbackView(
+        proposal_id="p1",
+        caller="categorizer",
+        send_choice_callback=capture_send,
+    )
+
+    retry_button = next(c for c in view.children if c.label == "Retry on batch")
+    interaction = AsyncMock()
+    await retry_button.callback(interaction)
+
+    assert sent == [("p1", "retry")]
+    interaction.response.edit_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_batch_fallback_view_main_button_sends_main():
+    from pal.discord_interactions import BatchFallbackView
+
+    sent = []
+
+    async def capture_send(pid, choice):
+        sent.append((pid, choice))
+
+    view = BatchFallbackView(
+        proposal_id="p1",
+        caller="categorizer",
+        send_choice_callback=capture_send,
+    )
+
+    main_button = next(c for c in view.children if c.label == "Run on main")
+    interaction = AsyncMock()
+    await main_button.callback(interaction)
+
+    assert sent == [("p1", "main")]
+
+
+@pytest.mark.asyncio
+async def test_batch_fallback_view_skip_button_sends_skip():
+    from pal.discord_interactions import BatchFallbackView
+
+    sent = []
+
+    async def capture_send(pid, choice):
+        sent.append((pid, choice))
+
+    view = BatchFallbackView(
+        proposal_id="p1",
+        caller="categorizer",
+        send_choice_callback=capture_send,
+    )
+
+    skip_button = next(c for c in view.children if c.label == "Skip")
+    interaction = AsyncMock()
+    await skip_button.callback(interaction)
+
+    assert sent == [("p1", "skip")]

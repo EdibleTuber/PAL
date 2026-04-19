@@ -17,6 +17,8 @@ import discord
 logger = logging.getLogger(__name__)
 
 from pal.protocol import (
+    BatchFallbackApprovalMessage,
+    BatchFallbackProposal,
     CompileProposalMessage,
     ConsolidateProposalMessage,
     LearningCandidateProposalMessage,
@@ -319,6 +321,80 @@ def build_learning_candidate_embed(
     return embed, view
 
 
+class BatchFallbackView(discord.ui.View):
+    """Three-button view for BatchFallbackProposal.
+
+    Retry on batch / Run on main / Skip. Unlike other proposal views,
+    BatchFallback uses bound callbacks instead of custom_id routing
+    because its actions (retry / main / skip) do not fit the shared
+    approve / decline / edit grammar.
+    """
+
+    def __init__(
+        self,
+        proposal_id: str,
+        caller: str,
+        send_choice_callback,
+        timeout: float = 300,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.proposal_id = proposal_id
+        self.caller = caller
+        self._send_choice = send_choice_callback  # async (proposal_id, choice) -> None
+
+        retry = discord.ui.Button(
+            style=discord.ButtonStyle.primary,
+            label="Retry on batch",
+        )
+        main = discord.ui.Button(
+            style=discord.ButtonStyle.secondary,
+            label="Run on main",
+        )
+        skip = discord.ui.Button(
+            style=discord.ButtonStyle.danger,
+            label="Skip",
+        )
+
+        retry.callback = self._on_retry
+        main.callback = self._on_main
+        skip.callback = self._on_skip
+
+        self.add_item(retry)
+        self.add_item(main)
+        self.add_item(skip)
+
+    async def _on_retry(self, interaction: discord.Interaction) -> None:
+        await self._send_choice(self.proposal_id, "retry")
+        await interaction.response.edit_message(
+            content="Retrying on batch...", view=None,
+        )
+
+    async def _on_main(self, interaction: discord.Interaction) -> None:
+        await self._send_choice(self.proposal_id, "main")
+        await interaction.response.edit_message(
+            content="Running on main...", view=None,
+        )
+
+    async def _on_skip(self, interaction: discord.Interaction) -> None:
+        await self._send_choice(self.proposal_id, "skip")
+        await interaction.response.edit_message(
+            content="Skipped.", view=None,
+        )
+
+
+def build_batch_fallback_embed(msg: BatchFallbackProposal) -> discord.Embed:
+    """Pure builder: returns the embed for a BatchFallbackProposal."""
+    embed = discord.Embed(
+        title="Batch model unavailable",
+        description=(
+            f"The **{msg.caller}** step ({msg.context}) cannot reach the "
+            "batch backend.\n\nChoose how to proceed:"
+        ),
+        color=0xFFA500,
+    )
+    return embed
+
+
 def build_research_edit_modal(ctx: ProposalContext) -> discord.ui.Modal:
     """Research-edit modal: new topic + new depth, with current values
     as defaults. custom_id format: 'research:<proposal_id>' so the
@@ -481,6 +557,8 @@ class DiscordStreamProcessor:
                 await self._handle_promote_proposal(msg)
             elif isinstance(msg, LearningCandidateProposalMessage):
                 await self._handle_learning_candidate_proposal(msg)
+            elif isinstance(msg, BatchFallbackProposal):
+                await self._handle_batch_fallback_proposal(msg)
             elif isinstance(msg, ToolProgressMessage):
                 if self.current_proposal_id is not None:
                     await self._post_progress_to_thread(msg)
@@ -534,6 +612,49 @@ class DiscordStreamProcessor:
         embed, view = build_learning_candidate_embed(msg)
         await self._post_proposal(embed, view, msg.proposal_id, "learning_candidate",
                                   ctx_extras={"title": msg.title, "body": msg.body})
+
+    async def _handle_batch_fallback_proposal(self, msg: BatchFallbackProposal) -> None:
+        """Render a BatchFallbackProposal to the active Discord channel
+        with three buttons (Retry on batch / Run on main / Skip).
+
+        BatchFallback does not use the shared approve/decline/edit
+        custom_id grammar, so we wire a BatchFallbackView whose bound
+        callbacks send BatchFallbackApprovalMessage directly through
+        the processor's existing client connection.
+        """
+        client = self.client
+
+        async def send_choice(proposal_id: str, choice: str) -> None:
+            await client.send(BatchFallbackApprovalMessage(
+                proposal_id=proposal_id, choice=choice,
+            ))
+
+        embed = build_batch_fallback_embed(msg)
+        view = BatchFallbackView(
+            proposal_id=msg.proposal_id,
+            caller=msg.caller,
+            send_choice_callback=send_choice,
+        )
+        try:
+            await self.channel.send(embed=embed, view=view)
+        except Exception as exc:
+            logger.exception(
+                "Failed to post batch_fallback proposal: %s", exc,
+            )
+            try:
+                await client.send(BatchFallbackApprovalMessage(
+                    proposal_id=msg.proposal_id, choice="skip",
+                ))
+            except Exception:
+                logger.exception(
+                    "Also failed to send skip for failed batch_fallback emit",
+                )
+            try:
+                await self.channel.send(
+                    f"Couldn't render batch-fallback proposal ({exc}). Skipped.",
+                )
+            except Exception:
+                pass
 
     async def _post_progress_to_thread(
         self, msg: ToolProgressMessage,
