@@ -4,6 +4,8 @@ import pytest
 from unittest.mock import AsyncMock
 
 from pal.inference import InferenceClient, BatchUnavailableError
+from pal.daemon import Daemon
+from pal.config import Config
 
 
 @pytest.mark.asyncio
@@ -109,3 +111,25 @@ async def test_batch_client_raises_batch_unavailable_on_read_error(monkeypatch):
         await client.complete([{"role": "user", "content": "x"}])
 
     await client.close()
+
+
+def test_daemon_categorizer_uses_main_when_batch_disabled(tmp_path):
+    cfg = Config(
+        socket_path=tmp_path / "pal.sock",
+        vault_path=tmp_path / "vault",
+        batch_enabled=False,
+    )
+    daemon = Daemon(cfg)
+    assert daemon.categorizer.inference is daemon.inference
+    assert daemon.batch_inference is None
+
+
+def test_daemon_categorizer_uses_batch_when_enabled(tmp_path):
+    cfg = Config(
+        socket_path=tmp_path / "pal.sock",
+        vault_path=tmp_path / "vault",
+        batch_enabled=True,
+    )
+    daemon = Daemon(cfg)
+    assert daemon.batch_inference is not None
+    assert daemon.categorizer.inference is daemon.batch_inference

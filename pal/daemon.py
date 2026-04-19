@@ -115,7 +115,9 @@ class Daemon:
             timeout=config.fetch_timeout,
         )
         self.converter = DocumentConverter()
-        self.categorizer = Categorizer(self.inference)
+        self.categorizer = Categorizer(
+            self.batch_inference if self.batch_inference is not None else self.inference
+        )
         self.compiler = Compiler(
             vault_path=config.vault_path,
             wiki=self.wiki,
