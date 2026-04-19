@@ -246,3 +246,79 @@ async def test_import_pdf_with_toc_produces_chapters(import_daemon, socket_path,
     assert "source_type: pdf" in first
     assert "detection_method: toc" in first
     assert "section_range: p.1-p.1" in first
+
+
+@pytest.mark.asyncio
+async def test_import_pdf_llm_toc_fallback_runs_on_main(import_daemon, socket_path, tmp_path):
+    """When LLM-TOC triggers, the batch backend raises, and the user
+    picks 'main', the retry should succeed on the main inference."""
+    import fitz
+    from pal.inference import BatchUnavailableError, CompletionResult
+
+    daemon, vault = import_daemon
+
+    # Build a synthetic PDF with no TOC and flat typography so both
+    # tier-1 and tier-2 return None, forcing tier-3 LLM-TOC.
+    pdf_path = vault / "raw" / "no-structure.pdf"
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open()
+    for i in range(3):
+        page = doc.new_page()
+        page.insert_text((72, 72), f"uniform body for page {i}", fontsize=11)
+    doc.save(str(pdf_path))
+    doc.close()
+
+    # Mock: batch raises BatchUnavailable; main returns an empty TOC
+    # (which also results in single-file fallback — we just want to
+    # confirm main was called, not batch).
+    batch_calls = {"n": 0}
+    main_calls = {"n": 0}
+
+    async def batch_complete(messages, **kwargs):
+        batch_calls["n"] += 1
+        raise BatchUnavailableError("batch down")
+
+    async def main_complete(messages, **kwargs):
+        main_calls["n"] += 1
+        import json
+        return CompletionResult(type="text", content=json.dumps([]))
+
+    from unittest.mock import AsyncMock
+    daemon.batch_inference = AsyncMock()
+    daemon.batch_inference.complete.side_effect = batch_complete
+    daemon.batch_inference.is_batch = True
+    daemon.inference.complete = main_complete
+
+    # Auto-approve the BatchFallbackProposal with state="main" when it
+    # arrives. We do this by patching _handle_connection's local
+    # emit_proposal indirectly: intercept the writer.write path.
+    # Simplest: patch approval_registry.create_proposal to immediately
+    # mark the proposal as approved with state="main".
+    import pal.approval_registry
+    original_create = pal.approval_registry.ApprovalRegistry.create_proposal
+
+    def auto_approve_create(self, *args, **kwargs):
+        pid = original_create(self, *args, **kwargs)
+        if kwargs.get("kind") == "batch_fallback":
+            self.approve(pid, state="main")
+        return pid
+
+    monkeypatch_obj = pytest.MonkeyPatch()
+    monkeypatch_obj.setattr(
+        pal.approval_registry.ApprovalRegistry,
+        "create_proposal",
+        auto_approve_create,
+    )
+    try:
+        client = PalClient(socket_path)
+        await client.connect()
+        resp = await client.command("import", "raw/no-structure.pdf")
+        await client.close()
+    finally:
+        monkeypatch_obj.undo()
+
+    assert batch_calls["n"] >= 1, "batch inference should have been attempted"
+    assert main_calls["n"] >= 1, "main inference should have been the fallback"
+    # Import succeeded to some form (either chapters or single-file); any
+    # response text means we didn't crash on BatchUnavailableError.
+    assert resp.text

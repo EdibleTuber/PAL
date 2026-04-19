@@ -23,6 +23,8 @@ import re
 
 import pymupdf4llm
 
+from pal.inference import BatchUnavailableError
+
 logger = logging.getLogger(__name__)
 
 # Tunable thresholds. Module-level so they're easy to find and adjust
@@ -278,6 +280,8 @@ async def detect_from_llm_toc(doc, inference) -> list[ChapterBoundary] | None:
     ]
     try:
         result = await inference.complete(messages, reasoning="off")
+    except BatchUnavailableError:
+        raise  # propagate so the daemon can offer a fallback proposal
     except Exception as exc:
         logger.warning("LLM-TOC detection inference failed: %s", exc)
         return None

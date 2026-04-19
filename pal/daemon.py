@@ -297,7 +297,9 @@ class Daemon:
                         writer.write(encode_message(error))
                         await writer.drain()
                         continue
-                    await self._handle_command(msg, conv, writer)
+                    await self._handle_command(
+                        msg, conv, writer, approval_registry, emit_proposal,
+                    )
                 else:
                     error = ErrorMessage(error=f"Unexpected message type: {msg.type}")
                     writer.write(encode_message(error))
@@ -502,6 +504,8 @@ class Daemon:
         msg: CommandMessage,
         conv: Conversation,
         writer: asyncio.StreamWriter,
+        approval_registry: ApprovalRegistry | None = None,
+        proposal_emitter=None,
     ) -> None:
         """Handle a slash command."""
         if msg.name == "help":
@@ -557,7 +561,10 @@ class Daemon:
         elif msg.name == "compile-batch":
             await self._handle_compile_batch(writer)
         elif msg.name == "import":
-            await self._handle_import(msg.args, writer)
+            await self._handle_import(
+                msg.args, writer, approval_registry, proposal_emitter,
+            )
+
         elif msg.name == "learn":
             await self._handle_learn(conv, writer)
         elif msg.name == "learnings":
@@ -1135,7 +1142,13 @@ class Daemon:
         writer.write(encode_message(resp))
         await writer.drain()
 
-    async def _handle_import(self, file_path: str, writer: asyncio.StreamWriter) -> None:
+    async def _handle_import(
+        self,
+        file_path: str,
+        writer: asyncio.StreamWriter,
+        approval_registry: ApprovalRegistry | None = None,
+        proposal_emitter=None,
+    ) -> None:
         """Handle /import <path> - raw-first ingestion.
 
         Converts the source to markdown, splits into sections using
@@ -1236,10 +1249,55 @@ class Daemon:
                 writer.write(encode_message(progress))
                 await writer.drain()
 
-                detection = await detect_chapters(
-                    doc,
-                    inference=self.batch_inference if self.batch_inference is not None else self.inference,
+                from pal.inference import BatchUnavailableError
+                from pal.protocol import BatchFallbackProposal
+                from pal.pdf_structure import DetectionResult
+
+                effective_inference = (
+                    self.batch_inference
+                    if self.batch_inference is not None
+                    else self.inference
                 )
+                try:
+                    detection = await detect_chapters(doc, inference=effective_inference)
+                except BatchUnavailableError:
+                    if approval_registry is None or proposal_emitter is None:
+                        # No connection-scoped approval deps wired; fall
+                        # through to single-file.
+                        detection = DetectionResult(method="single-file", boundaries=[])
+                    else:
+                        pid = approval_registry.create_proposal(
+                            kind="batch_fallback",
+                            rationale="batch backend unavailable for LLM-TOC",
+                            caller="llm_toc",
+                            context=f"detecting chapters for {full_path.name}",
+                        )
+                        proposal_msg = BatchFallbackProposal(
+                            proposal_id=pid,
+                            caller="llm_toc",
+                            context=f"detecting chapters for {full_path.name}",
+                            original_request={},
+                        )
+                        proposal_emitter(proposal_msg)
+                        proposal = approval_registry.get(pid)
+                        await proposal.event.wait()
+                        if proposal.status == "declined":
+                            detection = DetectionResult(method="single-file", boundaries=[])
+                        elif proposal.approval_choice == "retry":
+                            try:
+                                detection = await detect_chapters(
+                                    doc, inference=self.batch_inference,
+                                )
+                            except BatchUnavailableError:
+                                detection = DetectionResult(
+                                    method="single-file", boundaries=[],
+                                )
+                        elif proposal.approval_choice == "main":
+                            detection = await detect_chapters(
+                                doc, inference=self.inference,
+                            )
+                        else:
+                            detection = DetectionResult(method="single-file", boundaries=[])
                 detection_method = detection.method
 
                 if detection.method == "single-file":
