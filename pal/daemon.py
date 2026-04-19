@@ -1236,7 +1236,10 @@ class Daemon:
                 writer.write(encode_message(progress))
                 await writer.drain()
 
-                detection = await detect_chapters(doc, inference=self.inference)
+                detection = await detect_chapters(
+                    doc,
+                    inference=self.batch_inference if self.batch_inference is not None else self.inference,
+                )
                 detection_method = detection.method
 
                 if detection.method == "single-file":
