@@ -1,7 +1,12 @@
 """Tests for BatchFallbackProposal protocol message."""
 import pytest
 
-from pal.protocol import BatchFallbackProposal, encode_message, decode_message
+from pal.protocol import (
+    BatchFallbackProposal,
+    BatchFallbackApprovalMessage,
+    encode_message,
+    decode_message,
+)
 
 
 def test_batch_fallback_proposal_round_trips():
@@ -77,6 +82,27 @@ def test_approval_registry_batch_fallback_skip_declines():
     proposal = reg.get(pid)
     assert proposal.status == "declined"
     assert proposal.approval_choice is None
+
+
+def test_batch_fallback_approval_round_trips():
+    msg = BatchFallbackApprovalMessage(proposal_id="p1", choice="main")
+    wire = encode_message(msg)
+    restored = decode_message(wire)
+    assert isinstance(restored, BatchFallbackApprovalMessage)
+    assert restored.proposal_id == "p1"
+    assert restored.choice == "main"
+
+
+def test_batch_fallback_approval_retry_round_trips():
+    msg = BatchFallbackApprovalMessage(proposal_id="p2", choice="retry")
+    restored = decode_message(encode_message(msg))
+    assert restored.choice == "retry"
+
+
+def test_batch_fallback_approval_skip_round_trips():
+    msg = BatchFallbackApprovalMessage(proposal_id="p3", choice="skip")
+    restored = decode_message(encode_message(msg))
+    assert restored.choice == "skip"
 
 
 def test_approval_registry_approve_without_state_is_backward_compatible():

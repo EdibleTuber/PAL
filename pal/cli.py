@@ -27,6 +27,8 @@ from pal.protocol import (
     CompileProposalMessage,
     ConsolidateProposalMessage,
     ReorgProposalMessage,
+    BatchFallbackProposal,
+    BatchFallbackApprovalMessage,
     Message,
 )
 
@@ -98,6 +100,19 @@ def format_reorg_proposal(msg: "ReorgProposalMessage") -> str:
         "  [a]pprove  [d]ecline  [e]dit",
         "> ",
     ])
+    return "\n".join(lines)
+
+
+def format_batch_fallback_proposal(msg: "BatchFallbackProposal") -> str:
+    """Render a batch-fallback approval prompt. Pure formatter."""
+    lines = [
+        "",
+        "────────── Batch model unavailable ──────────",
+        f"  Caller:    {msg.caller}",
+        f"  Context:   {msg.context}",
+        "  [r]etry on batch  [m]ain (one-off)  [s]kip",
+        "> ",
+    ]
     return "\n".join(lines)
 
 
@@ -384,6 +399,30 @@ async def run_repl() -> None:
                             response = ResearchApprovalResponseMessage(
                                 proposal_id=msg.proposal_id, decision="decline"
                             )
+                        await client.send(response)
+                        continue
+                    elif isinstance(msg, BatchFallbackProposal):
+                        if live is not None:
+                            live.stop()
+                            live = None
+                        print(format_batch_fallback_proposal(msg), end="", flush=True)
+                        loop = asyncio.get_running_loop()
+                        while True:
+                            raw = (await loop.run_in_executor(None, input)).strip().lower()
+                            if raw in ("r", "retry"):
+                                fallback_choice = "retry"
+                                break
+                            if raw in ("m", "main"):
+                                fallback_choice = "main"
+                                break
+                            if raw in ("s", "skip", ""):
+                                fallback_choice = "skip"
+                                break
+                            print(f"Invalid choice {raw!r}; please enter r, m, or s.")
+                        response = BatchFallbackApprovalMessage(
+                            proposal_id=msg.proposal_id,
+                            choice=fallback_choice,
+                        )
                         await client.send(response)
                         continue
                     elif isinstance(msg, StreamChunkMessage):

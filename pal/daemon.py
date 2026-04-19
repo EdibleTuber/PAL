@@ -53,6 +53,7 @@ from pal.protocol import (
     ErrorMessage,
     ToolProgressMessage,
     ResearchApprovalResponseMessage,
+    BatchFallbackApprovalMessage,
     Message,
     STREAM_BUFFER_LIMIT,
     encode_message,
@@ -278,6 +279,14 @@ class Daemon:
                     # so the tool coroutine awaiting the proposal event can
                     # proceed even while a chat turn is in flight.
                     self._route_approval_response(msg, approval_registry, scanner)
+                elif isinstance(msg, BatchFallbackApprovalMessage):
+                    # Batch fallback choices feed the approval registry with
+                    # an explicit state so the caller can branch on "retry"
+                    # vs "main" vs a plain decline.
+                    if msg.choice in ("retry", "main"):
+                        approval_registry.approve(msg.proposal_id, state=msg.choice)
+                    else:
+                        approval_registry.decline(msg.proposal_id)
                 elif isinstance(msg, ChatMessage):
                     if current_chat_task is not None and not current_chat_task.done():
                         error = ErrorMessage(

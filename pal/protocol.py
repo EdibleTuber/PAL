@@ -13,6 +13,7 @@ Message types:
     reorg_proposal              — daemon-to-CLI reorganization approval request
     consolidate_proposal        — daemon-to-CLI consolidation approval request
     batch_fallback_proposal     — daemon-to-CLI batch inference fallback request
+    batch_fallback_approval     — CLI-to-daemon batch fallback choice
 
 All messages are serialized as a single JSON line terminated by newline.
 """
@@ -148,6 +149,20 @@ class BatchFallbackProposal:
     type: str = "batch_fallback_proposal"
 
 
+@dataclass
+class BatchFallbackApprovalMessage:
+    """Client to daemon: the user's choice for a BatchFallbackProposal.
+
+    choice values:
+      - "retry": approve with state "retry" (retry on batch)
+      - "main":  approve with state "main"  (run on main for this one call)
+      - "skip":  decline (caller uses its default fallback)
+    """
+    proposal_id: str
+    choice: Literal["retry", "main", "skip"]
+    type: str = "batch_fallback_approval"
+
+
 _MESSAGE_TYPES: dict[str, type] = {
     "chat": ChatMessage,
     "command": CommandMessage,
@@ -163,6 +178,7 @@ _MESSAGE_TYPES: dict[str, type] = {
     "promote_proposal": PromoteProposalMessage,
     "learning_candidate_proposal": LearningCandidateProposalMessage,
     "batch_fallback_proposal": BatchFallbackProposal,
+    "batch_fallback_approval": BatchFallbackApprovalMessage,
 }
 
 Message = (
@@ -180,6 +196,7 @@ Message = (
     | PromoteProposalMessage
     | LearningCandidateProposalMessage
     | BatchFallbackProposal
+    | BatchFallbackApprovalMessage
 )
 
 
