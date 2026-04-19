@@ -88,9 +88,9 @@ class InferenceClient:
             async with self._client.stream("POST", url, json=payload) as resp:
                 resp.raise_for_status()
                 yield resp
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+        except (httpx.TransportError, httpx.HTTPStatusError) as exc:
             if self.is_batch:
-                raise BatchUnavailableError(str(exc)) from exc
+                raise BatchUnavailableError(f"{type(exc).__name__}: {exc}") from exc
             raise
 
     async def _post_with_retry(self, payload: dict) -> httpx.Response:
@@ -120,9 +120,9 @@ class InferenceClient:
             resp = await self._client.post(url, json=payload)
             resp.raise_for_status()
             return resp
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+        except (httpx.TransportError, httpx.HTTPStatusError) as exc:
             if self.is_batch:
-                raise BatchUnavailableError(str(exc)) from exc
+                raise BatchUnavailableError(f"{type(exc).__name__}: {exc}") from exc
             raise
 
     async def complete(

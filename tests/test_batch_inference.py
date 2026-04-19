@@ -66,3 +66,46 @@ async def test_non_batch_client_raises_original_exception(monkeypatch):
         await client.complete([{"role": "user", "content": "x"}])
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_batch_client_raises_batch_unavailable_on_remote_protocol_error(monkeypatch):
+    """RemoteProtocolError (TCP RST mid-response, e.g. OOM kill) is a
+    subclass of TransportError and should be classified as batch
+    unavailable for batch clients."""
+    client = InferenceClient(
+        base_url="http://127.0.0.1:9999",
+        model="test-batch-model",
+        is_batch=True,
+    )
+
+    async def fake_post(*args, **kwargs):
+        raise httpx.RemoteProtocolError("peer closed connection without sending complete message body")
+
+    monkeypatch.setattr(client._client, "post", fake_post)
+
+    with pytest.raises(BatchUnavailableError, match="RemoteProtocolError"):
+        await client.complete([{"role": "user", "content": "x"}])
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_batch_client_raises_batch_unavailable_on_read_error(monkeypatch):
+    """ReadError (NetworkError subclass) is a TransportError and should
+    be classified as batch unavailable for batch clients."""
+    client = InferenceClient(
+        base_url="http://127.0.0.1:9999",
+        model="test-batch-model",
+        is_batch=True,
+    )
+
+    async def fake_post(*args, **kwargs):
+        raise httpx.ReadError("read failed")
+
+    monkeypatch.setattr(client._client, "post", fake_post)
+
+    with pytest.raises(BatchUnavailableError, match="ReadError"):
+        await client.complete([{"role": "user", "content": "x"}])
+
+    await client.close()
