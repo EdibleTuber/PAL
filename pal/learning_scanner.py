@@ -16,6 +16,8 @@ import uuid
 from collections import deque
 from typing import Awaitable, Callable, Optional
 
+from pal.inference import BatchUnavailableError
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,7 +85,9 @@ async def extract_candidate(
 ) -> Optional[dict]:
     """Ask the inference server whether a durable lesson is present.
 
-    Returns {"title": str, "body": str} or None. Never raises.
+    Returns {"title": str, "body": str} or None. Timeouts and
+    BatchUnavailableError are logged and result in a silent skip (None).
+    Other exceptions propagate to the caller.
     inference_call is an async callable that takes a single prompt string
     and returns the model's response text.
     """
@@ -93,8 +97,11 @@ async def extract_candidate(
     )
     try:
         raw = await asyncio.wait_for(inference_call(prompt), timeout=timeout)
-    except (asyncio.TimeoutError, Exception) as exc:
-        logger.warning("learning extraction failed: %s", exc)
+    except BatchUnavailableError as exc:
+        logger.warning("Learning scan skipped, batch unavailable: %s", exc)
+        return None
+    except asyncio.TimeoutError as exc:
+        logger.warning("learning extraction timed out: %s", exc)
         return None
 
     text = (raw or "").strip()
