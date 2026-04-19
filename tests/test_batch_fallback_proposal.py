@@ -30,3 +30,66 @@ def test_batch_fallback_proposal_accepts_llm_toc_caller():
     wire = encode_message(proposal)
     restored = decode_message(wire)
     assert restored.caller == "llm_toc"
+
+
+def test_approval_registry_accepts_batch_fallback_kind():
+    from pal.approval_registry import ApprovalRegistry
+    reg = ApprovalRegistry()
+    pid = reg.create_proposal(
+        kind="batch_fallback",
+        rationale="batch backend unavailable",
+        caller="categorizer",
+        context="categorizing raw/summaries/X.md",
+    )
+    reg.approve(pid, state="main")
+    proposal = reg.get(pid)
+    assert proposal.status == "approved"
+    assert proposal.approval_choice == "main"
+    assert proposal.caller == "categorizer"
+    assert proposal.context == "categorizing raw/summaries/X.md"
+
+
+def test_approval_registry_batch_fallback_retry_state():
+    from pal.approval_registry import ApprovalRegistry
+    reg = ApprovalRegistry()
+    pid = reg.create_proposal(
+        kind="batch_fallback",
+        rationale="batch backend unavailable",
+        caller="llm_toc",
+        context="detecting chapters for book.pdf",
+    )
+    reg.approve(pid, state="retry")
+    proposal = reg.get(pid)
+    assert proposal.status == "approved"
+    assert proposal.approval_choice == "retry"
+
+
+def test_approval_registry_batch_fallback_skip_declines():
+    from pal.approval_registry import ApprovalRegistry
+    reg = ApprovalRegistry()
+    pid = reg.create_proposal(
+        kind="batch_fallback",
+        rationale="batch backend unavailable",
+        caller="categorizer",
+        context="x",
+    )
+    reg.decline(pid)
+    proposal = reg.get(pid)
+    assert proposal.status == "declined"
+    assert proposal.approval_choice is None
+
+
+def test_approval_registry_approve_without_state_is_backward_compatible():
+    """Existing callers (research, compile, etc.) call approve(proposal_id)
+    with no state argument. This must continue to work unchanged."""
+    from pal.approval_registry import ApprovalRegistry
+    reg = ApprovalRegistry()
+    pid = reg.create_proposal(
+        kind="research",
+        topic="quantum",
+        rationale="investigate",
+    )
+    reg.approve(pid)  # no state argument
+    proposal = reg.get(pid)
+    assert proposal.status == "approved"
+    assert proposal.approval_choice is None

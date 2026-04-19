@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
 ProposalStatus = Literal["pending", "approved", "declined", "consumed", "expired"]
-ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote"]
+ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote", "batch_fallback"]
 
 DEFAULT_EXPIRY_MINUTES = 15
 
@@ -39,6 +39,9 @@ class Proposal:
     target_title: Optional[str] = None
     slug: Optional[str] = None
     body: Optional[str] = None
+    caller: Optional[str] = None
+    context: Optional[str] = None
+    approval_choice: Optional[str] = None
     # asyncio.Event is set when the proposal reaches a terminal state
     # (approved, declined, or expired). Not part of the public dataclass
     # fields — carried separately for awaiting.
@@ -66,6 +69,8 @@ class ApprovalRegistry:
         target_title: Optional[str] = None,
         slug: Optional[str] = None,
         body: Optional[str] = None,
+        caller: Optional[str] = None,
+        context: Optional[str] = None,
     ) -> str:
         if kind == "research" and not topic:
             raise ValueError("research proposals require a non-empty topic")
@@ -114,17 +119,21 @@ class ApprovalRegistry:
             target_title=target_title,
             slug=slug,
             body=body,
+            caller=caller,
+            context=context,
         )
         return proposal_id
 
     def get(self, proposal_id: str) -> Optional[Proposal]:
         return self._proposals.get(proposal_id)
 
-    def approve(self, proposal_id: str) -> None:
+    def approve(self, proposal_id: str, state: Optional[str] = None) -> None:
         proposal = self._proposals.get(proposal_id)
         if proposal is None or proposal.status != "pending":
             return
         proposal.status = "approved"
+        if state is not None:
+            proposal.approval_choice = state
         proposal.event.set()
 
     def decline(self, proposal_id: str) -> None:
