@@ -23,6 +23,16 @@ _INITIAL_BACKOFF = 2.0
 _MAX_BACKOFF = 30.0
 
 
+class BatchUnavailableError(RuntimeError):
+    """Raised when a batch-mode InferenceClient cannot reach the batch
+    backend (connection error, repeated 503, or timeout past retries).
+
+    Callers distinguish this from other RuntimeErrors to decide between
+    silent-skip (background scanners) or user-facing fallback proposals
+    (interactive callers).
+    """
+
+
 @dataclass
 class ToolCall:
     id: str
@@ -39,9 +49,10 @@ class CompletionResult:
 
 
 class InferenceClient:
-    def __init__(self, base_url: str, model: str) -> None:
+    def __init__(self, base_url: str, model: str, is_batch: bool = False) -> None:
         self.base_url = base_url.rstrip("/")
         self.default_model = model
+        self.is_batch = is_batch
         self._client = httpx.AsyncClient(timeout=600.0)
 
     async def close(self) -> None:
@@ -51,48 +62,68 @@ class InferenceClient:
     async def _stream_with_retry(
         self, url: str, payload: dict
     ) -> AsyncGenerator[httpx.Response, None]:
-        """Open a streaming POST, retrying on 503 before yielding."""
+        """Open a streaming POST, retrying on 503 before yielding.
+
+        For batch clients, any unrecoverable failure (connection error,
+        repeated 503, timeout) is re-raised as BatchUnavailableError so
+        callers can distinguish batch-backend outages from other errors.
+        """
         backoff = _INITIAL_BACKOFF
-        for attempt in range(_MAX_RETRIES):
+        try:
+            for attempt in range(_MAX_RETRIES):
+                async with self._client.stream("POST", url, json=payload) as resp:
+                    if resp.status_code != 503:
+                        resp.raise_for_status()
+                        yield resp
+                        return
+                    retry_after = resp.headers.get("Retry-After")
+                wait = min(float(retry_after) if retry_after else backoff, _MAX_BACKOFF)
+                logger.warning(
+                    "503 from inference server on stream (attempt %d/%d), retrying in %.1fs",
+                    attempt + 1, _MAX_RETRIES, wait,
+                )
+                await asyncio.sleep(wait)
+                backoff = min(backoff * 2, _MAX_BACKOFF)
+            # Final attempt
             async with self._client.stream("POST", url, json=payload) as resp:
-                if resp.status_code != 503:
-                    resp.raise_for_status()
-                    yield resp
-                    return
-                retry_after = resp.headers.get("Retry-After")
-            wait = min(float(retry_after) if retry_after else backoff, _MAX_BACKOFF)
-            logger.warning(
-                "503 from inference server on stream (attempt %d/%d), retrying in %.1fs",
-                attempt + 1, _MAX_RETRIES, wait,
-            )
-            await asyncio.sleep(wait)
-            backoff = min(backoff * 2, _MAX_BACKOFF)
-        # Final attempt
-        async with self._client.stream("POST", url, json=payload) as resp:
-            resp.raise_for_status()
-            yield resp
+                resp.raise_for_status()
+                yield resp
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+            if self.is_batch:
+                raise BatchUnavailableError(str(exc)) from exc
+            raise
 
     async def _post_with_retry(self, payload: dict) -> httpx.Response:
-        """POST to /v1/chat/completions with exponential backoff on 503."""
+        """POST to /v1/chat/completions with exponential backoff on 503.
+
+        For batch clients, any unrecoverable failure (connection error,
+        repeated 503, timeout) is re-raised as BatchUnavailableError so
+        callers can distinguish batch-backend outages from other errors.
+        """
         url = f"{self.base_url}/v1/chat/completions"
         backoff = _INITIAL_BACKOFF
-        for attempt in range(_MAX_RETRIES):
+        try:
+            for attempt in range(_MAX_RETRIES):
+                resp = await self._client.post(url, json=payload)
+                if resp.status_code != 503:
+                    resp.raise_for_status()
+                    return resp
+                retry_after = float(resp.headers.get("Retry-After", backoff))
+                wait = min(retry_after, _MAX_BACKOFF)
+                logger.warning(
+                    "503 from inference server (attempt %d/%d), retrying in %.1fs",
+                    attempt + 1, _MAX_RETRIES, wait,
+                )
+                await asyncio.sleep(wait)
+                backoff = min(backoff * 2, _MAX_BACKOFF)
+            # Final attempt - let it raise on any error
             resp = await self._client.post(url, json=payload)
-            if resp.status_code != 503:
-                resp.raise_for_status()
-                return resp
-            retry_after = float(resp.headers.get("Retry-After", backoff))
-            wait = min(retry_after, _MAX_BACKOFF)
-            logger.warning(
-                "503 from inference server (attempt %d/%d), retrying in %.1fs",
-                attempt + 1, _MAX_RETRIES, wait,
-            )
-            await asyncio.sleep(wait)
-            backoff = min(backoff * 2, _MAX_BACKOFF)
-        # Final attempt - let it raise on any error
-        resp = await self._client.post(url, json=payload)
-        resp.raise_for_status()
-        return resp
+            resp.raise_for_status()
+            return resp
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+            if self.is_batch:
+                raise BatchUnavailableError(str(exc)) from exc
+            raise
 
     async def complete(
         self,
