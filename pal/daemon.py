@@ -115,6 +115,7 @@ class Daemon:
             categorizer=self.categorizer,
             prompt_builder=self.prompt_builder,
             retrieval=self.retrieval,
+            max_body_chars=config.max_inference_body_chars,
         )
         from pal.reorg import Reorganizer
         self.reorganizer = Reorganizer(
@@ -130,6 +131,7 @@ class Daemon:
             inference=self.inference,
             prompt_builder=self.prompt_builder,
             retrieval=self.retrieval,
+            max_body_chars=config.max_inference_body_chars,
         )
         cleanup_archived(config.vault_path)
 
@@ -201,6 +203,7 @@ class Daemon:
             inference=self.inference,
             vault_path=self.config.vault_path,
             on_progress=emit_progress,
+            max_body_chars=self.config.max_inference_body_chars,
         )
 
         from pal.learning_scanner import LearningScanner, extract_candidate
@@ -976,6 +979,7 @@ class Daemon:
                 raw_path=full_path,
                 vault_path=self.config.vault_path,
                 inference=self.inference,
+                max_body_chars=self.config.max_inference_body_chars,
             )
         except Exception as exc:
             logger.exception("Summarize failed: %s", exc)
@@ -1674,6 +1678,7 @@ class Daemon:
             inference=self.inference,
             vault_path=self.config.vault_path,
             on_progress=on_progress,
+            max_body_chars=self.config.max_inference_body_chars,
         )
 
         # Detect file vs topic

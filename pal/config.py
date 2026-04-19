@@ -26,6 +26,7 @@ class Config:
     searxng_url: str = "http://192.168.1.14:8080"
     fetch_max_bytes: int = 2_000_000
     fetch_timeout: int = 30
+    max_inference_body_chars: int = 20_000
 
 
 def load_config() -> Config:
@@ -51,4 +52,6 @@ def load_config() -> Config:
         kwargs["fetch_max_bytes"] = int(mb)
     if ft := os.environ.get("PAL_FETCH_TIMEOUT"):
         kwargs["fetch_timeout"] = int(ft)
+    if mib := os.environ.get("PAL_MAX_INFERENCE_BODY_CHARS"):
+        kwargs["max_inference_body_chars"] = int(mib)
     return Config(**kwargs)

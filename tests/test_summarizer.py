@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from pal.summarizer import summarize_raw_file, SummarizeResult
+from pal.summarizer import summarize_raw_file, SummarizeResult, SourceTooLargeError
 
 
 @dataclass
@@ -85,6 +85,29 @@ async def test_summarize_calls_inference_with_sanitized_content(mock_inference, 
     assert len(messages) == 2
     assert messages[0]["role"] == "system"
     assert "BEGIN UNTRUSTED" in messages[1]["content"] or "UNTRUSTED" in messages[1]["content"].upper()
+
+
+@pytest.mark.asyncio
+async def test_summarize_refuses_oversized_body(mock_inference, raw_file):
+    """Raw bodies larger than max_body_chars raise SourceTooLargeError
+    before any inference call is made."""
+    vault, path = raw_file
+    big_body = "x" * 100
+    path.write_text(
+        "---\n"
+        "title: Big File\n"
+        "status: raw\n"
+        "---\n"
+        + big_body
+    )
+    with pytest.raises(SourceTooLargeError, match="exceeds summarize limit"):
+        await summarize_raw_file(
+            raw_path=path,
+            vault_path=vault,
+            inference=mock_inference,
+            max_body_chars=50,
+        )
+    mock_inference.complete.assert_not_called()
 
 
 @pytest.mark.asyncio

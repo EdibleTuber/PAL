@@ -85,12 +85,14 @@ class Researcher:
         inference,
         vault_path: Path,
         on_progress: Optional[Callable[[str], None]] = None,
+        max_body_chars: int = 20_000,
     ) -> None:
         self.websearch = websearch
         self.fetcher = fetcher
         self.inference = inference
         self.vault_path = vault_path
         self.on_progress = on_progress
+        self.max_body_chars = max_body_chars
         self._fetched_urls: set[str] = set()
 
     def _progress(self, msg: str) -> None:
@@ -188,6 +190,7 @@ class Researcher:
                 raw_path=source.raw_path,
                 vault_path=self.vault_path,
                 inference=self.inference,
+                max_body_chars=self.max_body_chars,
             )
             source.summary_path = result.summary_path
         except Exception as exc:

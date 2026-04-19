@@ -28,12 +28,14 @@ class Consolidator:
         inference,         # InferenceClient
         prompt_builder,    # SystemPromptBuilder
         retrieval=None,    # RetrievalClient | None
+        max_body_chars: int = 20_000,
     ) -> None:
         self.vault_path = vault_path
         self.wiki = wiki
         self.inference = inference
         self.prompt_builder = prompt_builder
         self.retrieval = retrieval
+        self.max_body_chars = max_body_chars
 
     async def consolidate(
         self,
@@ -88,6 +90,22 @@ class Consolidator:
             text = src_full.read_text()
             _meta, body = parse_frontmatter(text)
             source_bodies.append((src, body))
+
+        # Size guard across the combined sources. Consolidate fuses all
+        # source bodies into one prompt, so we check the sum rather than
+        # each individually.
+        total_body_chars = sum(len(body) for _, body in source_bodies)
+        if total_body_chars > self.max_body_chars:
+            return {
+                "status": "too_large",
+                "target_path": target_path,
+                "reason": (
+                    f"Combined source bodies are {total_body_chars} characters; "
+                    f"exceeds consolidate limit of {self.max_body_chars}. "
+                    f"Consolidate fewer sources at a time, or split the largest source."
+                ),
+                "vault_exists": False,
+            }
 
         # Build the grounded system + user prompt
         base = self.prompt_builder.build()

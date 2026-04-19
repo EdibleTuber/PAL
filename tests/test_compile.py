@@ -178,6 +178,31 @@ async def test_compile_empty_args(compile_daemon, socket_path):
 
 
 @pytest.mark.asyncio
+async def test_compile_refuses_oversized_body(compile_daemon, socket_path, monkeypatch):
+    """compile_one must refuse bodies larger than max_body_chars without
+    making an inference call, returning status 'too_large'."""
+    daemon, vault = compile_daemon
+
+    inference_called = False
+
+    async def fail_if_called(messages, **kwargs):
+        nonlocal inference_called
+        inference_called = True
+        raise AssertionError("inference must not be called on oversized body")
+
+    monkeypatch.setattr(daemon.inference, "complete", fail_if_called)
+    monkeypatch.setattr(daemon.compiler, "max_body_chars", 500)
+
+    big_body = "z" * 2000
+    _write_summary_file(vault, "raw/summaries/huge.md", big_body)
+
+    result = await daemon.compiler.compile_one("raw/summaries/huge.md")
+    assert result["status"] == "too_large"
+    assert "exceeds compile limit" in result["reason"]
+    assert inference_called is False
+
+
+@pytest.mark.asyncio
 async def test_compile_rejects_path_traversal(compile_daemon, socket_path):
     daemon, vault = compile_daemon
     client = PalClient(socket_path)

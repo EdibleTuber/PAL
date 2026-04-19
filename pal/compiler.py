@@ -61,6 +61,7 @@ class Compiler:
         categorizer,    # Categorizer
         prompt_builder, # SystemPromptBuilder
         retrieval=None, # RetrievalClient | None
+        max_body_chars: int = 20_000,
     ) -> None:
         self.vault_path = vault_path
         self.wiki = wiki
@@ -68,6 +69,7 @@ class Compiler:
         self.categorizer = categorizer
         self.prompt_builder = prompt_builder
         self.retrieval = retrieval
+        self.max_body_chars = max_body_chars
 
     async def compile_one(self, summary_path: str) -> dict[str, Any]:
         """Compile a single summary into a wiki article.
@@ -94,6 +96,21 @@ class Compiler:
             return {"status": "invalid_path", "reason": f"Invalid path: {summary_path}"}
 
         summary_meta, summary_body = parse_frontmatter(full_path.read_text())
+
+        # Size guard: refuse bodies that would blow past the inference server's
+        # context window. Gives a clean tool-result back to the LLM so it can
+        # pick a different tactic (search_content, split the source, etc.)
+        # rather than surfacing a raw 400 Bad Request.
+        if len(summary_body) > self.max_body_chars:
+            return {
+                "status": "too_large",
+                "title": summary_meta.get("title", full_path.stem),
+                "reason": (
+                    f"Source body is {len(summary_body)} characters; "
+                    f"exceeds compile limit of {self.max_body_chars}. "
+                    f"Use search_content to work on parts, or split the source."
+                ),
+            }
 
         title = summary_meta.get("title", full_path.stem)
         source_url = summary_meta.get("source_url", "")

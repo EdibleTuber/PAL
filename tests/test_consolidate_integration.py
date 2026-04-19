@@ -70,3 +70,35 @@ async def test_consolidate_end_to_end(tmp_path):
     assert exec_payload["status"] == "ok"
     assert exec_payload["vault_exists"] is True
     assert (tmp_path / "Security" / "Combined.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_consolidate_refuses_oversized_combined_sources(tmp_path):
+    """Consolidate refuses when combined source bodies exceed max_body_chars."""
+    (tmp_path / "Security").mkdir()
+    big_body = "y" * 3000
+    (tmp_path / "Security" / "a.md").write_text(f"---\ntitle: A\n---\n{big_body}")
+    (tmp_path / "Security" / "b.md").write_text(f"---\ntitle: B\n---\n{big_body}")
+
+    wiki = WikiManager(tmp_path)
+    wiki.init_vault()
+
+    class _NeverCalledInference:
+        async def complete(self, messages, reasoning=None, tools=None, model=None):
+            raise AssertionError("inference must not be called on oversized input")
+
+    consolidator = Consolidator(
+        vault_path=tmp_path,
+        wiki=wiki,
+        inference=_NeverCalledInference(),
+        prompt_builder=_StubPromptBuilder(),
+        max_body_chars=5000,  # smaller than combined 6000
+    )
+    result = await consolidator.consolidate(
+        source_paths=["Security/a.md", "Security/b.md"],
+        target_path="Security/Merged.md",
+        target_title="Merged",
+    )
+    assert result["status"] == "too_large"
+    assert "exceeds consolidate limit" in result["reason"]
+    assert not (tmp_path / "Security" / "Merged.md").exists()

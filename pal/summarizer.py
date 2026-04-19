@@ -16,6 +16,10 @@ from pal.title_cleanup import TITLE_RULES, parse_title_and_body
 logger = logging.getLogger(__name__)
 
 
+class SourceTooLargeError(RuntimeError):
+    """Raised when a raw body exceeds the inference body size guard."""
+
+
 @dataclass
 class SummarizeResult:
     summary_path: Path
@@ -27,6 +31,7 @@ async def summarize_raw_file(
     raw_path: Path,
     vault_path: Path,
     inference,
+    max_body_chars: int = 20_000,
 ) -> SummarizeResult:
     """Summarize a raw file: sanitize + boundary-wrap + LLM summarize.
 
@@ -34,14 +39,25 @@ async def summarize_raw_file(
         raw_path: Absolute path to the raw markdown file.
         vault_path: Root of the vault (for writing summaries).
         inference: InferenceClient (or mock with .complete()).
+        max_body_chars: Refuse to summarize if the raw body exceeds this
+            character count. Guards against blowing past the inference
+            server's context window on verbatim source-ingested chapters.
 
     Returns:
         SummarizeResult with the summary path and text.
 
     Raises:
+        SourceTooLargeError: if the raw body exceeds max_body_chars.
         RuntimeError or inference errors on LLM failure.
     """
     raw_meta, raw_body = parse_frontmatter(raw_path.read_text())
+
+    if len(raw_body) > max_body_chars:
+        raise SourceTooLargeError(
+            f"Raw body is {len(raw_body)} characters; exceeds summarize limit "
+            f"of {max_body_chars}. Split the source into smaller files before "
+            f"summarizing."
+        )
 
     guid = generate_guid()
     sanitization = sanitize(raw_body, guid=guid)
