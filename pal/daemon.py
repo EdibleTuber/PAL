@@ -218,9 +218,11 @@ class Daemon:
 
         from pal.learning_scanner import LearningScanner, extract_candidate
 
+        effective_inference = self.batch_inference if self.batch_inference is not None else self.inference
+
         async def _scanner_extractor(recent_turns, trigger_message):
             async def call(prompt: str) -> str:
-                result = await self.inference.complete(
+                result = await effective_inference.complete(
                     messages=[{"role": "user", "content": prompt}],
                     tools=None,
                 )
