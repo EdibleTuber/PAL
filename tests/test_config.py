@@ -80,3 +80,32 @@ def test_load_config_web_settings_from_env(monkeypatch):
     assert cfg.searxng_url == "http://localhost:9999"
     assert cfg.fetch_max_bytes == 500_000
     assert cfg.fetch_timeout == 10
+
+
+def test_config_default_batch_disabled():
+    cfg = Config()
+    assert cfg.batch_enabled is False
+    assert cfg.batch_inference_url == "http://192.168.1.14:11434"
+    assert cfg.batch_model == "gemma-3-4b-it-q4_k_m"
+
+
+def test_config_env_enables_batch(monkeypatch):
+    monkeypatch.setenv("PAL_BATCH_ENABLED", "true")
+    monkeypatch.setenv("PAL_BATCH_INFERENCE_URL", "http://localhost:9000")
+    monkeypatch.setenv("PAL_BATCH_MODEL", "qwen3-4b-instruct")
+    cfg = load_config()
+    assert cfg.batch_enabled is True
+    assert cfg.batch_inference_url == "http://localhost:9000"
+    assert cfg.batch_model == "qwen3-4b-instruct"
+
+
+def test_config_env_batch_enabled_falsy_values(monkeypatch):
+    """PAL_BATCH_ENABLED only enables on explicit true-ish strings."""
+    for v in ("false", "0", "no", ""):
+        monkeypatch.setenv("PAL_BATCH_ENABLED", v)
+        cfg = load_config()
+        assert cfg.batch_enabled is False, f"value {v!r} should leave batch disabled"
+    for v in ("true", "1", "yes", "TRUE"):
+        monkeypatch.setenv("PAL_BATCH_ENABLED", v)
+        cfg = load_config()
+        assert cfg.batch_enabled is True, f"value {v!r} should enable batch"

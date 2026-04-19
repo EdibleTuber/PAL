@@ -27,6 +27,9 @@ class Config:
     fetch_max_bytes: int = 2_000_000
     fetch_timeout: int = 30
     max_inference_body_chars: int = 20_000
+    batch_enabled: bool = False
+    batch_inference_url: str = "http://192.168.1.14:11434"
+    batch_model: str = "gemma-3-4b-it-q4_k_m"
 
 
 def load_config() -> Config:
@@ -54,4 +57,10 @@ def load_config() -> Config:
         kwargs["fetch_timeout"] = int(ft)
     if mib := os.environ.get("PAL_MAX_INFERENCE_BODY_CHARS"):
         kwargs["max_inference_body_chars"] = int(mib)
+    if (v := os.environ.get("PAL_BATCH_ENABLED")) is not None:
+        kwargs["batch_enabled"] = v.strip().lower() in ("true", "1", "yes")
+    if url := os.environ.get("PAL_BATCH_INFERENCE_URL"):
+        kwargs["batch_inference_url"] = url
+    if model := os.environ.get("PAL_BATCH_MODEL"):
+        kwargs["batch_model"] = model
     return Config(**kwargs)
