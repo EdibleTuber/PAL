@@ -12,11 +12,13 @@ Message types:
     compile_proposal            — daemon-to-CLI compile approval request
     reorg_proposal              — daemon-to-CLI reorganization approval request
     consolidate_proposal        — daemon-to-CLI consolidation approval request
+    batch_fallback_proposal     — daemon-to-CLI batch inference fallback request
 
 All messages are serialized as a single JSON line terminated by newline.
 """
 import json
 from dataclasses import dataclass, asdict
+from typing import Literal
 
 # asyncio StreamReader default is 64 KiB, which /research and similar
 # commands can exceed in a single NDJSON line after aggregating sources.
@@ -128,6 +130,24 @@ class LearningCandidateProposalMessage:
     type: str = "learning_candidate_proposal"
 
 
+@dataclass
+class BatchFallbackProposal:
+    """Emitted when a user-facing call to the batch inference backend
+    fails and the user should choose: retry on batch, run on main, or
+    skip this step.
+
+    Approval states carried via approval_choice in the approval registry:
+      - approved with state "retry": retry on batch
+      - approved with state "main": run on main for this one call
+      - declined: caller uses its default fallback
+    """
+    proposal_id: str
+    caller: Literal["categorizer", "llm_toc"]
+    context: str
+    original_request: dict
+    type: str = "batch_fallback_proposal"
+
+
 _MESSAGE_TYPES: dict[str, type] = {
     "chat": ChatMessage,
     "command": CommandMessage,
@@ -142,6 +162,7 @@ _MESSAGE_TYPES: dict[str, type] = {
     "consolidate_proposal": ConsolidateProposalMessage,
     "promote_proposal": PromoteProposalMessage,
     "learning_candidate_proposal": LearningCandidateProposalMessage,
+    "batch_fallback_proposal": BatchFallbackProposal,
 }
 
 Message = (
@@ -158,6 +179,7 @@ Message = (
     | ConsolidateProposalMessage
     | PromoteProposalMessage
     | LearningCandidateProposalMessage
+    | BatchFallbackProposal
 )
 
 
