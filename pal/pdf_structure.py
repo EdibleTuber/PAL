@@ -31,6 +31,14 @@ TYPOGRAPHY_HEADING_MULTIPLIER = 1.4  # heading font size >= multiplier * body ba
 TYPOGRAPHY_MAX_HEADING_CHARS = 150   # headings are short
 TYPOGRAPHY_MIN_CANDIDATES = 2        # fewer than this = not useful structure
 
+# A TOC entry that spans this many pages or more AND has at least two child
+# entries one level deeper is descended into: its children replace it in
+# the boundary list. This handles books shaped as "Part I: The Patterns"
+# (316 pages) containing 20 level-2 chapters, where using the Part as one
+# chunk would produce a single unusably-large raw file.
+TOC_DESCEND_MIN_PAGES = 40
+TOC_DESCEND_MIN_CHILDREN = 2
+
 
 @dataclass
 class ChapterBoundary:
@@ -39,27 +47,103 @@ class ChapterBoundary:
     start_page: int
 
 
+def _descend_into_toc(
+    entries: list[tuple[int, str, int]],
+    level: int,
+    range_start: int,
+    range_end: int,
+) -> list[ChapterBoundary]:
+    """Recursively build a boundary list from TOC entries.
+
+    Takes all valid entries pre-normalized as (level, title, 0-indexed page).
+    Walks siblings at `level` whose page falls within [range_start, range_end].
+    For each sibling, computes its page span (to the next sibling or
+    range_end). If the span is >= TOC_DESCEND_MIN_PAGES AND at least
+    TOC_DESCEND_MIN_CHILDREN entries exist one level deeper within that
+    span, replace the sibling with the descended children; otherwise keep
+    the sibling as-is.
+    """
+    siblings = [
+        (title, page)
+        for entry_level, title, page in entries
+        if entry_level == level and range_start <= page <= range_end
+    ]
+    if not siblings:
+        return []
+
+    result: list[ChapterBoundary] = []
+    for i, (title, page) in enumerate(siblings):
+        entry_start = page
+        if i + 1 < len(siblings):
+            entry_end = siblings[i + 1][1] - 1
+        else:
+            entry_end = range_end
+        span = entry_end - entry_start + 1
+
+        if span >= TOC_DESCEND_MIN_PAGES:
+            children = _descend_into_toc(
+                entries,
+                level=level + 1,
+                range_start=entry_start,
+                range_end=entry_end,
+            )
+            if len(children) >= TOC_DESCEND_MIN_CHILDREN:
+                result.extend(children)
+                continue
+
+        result.append(ChapterBoundary(title=title, start_page=entry_start))
+
+    return result
+
+
 def detect_from_toc(doc) -> list[ChapterBoundary] | None:
     """Tier 1: use the PDF's embedded table of contents.
 
-    Returns a list of ChapterBoundary for each top-level (level == 1) TOC
-    entry, with start_page converted to 0-indexed. Returns None if the
-    TOC is missing or has fewer than two top-level entries.
+    Walks the TOC starting at level 1. For any level-1 entry that spans
+    TOC_DESCEND_MIN_PAGES or more and has at least TOC_DESCEND_MIN_CHILDREN
+    level-2 entries nested within, descends into those children instead of
+    emitting the level-1 entry. Applies recursively one level deeper, so a
+    huge level-2 section with level-3 chapters also descends.
+
+    Returns None when the TOC is missing, has fewer than two level-1
+    entries to anchor detection, or descent produces fewer than two
+    boundaries overall.
 
     `doc` is a pymupdf.Document (aka fitz.Document). Accepts a duck-typed
-    object exposing get_toc() for testability.
+    object exposing get_toc() and __len__() for testability.
     """
     toc = doc.get_toc()
     if not toc:
         return None
-    level_one = [
-        ChapterBoundary(title=title.strip(), start_page=page - 1)
-        for level, title, page in toc
-        if level == 1 and isinstance(page, int) and page >= 1 and title and title.strip()
-    ]
-    if len(level_one) < 2:
+
+    total_pages = len(doc)
+    if total_pages <= 0:
         return None
-    return level_one
+
+    valid_entries = [
+        (level, title.strip(), page - 1)
+        for level, title, page in toc
+        if isinstance(level, int)
+        and isinstance(page, int)
+        and page >= 1
+        and title
+        and title.strip()
+    ]
+
+    level_one_count = sum(1 for level, _, _ in valid_entries if level == 1)
+    if level_one_count < 2:
+        return None
+
+    boundaries = _descend_into_toc(
+        valid_entries,
+        level=1,
+        range_start=0,
+        range_end=total_pages - 1,
+    )
+
+    if len(boundaries) < 2:
+        return None
+    return boundaries
 
 
 def _iter_blocks(doc):

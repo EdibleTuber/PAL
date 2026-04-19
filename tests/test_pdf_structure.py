@@ -77,6 +77,7 @@ def test_chapter_boundary_has_title_and_start_page():
 
 def test_detect_from_toc_returns_level_one_entries():
     doc = MagicMock()
+    doc.__len__.return_value = 100
     doc.get_toc.return_value = [
         [1, "Introduction", 3],
         [2, "Background", 5],
@@ -97,12 +98,14 @@ def test_detect_from_toc_returns_level_one_entries():
 
 def test_detect_from_toc_returns_none_when_toc_empty():
     doc = MagicMock()
+    doc.__len__.return_value = 100
     doc.get_toc.return_value = []
     assert detect_from_toc(doc) is None
 
 
 def test_detect_from_toc_returns_none_when_only_one_level_one():
     doc = MagicMock()
+    doc.__len__.return_value = 50
     doc.get_toc.return_value = [
         [1, "Only Chapter", 1],
         [2, "Section A", 2],
@@ -112,6 +115,7 @@ def test_detect_from_toc_returns_none_when_only_one_level_one():
 
 def test_detect_from_toc_ignores_level_two_plus():
     doc = MagicMock()
+    doc.__len__.return_value = 20
     doc.get_toc.return_value = [
         [2, "Subsection Before Chapter 1", 1],
         [1, "Chapter One", 3],
@@ -127,6 +131,7 @@ def test_detect_from_toc_filters_invalid_entries():
     """Malformed TOC entries (page <= 0, empty title) should be filtered
     rather than leaking into boundaries."""
     doc = MagicMock()
+    doc.__len__.return_value = 100
     doc.get_toc.return_value = [
         [1, "Good One", 3],
         [1, "Broken Link", 0],       # page 0 = broken destination
@@ -142,6 +147,125 @@ def test_detect_from_toc_filters_invalid_entries():
     assert boundaries[0].start_page == 2
     assert boundaries[1].title == "Good Two"
     assert boundaries[1].start_page == 19
+
+
+def test_detect_from_toc_descends_into_oversized_level_one():
+    """A level-1 entry spanning >= 40 pages with >= 2 level-2 children is
+    replaced by its children. Small level-1 entries are kept as-is."""
+    doc = MagicMock()
+    doc.__len__.return_value = 455
+    doc.get_toc.return_value = [
+        [1, "Foreword", 6],
+        [1, "Prologue", 11],
+        [1, "Part I: The Patterns", 40],       # spans 40 to 355 = 316 pages, huge
+        [2, "Chapter 1: Prompt Chaining", 41],
+        [2, "Chapter 2: Routing", 55],
+        [2, "Chapter 3: Parallelization", 72],
+        [1, "Part II: The Supplement", 356],   # spans 356 to 444 = 89 pages
+        [2, "Supplement A", 360],
+        [2, "Supplement B", 400],
+        [1, "Glossary", 445],
+        [1, "Index", 449],
+    ]
+    boundaries = detect_from_toc(doc)
+    assert boundaries is not None
+    titles = [b.title for b in boundaries]
+    assert "Foreword" in titles
+    assert "Prologue" in titles
+    # Oversized Part I is replaced by its three chapter children.
+    assert "Part I: The Patterns" not in titles
+    assert "Chapter 1: Prompt Chaining" in titles
+    assert "Chapter 2: Routing" in titles
+    assert "Chapter 3: Parallelization" in titles
+    # Oversized Part II is replaced by its two supplement children.
+    assert "Part II: The Supplement" not in titles
+    assert "Supplement A" in titles
+    assert "Supplement B" in titles
+    # Small level-1 entries stay as-is.
+    assert "Glossary" in titles
+    assert "Index" in titles
+
+
+def test_detect_from_toc_keeps_oversized_level_one_without_children():
+    """A level-1 entry spanning >= 40 pages with fewer than two level-2
+    children stays as-is (no useful structure to descend into)."""
+    doc = MagicMock()
+    doc.__len__.return_value = 200
+    doc.get_toc.return_value = [
+        [1, "Preface", 5],
+        [1, "Huge Monolith", 20],              # spans 20-199 = 180 pages
+        # No level-2 children under Huge Monolith
+        [1, "Appendix", 200],                  # spans 200-199 = actually 0 pages
+    ]
+    # Adjust: make it clearer - put Appendix at end of doc
+    doc.get_toc.return_value = [
+        [1, "Preface", 5],
+        [1, "Huge Monolith", 20],
+    ]
+    doc.__len__.return_value = 200
+    boundaries = detect_from_toc(doc)
+    assert boundaries is not None
+    titles = [b.title for b in boundaries]
+    # Huge Monolith has no level-2 children, so it stays.
+    assert "Huge Monolith" in titles
+    assert "Preface" in titles
+
+
+def test_detect_from_toc_keeps_small_level_one_with_children():
+    """A level-1 entry smaller than 40 pages is kept even if it has
+    level-2 children (we don't want every heading becoming a file)."""
+    doc = MagicMock()
+    doc.__len__.return_value = 150
+    doc.get_toc.return_value = [
+        [1, "Chapter One", 5],
+        [2, "Section 1.1", 8],
+        [2, "Section 1.2", 15],
+        [1, "Chapter Two", 25],               # spans 25-49 = 25 pages (< 40)
+        [2, "Section 2.1", 30],
+        [2, "Section 2.2", 40],
+        [1, "Chapter Three", 50],             # spans 50-149 = 100 pages (>= 40)
+        [2, "Section 3.1", 60],
+        [2, "Section 3.2", 100],
+    ]
+    boundaries = detect_from_toc(doc)
+    assert boundaries is not None
+    titles = [b.title for b in boundaries]
+    # Chapters One and Two kept at level 1 because they are small.
+    assert "Chapter One" in titles
+    assert "Chapter Two" in titles
+    assert "Section 1.1" not in titles
+    assert "Section 2.1" not in titles
+    # Chapter Three is big with children, so descends.
+    assert "Chapter Three" not in titles
+    assert "Section 3.1" in titles
+    assert "Section 3.2" in titles
+
+
+def test_detect_from_toc_recursive_descent():
+    """Oversized level-2 within an oversized level-1 descends into level-3."""
+    doc = MagicMock()
+    doc.__len__.return_value = 500
+    doc.get_toc.return_value = [
+        [1, "Front Matter", 1],
+        [1, "The Book", 10],                   # level 1: huge (490 pages)
+        [2, "Chapter 1", 11],                  # level 2: 39 pages - NOT oversized
+        [2, "Chapter 2: Big One", 50],         # level 2: 400 pages - oversized
+        [3, "Section A", 60],
+        [3, "Section B", 200],
+        [3, "Section C", 300],
+        [2, "Chapter 3", 450],                 # level 2: 49 pages - oversized but no level-3 children within
+    ]
+    boundaries = detect_from_toc(doc)
+    assert boundaries is not None
+    titles = [b.title for b in boundaries]
+    assert "Front Matter" in titles
+    assert "The Book" not in titles             # level-1 descended
+    assert "Chapter 1" in titles                # level-2 stays (small)
+    assert "Chapter 2: Big One" not in titles   # level-2 descended
+    assert "Section A" in titles
+    assert "Section B" in titles
+    assert "Section C" in titles
+    assert "Chapter 3" in titles                # level-2 stays (no children within its range)
 
 
 def test_detect_from_typography_finds_chapters_at_large_font():
