@@ -1676,6 +1676,45 @@ class Daemon:
                 lines.append(f"  batch: {self.config.batch_model} (slot info unavailable)")
         return "\n".join(lines)
 
+    async def _dispatch_model_command(self, args: str) -> str:
+        """Parse /model args and dispatch.
+
+        Supports:
+          - empty -> show status (PB-14)
+          - <name> -> swap main
+          - --target <slot> <name> -> swap that slot
+
+        Returns a text response to include in the ResponseMessage.
+        """
+        parts = args.strip().split()
+        if not parts:
+            return await self._model_status_text()
+        target = "main"
+        if parts[0] == "--target":
+            if len(parts) < 3:
+                return "Usage: /model [--target main|batch] <model-name>"
+            target = parts[1]
+            model_name = " ".join(parts[2:])
+            if target not in ("main", "batch"):
+                return f"Unknown target: {target}. Use main or batch."
+        else:
+            model_name = " ".join(parts)
+        try:
+            await self._request_model_swap(model_name, target=target)
+        except Exception as exc:
+            return f"Swap failed: {exc}"
+        return f"Requested swap: {target} -> {model_name}"
+
+    async def _request_model_swap(self, model: str, target: str = "main") -> dict:
+        """POST to the manager's swap endpoint with the target slot."""
+        async with httpx.AsyncClient(timeout=120.0) as c:
+            resp = await c.post(
+                f"{self.config.inference_url}/swap",
+                json={"model": model, "target": target},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def _handle_model(
         self,
         args: str,
@@ -1688,13 +1727,7 @@ class Daemon:
         """
         arg = args.strip()
 
-        if arg == "":
-            text = await self._model_status_text()
-            resp = ResponseMessage(
-                text=text,
-                command="model",
-            )
-        elif arg == "list":
+        if arg == "list":
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
                     r = await client.get(f"{self.inference.base_url}/v1/models")
@@ -1715,40 +1748,22 @@ class Daemon:
                 writer.write(encode_message(error))
                 await writer.drain()
                 return
-        elif arg == "default":
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
+
+        if arg == "default":
             self.inference.default_model = self.config.model
             resp = ResponseMessage(
                 text=f"Model reset to config default: {self.inference.default_model}",
                 command="model",
             )
-        else:
-            try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    r = await client.get(f"{self.inference.base_url}/v1/models")
-                    r.raise_for_status()
-                data = r.json()
-                names = [m["id"] for m in data.get("data", [])]
-            except Exception as exc:
-                logger.warning("Failed to validate model: %s", exc)
-                error = ErrorMessage(error=f"Could not reach inference server: {exc}")
-                writer.write(encode_message(error))
-                await writer.drain()
-                return
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
 
-            if arg not in names:
-                error = ErrorMessage(
-                    error=f"Model not found: {arg}. Use /model list to see available models.",
-                )
-                writer.write(encode_message(error))
-                await writer.drain()
-                return
-
-            self.inference.default_model = arg
-            resp = ResponseMessage(
-                text=f"Model set to: {arg}",
-                command="model",
-            )
-
+        text = await self._dispatch_model_command(arg)
+        resp = ResponseMessage(text=text, command="model")
         writer.write(encode_message(resp))
         await writer.drain()
 

@@ -94,3 +94,113 @@ async def test_model_status_text_unhealthy_slot_marked(tmp_path, monkeypatch):
     text = await daemon._model_status_text()
     assert "UNHEALTHY" in text
     assert "batch: gemma-3-4b (UNHEALTHY)" in text
+
+
+@pytest.mark.asyncio
+async def test_model_command_default_targets_main(tmp_path, monkeypatch):
+    """/model <name> (no flag) dispatches a swap with target='main'."""
+    cfg = Config(
+        socket_path=tmp_path / "pal.sock",
+        vault_path=tmp_path / "vault",
+        batch_enabled=True,
+    )
+    daemon = Daemon(cfg)
+
+    swap_calls = []
+
+    async def fake_swap(model, target="main"):
+        swap_calls.append((model, target))
+        return {"ok": True}
+
+    monkeypatch.setattr(daemon, "_request_model_swap", fake_swap, raising=False)
+
+    result = await daemon._dispatch_model_command("gemma-4-26b-a4b-it-q4_k_m")
+    assert swap_calls == [("gemma-4-26b-a4b-it-q4_k_m", "main")]
+
+
+@pytest.mark.asyncio
+async def test_model_command_target_batch(tmp_path, monkeypatch):
+    """/model --target batch <name> dispatches a swap with target='batch'."""
+    cfg = Config(
+        socket_path=tmp_path / "pal.sock",
+        vault_path=tmp_path / "vault",
+        batch_enabled=True,
+    )
+    daemon = Daemon(cfg)
+
+    swap_calls = []
+
+    async def fake_swap(model, target="main"):
+        swap_calls.append((model, target))
+        return {"ok": True}
+
+    monkeypatch.setattr(daemon, "_request_model_swap", fake_swap, raising=False)
+
+    result = await daemon._dispatch_model_command("--target batch qwen3-4b-instruct")
+    assert swap_calls == [("qwen3-4b-instruct", "batch")]
+
+
+@pytest.mark.asyncio
+async def test_model_command_target_main_explicit(tmp_path, monkeypatch):
+    """/model --target main <name> dispatches a swap with target='main'."""
+    cfg = Config(
+        socket_path=tmp_path / "pal.sock",
+        vault_path=tmp_path / "vault",
+        batch_enabled=True,
+    )
+    daemon = Daemon(cfg)
+
+    swap_calls = []
+
+    async def fake_swap(model, target="main"):
+        swap_calls.append((model, target))
+        return {"ok": True}
+
+    monkeypatch.setattr(daemon, "_request_model_swap", fake_swap, raising=False)
+
+    result = await daemon._dispatch_model_command("--target main gemma-4-26b-a4b-it-q4_k_m")
+    assert swap_calls == [("gemma-4-26b-a4b-it-q4_k_m", "main")]
+
+
+@pytest.mark.asyncio
+async def test_model_command_invalid_target_returns_error(tmp_path, monkeypatch):
+    """/model --target foo <name> returns an error, no swap is dispatched."""
+    cfg = Config(
+        socket_path=tmp_path / "pal.sock",
+        vault_path=tmp_path / "vault",
+        batch_enabled=True,
+    )
+    daemon = Daemon(cfg)
+
+    swap_calls = []
+
+    async def fake_swap(model, target="main"):
+        swap_calls.append((model, target))
+
+    monkeypatch.setattr(daemon, "_request_model_swap", fake_swap, raising=False)
+
+    result = await daemon._dispatch_model_command("--target foo some-model")
+    assert swap_calls == []
+    assert "unknown target" in result.lower() or "invalid" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_model_command_target_missing_name(tmp_path, monkeypatch):
+    """/model --target batch (no model name) returns a usage error."""
+    cfg = Config(
+        socket_path=tmp_path / "pal.sock",
+        vault_path=tmp_path / "vault",
+        batch_enabled=True,
+    )
+    daemon = Daemon(cfg)
+
+    swap_calls = []
+
+    async def fake_swap(model, target="main"):
+        swap_calls.append((model, target))
+
+    monkeypatch.setattr(daemon, "_request_model_swap", fake_swap, raising=False)
+
+    result = await daemon._dispatch_model_command("--target batch")
+    assert swap_calls == []
+    assert "usage" in result.lower()
