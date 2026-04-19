@@ -1637,6 +1637,45 @@ class Daemon:
         writer.write(encode_message(resp))
         await writer.drain()
 
+    async def _get_manager_status(self) -> dict:
+        """Fetch /status from the manager. Returns empty dict on error."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as c:
+                resp = await c.get(f"{self.config.inference_url}/status")
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as exc:
+            logger.warning("manager /status fetch failed: %s", exc)
+            return {}
+
+    async def _model_status_text(self) -> str:
+        """Render the /model status text showing main (and batch when
+        enabled) slots with their loaded model and health."""
+        status = await self._get_manager_status()
+        slots = status.get("slots", {})
+        lines = ["Loaded models:"]
+        # Always show main
+        main = slots.get("main")
+        if main is not None:
+            loaded = main.get("loaded_model", "?")
+            healthy = main.get("healthy", False)
+            marker = "healthy" if healthy else "UNHEALTHY"
+            lines.append(f"  main: {loaded} ({marker})")
+        else:
+            # Fallback: manager doesn't yet expose slots (pre-Phase B server)
+            lines.append(f"  main: {self.config.model}")
+        # Show batch only when enabled
+        if self.config.batch_enabled:
+            batch = slots.get("batch")
+            if batch is not None:
+                loaded = batch.get("loaded_model", "?")
+                healthy = batch.get("healthy", False)
+                marker = "healthy" if healthy else "UNHEALTHY"
+                lines.append(f"  batch: {loaded} ({marker})")
+            else:
+                lines.append(f"  batch: {self.config.batch_model} (slot info unavailable)")
+        return "\n".join(lines)
+
     async def _handle_model(
         self,
         args: str,
@@ -1650,8 +1689,9 @@ class Daemon:
         arg = args.strip()
 
         if arg == "":
+            text = await self._model_status_text()
             resp = ResponseMessage(
-                text=f"Model: {self.inference.default_model}",
+                text=text,
                 command="model",
             )
         elif arg == "list":
