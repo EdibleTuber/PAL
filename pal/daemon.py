@@ -81,6 +81,14 @@ class Daemon:
             base_url=config.inference_url,
             model=config.model,
         )
+        if config.batch_enabled:
+            self.batch_inference: InferenceClient | None = InferenceClient(
+                base_url=config.batch_inference_url,
+                model=config.batch_model,
+                is_batch=True,
+            )
+        else:
+            self.batch_inference = None
         self._server: asyncio.AbstractServer | None = None
         self._should_exit = False
         self.wiki = WikiManager(config.vault_path)
