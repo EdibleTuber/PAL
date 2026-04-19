@@ -1,10 +1,13 @@
 """Unit tests for auto-categorization."""
+import asyncio
+from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
 from pal.categorizer import Categorizer, build_categorization_prompt, parse_category_response
-from pal.inference import InferenceClient, CompletionResult
+from pal.inference import BatchUnavailableError, CompletionResult, InferenceClient
 
 
 class TestParseCategoryResponse:
@@ -122,3 +125,131 @@ class TestCategorizer:
         assert "Projects" in prompt
         assert "_wisdom" not in prompt
         assert "raw" not in prompt
+
+
+@dataclass
+class _FakeProposal:
+    status: str
+    approval_choice: str | None
+    event: asyncio.Event
+
+
+class _FakeRegistry:
+    """Minimal stand-in for ApprovalRegistry that immediately resolves
+    proposals according to preconfigured ``next_choice``."""
+
+    def __init__(self):
+        self.next_choice = "main"  # "retry" / "main" / "skip"
+        self.proposals: dict[str, _FakeProposal] = {}
+        self.create_calls: list[dict] = []
+
+    def create_proposal(self, **kwargs):
+        self.create_calls.append(kwargs)
+        pid = f"p{len(self.proposals) + 1}"
+        ev = asyncio.Event()
+        if self.next_choice == "skip":
+            status = "declined"
+            choice = None
+        else:
+            status = "approved"
+            choice = self.next_choice
+        self.proposals[pid] = _FakeProposal(status=status, approval_choice=choice, event=ev)
+        ev.set()  # Auto-resolve so the caller's wait returns immediately.
+        return pid
+
+    def get(self, pid: str) -> _FakeProposal:
+        return self.proposals[pid]
+
+
+def _make_inference(side_effect):
+    m = AsyncMock()
+    m.complete.side_effect = side_effect
+    return m
+
+
+@pytest.mark.asyncio
+async def test_categorizer_uses_main_on_fallback_approval(tmp_path):
+    async def batch_fail(messages, **kwargs):
+        raise BatchUnavailableError("down")
+
+    async def main_ok(messages, **kwargs):
+        return CompletionResult(type="text", content="Research")
+
+    batch = _make_inference(batch_fail)
+    main = _make_inference(main_ok)
+    registry = _FakeRegistry()
+    registry.next_choice = "main"
+    emitted: list = []
+
+    cat = Categorizer(inference=batch)
+    category = await cat.categorize(
+        title="X",
+        body="y",
+        vault_path=tmp_path,
+        approval_registry=registry,
+        proposal_emitter=emitted.append,
+        main_inference=main,
+    )
+    assert category == "Research"
+    main.complete.assert_called_once()
+    assert len(emitted) == 1
+    assert registry.create_calls[0]["kind"] == "batch_fallback"
+    assert registry.create_calls[0]["caller"] == "categorizer"
+
+
+@pytest.mark.asyncio
+async def test_categorizer_retries_on_batch_when_user_picks_retry(tmp_path):
+    call_count = 0
+
+    async def batch(messages, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise BatchUnavailableError("down")
+        return CompletionResult(type="text", content="Technology")
+
+    registry = _FakeRegistry()
+    registry.next_choice = "retry"
+
+    cat = Categorizer(inference=_make_inference(batch))
+    category = await cat.categorize(
+        title="X",
+        body="y",
+        vault_path=tmp_path,
+        approval_registry=registry,
+        proposal_emitter=lambda m: None,
+    )
+    assert category == "Technology"
+    assert call_count == 2  # first raised, retry succeeded
+
+
+@pytest.mark.asyncio
+async def test_categorizer_returns_default_when_user_skips(tmp_path):
+    async def batch_fail(messages, **kwargs):
+        raise BatchUnavailableError("down")
+
+    registry = _FakeRegistry()
+    registry.next_choice = "skip"
+
+    cat = Categorizer(inference=_make_inference(batch_fail))
+    category = await cat.categorize(
+        title="X",
+        body="y",
+        vault_path=tmp_path,
+        approval_registry=registry,
+        proposal_emitter=lambda m: None,
+    )
+    # Current Categorizer default is "Research" (FALLBACK_DIRECTORY).
+    assert category == "Research"
+
+
+@pytest.mark.asyncio
+async def test_categorizer_returns_default_when_no_approval_wired(tmp_path):
+    """When approval_registry is None, BatchUnavailableError falls
+    straight through to the default without prompting."""
+    async def batch_fail(messages, **kwargs):
+        raise BatchUnavailableError("down")
+
+    cat = Categorizer(inference=_make_inference(batch_fail))
+    category = await cat.categorize(title="X", body="y", vault_path=tmp_path)
+    assert category == "Research"

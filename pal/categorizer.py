@@ -6,7 +6,8 @@ directory best fits the content. Falls back to Research/ on any failure.
 import logging
 from pathlib import Path
 
-from pal.inference import InferenceClient
+from pal.inference import BatchUnavailableError, InferenceClient
+from pal.protocol import BatchFallbackProposal
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,10 @@ class Categorizer:
         title: str,
         body: str,
         vault_path: Path,
+        *,
+        approval_registry=None,
+        proposal_emitter=None,
+        main_inference=None,
     ) -> str:
         """Choose the best vault directory for an article.
 
@@ -88,24 +93,99 @@ class Categorizer:
             title: article title
             body: full article body
             vault_path: path to the vault root
+            approval_registry: optional ApprovalRegistry for batch-fallback
+                user prompting. When None, batch unavailability silently
+                falls back to the default category.
+            proposal_emitter: optional callable (message) -> None used to
+                send BatchFallbackProposal to the active client.
+            main_inference: optional InferenceClient used when the user
+                chooses "main" on a batch-fallback prompt.
 
         Returns:
             directory path relative to vault root (e.g., "Research")
         """
+        messages = self._build_messages(title, body, vault_path)
+
+        try:
+            result = await self.inference.complete(messages)
+            return self._parse_category(result)
+        except BatchUnavailableError:
+            return await self._handle_batch_unavailable(
+                messages,
+                title,
+                approval_registry,
+                proposal_emitter,
+                main_inference,
+            )
+        except Exception:
+            logger.exception("Categorization failed, falling back to %s", FALLBACK_DIRECTORY)
+            return self._default_category()
+
+    def _build_messages(self, title: str, body: str, vault_path: Path) -> list[dict]:
         directories = self._list_directories(vault_path)
         user_prompt = build_categorization_prompt(title, body, directories)
-
-        messages = [
+        return [
             {"role": "system", "content": CATEGORIZATION_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ]
 
+    def _parse_category(self, result) -> str:
+        return parse_category_response(result.content or "")
+
+    def _default_category(self) -> str:
+        return FALLBACK_DIRECTORY
+
+    async def _handle_batch_unavailable(
+        self,
+        messages: list[dict],
+        title: str,
+        approval_registry,
+        proposal_emitter,
+        main_inference,
+    ) -> str:
+        if approval_registry is None or proposal_emitter is None:
+            logger.warning(
+                "Batch backend unavailable and no approval pathway wired; "
+                "falling back to %s",
+                FALLBACK_DIRECTORY,
+            )
+            return self._default_category()
+
+        context = f"categorizing {title!r}"
+        proposal_id = approval_registry.create_proposal(
+            kind="batch_fallback",
+            rationale="batch backend unavailable",
+            caller="categorizer",
+            context=context,
+        )
+        proposal_msg = BatchFallbackProposal(
+            proposal_id=proposal_id,
+            caller="categorizer",
+            context=context,
+            original_request={"messages": messages, "reasoning": "off"},
+        )
+        proposal_emitter(proposal_msg)
+
+        proposal = approval_registry.get(proposal_id)
+        await proposal.event.wait()
+
+        if proposal.status == "declined":
+            return self._default_category()
+
+        choice = proposal.approval_choice
         try:
-            result = await self.inference.complete(messages)
-            return parse_category_response(result.content or "")
+            if choice == "retry":
+                result = await self.inference.complete(messages)
+                return self._parse_category(result)
+            if choice == "main" and main_inference is not None:
+                result = await main_inference.complete(messages)
+                return self._parse_category(result)
         except Exception:
-            logger.exception("Categorization failed, falling back to %s", FALLBACK_DIRECTORY)
-            return FALLBACK_DIRECTORY
+            logger.exception(
+                "Batch-fallback follow-up call failed, falling back to %s",
+                FALLBACK_DIRECTORY,
+            )
+        return self._default_category()
 
     def _list_directories(self, vault_path: Path) -> list[str]:
         """List non-system, non-raw top-level directories in the vault."""
