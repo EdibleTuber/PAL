@@ -29,6 +29,7 @@ STREAM_BUFFER_LIMIT = 16 * 1024 * 1024
 @dataclass
 class ChatMessage:
     text: str
+    channel_id: str | None = None
     type: str = "chat"
 
 
@@ -36,6 +37,7 @@ class ChatMessage:
 class CommandMessage:
     name: str
     args: str
+    channel_id: str | None = None
     type: str = "command"
 
 

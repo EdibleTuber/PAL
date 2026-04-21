@@ -218,3 +218,46 @@ def test_consolidate_proposal_roundtrip():
     assert decoded.target_title == "Combined"
     assert decoded.rationale == "Merge overlapping notes"
     assert decoded.type == "consolidate_proposal"
+
+
+def test_chat_message_defaults_channel_id_to_none():
+    from pal.protocol import ChatMessage
+    msg = ChatMessage(text="hi")
+    assert msg.channel_id is None
+    assert msg.text == "hi"
+
+
+def test_chat_message_carries_channel_id():
+    from pal.protocol import ChatMessage, encode_message, decode_message
+    msg = ChatMessage(text="hi", channel_id="C1")
+    line = encode_message(msg)
+    decoded = decode_message(line.strip())
+    assert isinstance(decoded, ChatMessage)
+    assert decoded.text == "hi"
+    assert decoded.channel_id == "C1"
+
+
+def test_command_message_defaults_channel_id_to_none():
+    from pal.protocol import CommandMessage
+    msg = CommandMessage(name="note", args="hello")
+    assert msg.channel_id is None
+
+
+def test_command_message_round_trip_with_channel_id():
+    from pal.protocol import CommandMessage, encode_message, decode_message
+    msg = CommandMessage(name="note", args="foo", channel_id="C1")
+    line = encode_message(msg)
+    decoded = decode_message(line.strip())
+    assert isinstance(decoded, CommandMessage)
+    assert decoded.name == "note"
+    assert decoded.args == "foo"
+    assert decoded.channel_id == "C1"
+
+
+def test_chat_message_round_trip_without_channel_id_backward_compat():
+    """A ChatMessage without channel_id serializes and deserializes cleanly."""
+    from pal.protocol import ChatMessage, encode_message, decode_message
+    msg = ChatMessage(text="hi")
+    decoded = decode_message(encode_message(msg).strip())
+    assert isinstance(decoded, ChatMessage)
+    assert decoded.channel_id is None
