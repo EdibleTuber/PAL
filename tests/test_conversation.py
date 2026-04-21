@@ -115,3 +115,53 @@ def test_conversation_reasoning_override_clearable():
     conv.reasoning_override = "on"
     conv.reasoning_override = None
     assert conv.reasoning_override is None
+
+
+def test_conversation_without_history_path_is_in_memory_only(tmp_path):
+    """Backward compat: no history_path means no file written."""
+    conv = Conversation(history_depth=10)
+    conv.add_user("hello")
+    conv.add_assistant("hi back")
+    # No file should exist anywhere.
+    assert not list(tmp_path.iterdir())
+
+
+def test_conversation_with_history_path_appends_every_message(tmp_path):
+    import json
+    history_path = tmp_path / "history.jsonl"
+    conv = Conversation(history_depth=10, history_path=history_path)
+
+    conv.add_user("hello")
+    conv.add_assistant("hi back")
+    conv.add_assistant_tool_calls([{"id": "c1", "type": "function",
+                                     "function": {"name": "foo", "arguments": "{}"}}])
+    conv.add_tool_result("c1", "result")
+
+    lines = history_path.read_text().splitlines()
+    assert len(lines) == 4
+
+    parsed = [json.loads(line) for line in lines]
+    assert parsed[0] == {"role": "user", "content": "hello"}
+    assert parsed[1] == {"role": "assistant", "content": "hi back"}
+    assert parsed[2]["role"] == "assistant"
+    assert parsed[2]["tool_calls"][0]["id"] == "c1"
+    assert parsed[3] == {"role": "tool", "tool_call_id": "c1", "content": "result"}
+
+
+def test_conversation_history_path_creates_parent_dir(tmp_path):
+    nested = tmp_path / "a" / "b" / "history.jsonl"
+    conv = Conversation(history_depth=10, history_path=nested)
+    conv.add_user("hi")
+    assert nested.exists()
+
+
+def test_conversation_truncation_does_not_truncate_history_file(tmp_path):
+    """Truncation only affects the in-memory window; the on-disk log keeps everything."""
+    history_path = tmp_path / "history.jsonl"
+    conv = Conversation(history_depth=2, history_path=history_path)
+    for i in range(5):
+        conv.add_user(f"msg-{i}")
+    # In-memory: only last 2
+    assert len(conv.messages) == 2
+    # On-disk: all 5
+    assert len(history_path.read_text().splitlines()) == 5
