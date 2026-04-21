@@ -52,7 +52,12 @@ class PalClient:
         self._writer.write(encode_message(msg))
         await self._writer.drain()
 
-    async def chat(self, text: str) -> AsyncGenerator[Message, None]:
+    async def chat(
+        self,
+        text: str,
+        *,
+        channel_id: str | None = None,
+    ) -> AsyncGenerator[Message, None]:
         """Send a chat message and yield streaming chunks + final response.
 
         Acquires a read lock so concurrent callers (e.g. multiple Discord
@@ -61,7 +66,7 @@ class PalClient:
         if not self._writer or not self._reader:
             raise RuntimeError("Not connected")
         async with self._read_lock:
-            msg = ChatMessage(text=text)
+            msg = ChatMessage(text=text, channel_id=channel_id)
             self._writer.write(encode_message(msg))
             await self._writer.drain()
 
@@ -74,12 +79,18 @@ class PalClient:
                 if isinstance(decoded, (ResponseMessage, ErrorMessage)):
                     break
 
-    async def command(self, name: str, args: str = "") -> ResponseMessage:
+    async def command(
+        self,
+        name: str,
+        args: str = "",
+        *,
+        channel_id: str | None = None,
+    ) -> ResponseMessage:
         """Send a slash command and return the response."""
         if not self._writer or not self._reader:
             raise RuntimeError("Not connected")
         async with self._read_lock:
-            msg = CommandMessage(name=name, args=args)
+            msg = CommandMessage(name=name, args=args, channel_id=channel_id)
             self._writer.write(encode_message(msg))
             await self._writer.drain()
 

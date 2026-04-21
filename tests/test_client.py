@@ -1,5 +1,7 @@
 """Tests for the unix socket client."""
+import json
 import pytest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from pal.client import PalClient
@@ -78,3 +80,67 @@ async def test_client_send_writes_encoded_message(tmp_path):
     assert isinstance(decoded, ChatMessage)
     assert decoded.text == "hello"
     mock_writer.drain.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_sends_channel_id_when_provided():
+    """Confirm the ChatMessage wire payload includes channel_id."""
+    client = PalClient(socket_path=Path("/tmp/unused.sock"))
+    writer = MagicMock()
+    writer.write = MagicMock()
+    writer.drain = AsyncMock()
+    writer.is_closing = MagicMock(return_value=False)
+    client._writer = writer
+
+    reader = MagicMock()
+    # Return an empty line so the generator terminates immediately.
+    reader.readline = AsyncMock(return_value=b"")
+    client._reader = reader
+
+    async for _ in client.chat("hello", channel_id="C1"):
+        pass
+
+    written = writer.write.call_args_list[0][0][0]  # bytes
+    payload = json.loads(written.decode("utf-8").strip())
+    assert payload["text"] == "hello"
+    assert payload["channel_id"] == "C1"
+
+
+@pytest.mark.asyncio
+async def test_chat_defaults_channel_id_to_none():
+    client = PalClient(socket_path=Path("/tmp/unused.sock"))
+    writer = MagicMock()
+    writer.write = MagicMock()
+    writer.drain = AsyncMock()
+    writer.is_closing = MagicMock(return_value=False)
+    client._writer = writer
+    reader = MagicMock()
+    reader.readline = AsyncMock(return_value=b"")
+    client._reader = reader
+
+    async for _ in client.chat("hello"):
+        pass
+
+    payload = json.loads(writer.write.call_args_list[0][0][0].decode("utf-8").strip())
+    assert payload["channel_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_command_sends_channel_id_when_provided():
+    from pal.protocol import ResponseMessage, encode_message
+    client = PalClient(socket_path=Path("/tmp/unused.sock"))
+    writer = MagicMock()
+    writer.write = MagicMock()
+    writer.drain = AsyncMock()
+    writer.is_closing = MagicMock(return_value=False)
+    client._writer = writer
+
+    reader = MagicMock()
+    reader.readline = AsyncMock(return_value=encode_message(ResponseMessage(text="ok")))
+    client._reader = reader
+
+    await client.command("note", "hello there", channel_id="C1")
+
+    payload = json.loads(writer.write.call_args_list[0][0][0].decode("utf-8").strip())
+    assert payload["name"] == "note"
+    assert payload["channel_id"] == "C1"
