@@ -29,7 +29,7 @@ class Config:
     max_inference_body_chars: int = 20_000
     batch_enabled: bool = False
     batch_inference_url: str = "http://192.168.1.14:11434"
-    batch_model: str = "gemma-3-4b-it-q4_k_m"
+    batch_model: str = "gemma-4-E4B-it-Q4_K_M"
 
 
 def load_config() -> Config:

@@ -86,7 +86,7 @@ def test_config_default_batch_disabled():
     cfg = Config()
     assert cfg.batch_enabled is False
     assert cfg.batch_inference_url == "http://192.168.1.14:11434"
-    assert cfg.batch_model == "gemma-3-4b-it-q4_k_m"
+    assert cfg.batch_model == "gemma-4-E4B-it-Q4_K_M"
 
 
 def test_config_env_enables_batch(monkeypatch):
