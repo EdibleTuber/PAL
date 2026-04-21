@@ -140,3 +140,29 @@ def test_base_prompt_mentions_wait_for_reindex():
     from pal.prompt_builder import BASE_PROMPT
     assert "wait_for_reindex" in BASE_PROMPT
     assert "reindex" in BASE_PROMPT.lower()
+
+
+def test_build_with_scratchpad_renders_section(builder):
+    prompt = builder.build(channel_scratchpad="Phase 2 in progress")
+    assert "Phase 2 in progress" in prompt
+    assert "Channel Scratchpad" in prompt
+
+
+def test_build_empty_scratchpad_omits_section(builder):
+    prompt = builder.build(channel_scratchpad="")
+    assert "Channel Scratchpad" not in prompt
+
+
+def test_build_none_scratchpad_omits_section(builder):
+    prompt = builder.build()  # no arg
+    assert "Channel Scratchpad" not in prompt
+
+
+def test_build_scratchpad_appears_between_wisdom_and_commands(builder, vault):
+    WisdomManager(vault).add(title="Rule", body="some wisdom")
+    prompt = builder.build(channel_scratchpad="scratch content")
+    wisdom_idx = prompt.find("Active Wisdom")
+    scratch_idx = prompt.find("Channel Scratchpad")
+    commands_idx = prompt.find("Available Commands")
+
+    assert wisdom_idx < scratch_idx < commands_idx

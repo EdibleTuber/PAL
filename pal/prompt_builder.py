@@ -102,8 +102,8 @@ class SystemPromptBuilder:
         self.profile = profile
         self.wisdom = wisdom
 
-    def build(self) -> str:
-        """Compose the current system prompt from base + profile + wisdom."""
+    def build(self, channel_scratchpad: str | None = None) -> str:
+        """Compose the current system prompt from base + profile + wisdom + scratchpad."""
         sections = [BASE_PROMPT]
 
         profile_body = self.profile.read()
@@ -114,6 +114,9 @@ class SystemPromptBuilder:
         if wisdom_bodies:
             wisdom_text = "\n".join(f"- {body}" for body in wisdom_bodies)
             sections.append(f"## Active Wisdom\n\n{wisdom_text}")
+
+        if channel_scratchpad:
+            sections.append(f"## Channel Scratchpad\n\n{channel_scratchpad}")
 
         from pal.commands import COMMANDS
         cmd_lines = [f"- `/{c.name} {c.args}`".rstrip() + f" - {c.description}"
