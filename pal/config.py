@@ -30,6 +30,10 @@ class Config:
     batch_enabled: bool = False
     batch_inference_url: str = "http://192.168.1.14:11434"
     batch_model: str = "gemma-4-E4B-it-Q4_K_M"
+    channels_dir: Path = field(
+        default_factory=lambda: Path.home() / ".local/share/pal/channels"
+    )
+    scratchpad_max_bytes: int = 2048
 
 
 def load_config() -> Config:
@@ -63,4 +67,8 @@ def load_config() -> Config:
         kwargs["batch_inference_url"] = url
     if model := os.environ.get("PAL_BATCH_MODEL"):
         kwargs["batch_model"] = model
+    if cd := os.environ.get("PAL_CHANNELS_DIR"):
+        kwargs["channels_dir"] = Path(cd)
+    if smb := os.environ.get("PAL_SCRATCHPAD_MAX_BYTES"):
+        kwargs["scratchpad_max_bytes"] = int(smb)
     return Config(**kwargs)

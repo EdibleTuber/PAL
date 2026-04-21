@@ -109,3 +109,30 @@ def test_config_env_batch_enabled_falsy_values(monkeypatch):
         monkeypatch.setenv("PAL_BATCH_ENABLED", v)
         cfg = load_config()
         assert cfg.batch_enabled is True, f"value {v!r} should enable batch"
+
+
+def test_config_default_channels_dir():
+    from pal.config import Config
+    from pathlib import Path
+    cfg = Config()
+    assert cfg.channels_dir == Path.home() / ".local/share/pal/channels"
+
+
+def test_config_default_scratchpad_max_bytes():
+    from pal.config import Config
+    cfg = Config()
+    assert cfg.scratchpad_max_bytes == 2048
+
+
+def test_config_env_overrides_channels_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAL_CHANNELS_DIR", str(tmp_path / "custom"))
+    from pal.config import load_config
+    cfg = load_config()
+    assert cfg.channels_dir == tmp_path / "custom"
+
+
+def test_config_env_overrides_scratchpad_max_bytes(monkeypatch):
+    monkeypatch.setenv("PAL_SCRATCHPAD_MAX_BYTES", "4096")
+    from pal.config import load_config
+    cfg = load_config()
+    assert cfg.scratchpad_max_bytes == 4096
