@@ -581,6 +581,7 @@ class ToolExecutor:
         consolidator: "Consolidator | None" = None,
         learning: "LearningManager | None" = None,
         wisdom: "WisdomManager | None" = None,
+        scratchpad=None,
     ) -> None:
         self.vault_path = vault_path.resolve()
         self.retrieval = retrieval
@@ -594,6 +595,7 @@ class ToolExecutor:
         self.consolidator = consolidator
         self.learning = learning
         self.wisdom = wisdom
+        self.scratchpad = scratchpad
 
     def run(self, name: str, arguments: dict) -> str:
         """Dispatch a tool call and return the result as a string.

@@ -506,6 +506,8 @@ class Daemon:
                     result = await tool_executor.run_async(tc.name, tc.arguments)
                     conv.add_tool_result(tc.id, result)
 
+                # Re-read in case an update_scratch tool call modified the file.
+                scratchpad_content = scratchpad.read()
                 messages = conv.get_messages_for_api(
                     system_prompt=self.prompt_builder.build(channel_scratchpad=scratchpad_content),
                 )

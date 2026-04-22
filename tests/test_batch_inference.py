@@ -118,6 +118,7 @@ def test_daemon_categorizer_uses_main_when_batch_disabled(tmp_path):
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=False,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
     assert daemon.categorizer.inference is daemon.inference
@@ -129,6 +130,7 @@ def test_daemon_categorizer_uses_batch_when_enabled(tmp_path):
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=True,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
     assert daemon.batch_inference is not None

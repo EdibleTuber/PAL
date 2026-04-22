@@ -13,6 +13,7 @@ async def test_model_status_text_shows_main_only_when_batch_disabled(tmp_path, m
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=False,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
 
@@ -35,6 +36,7 @@ async def test_model_status_text_shows_both_when_batch_enabled(tmp_path, monkeyp
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=True,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
 
@@ -60,6 +62,7 @@ async def test_model_status_text_handles_missing_slots(tmp_path, monkeypatch):
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=True,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
 
@@ -79,6 +82,7 @@ async def test_model_status_text_unhealthy_slot_marked(tmp_path, monkeypatch):
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=True,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
 
@@ -103,6 +107,7 @@ async def test_model_command_default_targets_main(tmp_path, monkeypatch):
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=True,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
 
@@ -125,6 +130,7 @@ async def test_model_command_target_batch(tmp_path, monkeypatch):
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=True,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
 
@@ -147,6 +153,7 @@ async def test_model_command_target_main_explicit(tmp_path, monkeypatch):
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=True,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
 
@@ -169,6 +176,7 @@ async def test_model_command_invalid_target_returns_error(tmp_path, monkeypatch)
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=True,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
 
@@ -191,6 +199,7 @@ async def test_model_command_target_missing_name(tmp_path, monkeypatch):
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=True,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
 

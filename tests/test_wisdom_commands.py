@@ -18,6 +18,7 @@ async def wisdom_daemon(socket_path, mock_inference_server, tmp_path):
         vault_path=tmp_path / "vault",
         collection_id="vault",
         username="testuser",
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
     task = asyncio.create_task(daemon.serve())

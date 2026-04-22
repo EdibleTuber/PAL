@@ -22,6 +22,7 @@ async def summarize_daemon(socket_path, mock_inference_server, tmp_path):
         searxng_url=mock_inference_server,
         fetch_max_bytes=2_000_000,
         fetch_timeout=10,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
     task = asyncio.create_task(daemon.serve())

@@ -24,6 +24,7 @@ async def wiki_daemon(socket_path, mock_inference_server, vault_path):
         socket_path=socket_path,
         history_depth=50,
         vault_path=vault_path,
+        channels_dir=vault_path.parent / "channels",
     )
     daemon = Daemon(cfg)
     task = asyncio.create_task(daemon.serve())
@@ -140,6 +141,7 @@ async def test_daemon_rebuilds_index_on_startup(tmp_path, mock_inference_server)
         socket_path=socket_path,
         history_depth=50,
         vault_path=vault,
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
     task = asyncio.create_task(daemon.serve())
