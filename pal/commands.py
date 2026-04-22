@@ -37,6 +37,7 @@ COMMANDS: list[Command] = [
     Command("model", "[name]", "Show or switch the active model"),
     Command("think", "[mode]", "Control reasoning (on/off/auto/show/hide)"),
     Command("research", "<t>", "Research a topic or file of topics"),
+    Command("scratch", "<text>", "Append a timestamped note to this channel's scratchpad."),
     Command("quit", "", "End the session"),
 ]
 

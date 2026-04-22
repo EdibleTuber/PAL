@@ -17,7 +17,7 @@ from pal.config import Config
 from pal.wiki import WikiManager
 from pal.conversation import Conversation
 from pal.channels import ChannelStore, validate_channel_id
-from pal.scratchpad import Scratchpad
+from pal.scratchpad import Scratchpad, ScratchpadTooLarge
 from pal.inference import InferenceClient
 from pal.retrieval import RetrievalClient
 from pal.profile import ProfileManager
@@ -84,6 +84,24 @@ def resolve_channel_id(raw: str | None) -> str:
         )
         return CLI_DEFAULT_CHANNEL
     return raw
+
+
+async def handle_scratch(scratchpad, text: str) -> str:
+    """Append a timestamped note to the given scratchpad. Returns user-facing message."""
+    from datetime import datetime, timezone
+    text = text.strip()
+    if not text:
+        return "Usage: /scratch <text>. Appends a timestamped line to this channel's scratchpad."
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    appended = f"- {ts}: {text}\n"
+    try:
+        scratchpad.append(appended)
+    except ScratchpadTooLarge as exc:
+        return (
+            f"Error: note would push scratchpad over {exc.max_bytes} bytes. "
+            "Prune the scratchpad (edit in Obsidian or call update_scratch) and retry."
+        )
+    return f"Note added ({len(appended)} bytes)."
 
 
 def render_help_text() -> str:
@@ -634,6 +652,18 @@ class Daemon:
             await self._handle_think(msg.args, conv, writer)
         elif msg.name == "research":
             await self._handle_research(msg.args, writer)
+        elif msg.name == "scratch":
+            scratchpad = Scratchpad(
+                vault_path=self.config.vault_path,
+                channel_id=channel_id,
+                wiki=self.wiki,
+                max_bytes=self.config.scratchpad_max_bytes,
+            )
+            text = await handle_scratch(scratchpad=scratchpad, text=msg.args)
+            resp = ResponseMessage(text=text, command="scratch")
+            writer.write(encode_message(resp))
+            await writer.drain()
+            return
         else:
             error = ErrorMessage(error=f"Unknown command: /{msg.name}")
             writer.write(encode_message(error))
