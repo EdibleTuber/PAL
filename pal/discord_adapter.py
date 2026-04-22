@@ -238,10 +238,11 @@ class PalDiscordBot(discord.Client):
             try:
                 client = await self.connections.get_client(user_id)
 
+                channel_id = str(message.channel.id)
                 if parsed[0] == "command":
                     _, name, args = parsed
                     try:
-                        resp = await client.command(name, args)
+                        resp = await client.command(name, args, channel_id=channel_id)
                         reply_text = resp.text
                     except RuntimeError as exc:
                         reply_text = f"Error: {exc}"
@@ -253,7 +254,7 @@ class PalDiscordBot(discord.Client):
                         bot=self,
                         client=client,
                     )
-                    progress, reply_text = await processor.run(client.chat(chat_text))
+                    progress, reply_text = await processor.run(client.chat(chat_text, channel_id=channel_id))
 
                     # Prepend tool progress lines (only for non-proposal chat;
                     # proposal progress is routed to thread by the processor).

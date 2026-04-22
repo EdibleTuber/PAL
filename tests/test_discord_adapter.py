@@ -1,4 +1,7 @@
 """Tests for the Discord adapter message parsing and formatting."""
+import contextlib
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 from pal.discord_adapter import parse_discord_message, format_tool_progress, split_message
@@ -107,4 +110,108 @@ async def test_allowlist_empty_blocks_all():
         socket_path="/tmp/fake.sock",
     )
     assert not mgr.is_allowed("111")
+
+
+# --- Task 9: channel_id forwarding ---
+
+from pal.discord_adapter import PalDiscordBot
+from pal.protocol import ResponseMessage, StreamChunkMessage
+
+
+def _make_fake_message(content: str, author_id: int, channel_id: int, *, in_guild: bool = False):
+    """Build a minimal fake discord.Message for on_message tests."""
+    msg = MagicMock()
+    msg.content = content
+    msg.author.id = author_id
+    msg.author.bot = False
+    msg.channel.id = channel_id
+    msg.channel.typing = MagicMock(return_value=contextlib.asynccontextmanager(
+        lambda: (x async for x in _null_cm())
+    )())
+    msg.channel.send = AsyncMock()
+    msg.guild = MagicMock() if in_guild else None
+    msg.mentions = []
+    return msg
+
+
+async def _null_cm():
+    """Yield nothing — used as a body for an async context manager."""
+    yield  # pragma: no cover
+
+
+def _make_bot_with_fake_user() -> "PalDiscordBot":
+    """Create a PalDiscordBot whose .user property returns a stable fake user."""
+    bot = PalDiscordBot(allowed_users={"12345"}, socket_path="/tmp/fake.sock")
+    # discord.Client.user reads from self._connection.user; patch that.
+    fake_user = MagicMock()
+    fake_user.id = 99  # different from test message author ids
+    bot._connection.user = fake_user
+    return bot
+
+
+@pytest.mark.asyncio
+async def test_on_message_chat_forwards_channel_id():
+    """on_message passes str(message.channel.id) as channel_id to client.chat."""
+    bot = _make_bot_with_fake_user()
+
+    captured: dict = {}
+
+    async def fake_chat(text, *, channel_id=None):
+        captured["text"] = text
+        captured["channel_id"] = channel_id
+        yield StreamChunkMessage(token="hi")
+        yield ResponseMessage(text="hi")
+
+    fake_client = MagicMock()
+    fake_client.chat = fake_chat
+
+    bot.connections = MagicMock()
+    bot.connections.is_allowed = MagicMock(return_value=True)
+    bot.connections.get_client = AsyncMock(return_value=fake_client)
+    bot.active_proposals = {}
+
+    fake_msg = _make_fake_message("hello world", author_id=12345, channel_id=99999)
+    fake_msg.author = MagicMock()
+    fake_msg.author.id = 12345
+    fake_msg.author.bot = False
+    # Make sure message.author != bot.user (the equality check uses `is` too)
+    fake_msg.author.__eq__ = lambda self, other: False
+
+    await bot.on_message(fake_msg)
+
+    assert captured.get("channel_id") == "99999"
+    assert captured.get("text") == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_on_message_command_forwards_channel_id():
+    """on_message passes str(message.channel.id) as channel_id to client.command."""
+    bot = _make_bot_with_fake_user()
+
+    captured: dict = {}
+
+    async def fake_command(name, args="", *, channel_id=None):
+        captured["name"] = name
+        captured["args"] = args
+        captured["channel_id"] = channel_id
+        return ResponseMessage(text="done")
+
+    fake_client = MagicMock()
+    fake_client.command = fake_command
+
+    bot.connections = MagicMock()
+    bot.connections.is_allowed = MagicMock(return_value=True)
+    bot.connections.get_client = AsyncMock(return_value=fake_client)
+    bot.active_proposals = {}
+
+    fake_msg = _make_fake_message("!status", author_id=12345, channel_id=77777)
+    fake_msg.author = MagicMock()
+    fake_msg.author.id = 12345
+    fake_msg.author.bot = False
+    fake_msg.author.__eq__ = lambda self, other: False
+
+    await bot.on_message(fake_msg)
+
+    assert captured.get("channel_id") == "77777"
+    assert captured.get("name") == "status"
 
