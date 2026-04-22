@@ -104,12 +104,14 @@ class PalClient:
                 if isinstance(decoded, ErrorMessage):
                     raise RuntimeError(decoded.error)
 
-    async def command_stream(self, name: str, args: str = "") -> AsyncGenerator[Message, None]:
+    async def command_stream(
+        self, name: str, args: str = "", *, channel_id: str | None = None
+    ) -> AsyncGenerator[Message, None]:
         """Send a slash command and yield all messages including progress."""
         if not self._writer or not self._reader:
             raise RuntimeError("Not connected")
         async with self._read_lock:
-            msg = CommandMessage(name=name, args=args)
+            msg = CommandMessage(name=name, args=args, channel_id=channel_id)
             self._writer.write(encode_message(msg))
             await self._writer.drain()
 

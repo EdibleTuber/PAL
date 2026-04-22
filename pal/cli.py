@@ -32,6 +32,7 @@ from pal.protocol import (
     Message,
 )
 
+CLI_CHANNEL_ID = "cli-default"
 _reasoning_display: str = "show"
 
 
@@ -176,7 +177,7 @@ async def _run_command(
     task_id = None
     last_status = ""
 
-    async for msg in client.command_stream(name, args):
+    async for msg in client.command_stream(name, args, channel_id=CLI_CHANNEL_ID):
         if isinstance(msg, ToolProgressMessage):
             current = msg.arguments.get("current")
             total = msg.arguments.get("total")
@@ -286,7 +287,7 @@ async def run_repl() -> None:
             console.print()
             live = None
             try:
-                async for msg in client.chat(text):
+                async for msg in client.chat(text, channel_id=CLI_CHANNEL_ID):
                     if isinstance(msg, ToolProgressMessage):
                         if live is not None:
                             live.stop()
