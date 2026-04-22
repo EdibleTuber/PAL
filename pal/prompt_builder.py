@@ -23,6 +23,9 @@ Wiki promotion (grounded, source-linked):
 - consolidate: execute an approved consolidate proposal
 - wait_for_reindex: poll a reindex job (job_id from a prior tool result's reindex field) until done or timeout. Use only when you need new content to be searchable BEFORE your next answer; usually unnecessary because reindex runs automatically and finishes within a second or two.
 
+Channel-scoped state:
+- update_scratch: replace the scratchpad for this channel (terse, <=2 KB). Use to record working project state you want to remember next turn. Automatically included in your system prompt.
+
 Web research (read-only preview):
 - search_web: query SearxNG for titles and snippets. Cheap, no fetch. Use for "what's out there?" triage before proposing a full research run.
 

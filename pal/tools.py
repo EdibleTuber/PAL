@@ -15,6 +15,7 @@ from pal.retrieval import RetrievalClient
 from pal.wiki import WikiManager
 from pal.learning import LearningManager
 from pal.wisdom import WisdomManager
+from pal.scratchpad import ScratchpadTooLarge
 
 if TYPE_CHECKING:
     from pal.approval_registry import ApprovalRegistry
@@ -561,6 +562,34 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_scratch",
+            "description": (
+                "Replace the scratchpad contents for the current channel. "
+                "Use this to record short-term project state, current decisions, "
+                "or context you want to remember on the next turn. The scratchpad "
+                "is automatically included in your system prompt on every turn in "
+                "this channel. Content must be 2048 bytes or less. Calling this "
+                "REPLACES the scratchpad wholesale -- prior content is discarded "
+                "unless you include it in the new content."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "New scratchpad content. Markdown is fine. Keep it "
+                            "terse -- it's working state, not a wiki article."
+                        ),
+                    },
+                },
+                "required": ["content"],
+            },
+        },
+    },
 ]
 
 
@@ -647,6 +676,8 @@ class ToolExecutor:
             return await self._wait_for_reindex(arguments)
         if name == "move_file":
             return await self._move_file(arguments)
+        if name == "update_scratch":
+            return await self._update_scratch(arguments)
         # Sync tools — fall through to self.run, then trigger reindex
         # for tools that write files.
         if name in ("edit_file", "create_file"):
@@ -1498,3 +1529,16 @@ class ToolExecutor:
                     ),
                 })
             await asyncio.sleep(0.25)
+
+    async def _update_scratch(self, arguments: dict) -> str:
+        content = arguments.get("content", "")
+        if self.scratchpad is None:
+            return "Error: scratchpad not configured for this session."
+        try:
+            self.scratchpad.write(content)
+        except ScratchpadTooLarge as exc:
+            return (
+                f"Error: scratchpad too large. Proposed {exc.proposed_bytes} bytes, "
+                f"cap is {exc.max_bytes}. Prune or summarize and retry."
+            )
+        return f"Scratchpad updated ({len(content)} bytes)."

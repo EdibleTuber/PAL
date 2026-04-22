@@ -467,3 +467,63 @@ async def test_wait_for_reindex_unknown_job(vault):
         "timeout_seconds": 1,
     })
     assert "not found" in result.lower() or "unknown" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_update_scratch_writes_content(tmp_path):
+    from unittest.mock import MagicMock
+    from pal.scratchpad import Scratchpad
+    from pal.tools import ToolExecutor
+
+    wiki = MagicMock()
+    wiki.git_commit = MagicMock()
+    sp = Scratchpad(vault_path=tmp_path, channel_id="C1",
+                    wiki=wiki, max_bytes=1024)
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        wiki=wiki,
+        scratchpad=sp,
+    )
+
+    result = await executor.run_async("update_scratch", {"content": "new notes"})
+    assert "updated" in result.lower() or "ok" in result.lower()
+    assert sp.read() == "new notes"
+
+
+@pytest.mark.asyncio
+async def test_update_scratch_returns_error_on_oversize(tmp_path):
+    from unittest.mock import MagicMock
+    from pal.scratchpad import Scratchpad
+    from pal.tools import ToolExecutor
+
+    wiki = MagicMock()
+    wiki.git_commit = MagicMock()
+    sp = Scratchpad(vault_path=tmp_path, channel_id="C1",
+                    wiki=wiki, max_bytes=10)
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        wiki=wiki,
+        scratchpad=sp,
+    )
+
+    result = await executor.run_async(
+        "update_scratch", {"content": "x" * 20}
+    )
+    assert "error" in result.lower() or "too large" in result.lower()
+    assert sp.read() == ""
+
+
+@pytest.mark.asyncio
+async def test_update_scratch_without_scratchpad_errors(tmp_path):
+    """If executor wasn't given a scratchpad, tool returns a clear error."""
+    from pal.tools import ToolExecutor
+    executor = ToolExecutor(
+        vault_path=tmp_path,
+        retrieval=None,
+        wiki=None,
+        scratchpad=None,
+    )
+    result = await executor.run_async("update_scratch", {"content": "x"})
+    assert "scratchpad" in result.lower() and "not" in result.lower()
