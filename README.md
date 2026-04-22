@@ -103,6 +103,12 @@ Discord (pal-discord)  --unix socket--+
 - **Daemon**: always-on process that manages conversations, tools, and the vault
 - **Inference Server**: any OpenAI-compatible local LLM. Tested with `gemma-4-26b-a4b-it-q4_k_m` and `Qwen3.5-35B-A3B-Q4_K_M`. Model choice is configurable via `PAL_MODEL` or switched at runtime with `/model`.
 
+## Security
+
+PAL is an agentic system that processes untrusted content and executes LLM-directed tool calls. Defense layers include prompt-injection sanitization on web fetches, vault-scoped path traversal checks on every file operation, a domain allowlist on web fetches, Unix-socket filesystem ACLs, an explicit Discord user allowlist, channel ID validation before any filesystem use, and automatic git-commits on every vault write as a safety net.
+
+Full breakdown in [docs/security.md](docs/security.md).
+
 ## Setup
 
 ### Requirements
@@ -119,7 +125,9 @@ pip install -e .
 
 ### Configure
 
-All settings use environment variables with a `PAL_` prefix:
+All settings use environment variables with a `PAL_` prefix. Defaults assume a local inference server and `~/vault` as the vault path.
+
+**Core:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -127,17 +135,37 @@ All settings use environment variables with a `PAL_` prefix:
 | `PAL_MODEL` | `Qwen3.5-35B-A3B-Q4_K_M` | Model name |
 | `PAL_VAULT_PATH` | `~/vault` | Path to the Obsidian vault |
 | `PAL_SOCKET_PATH` | `$XDG_RUNTIME_DIR/pal.sock` | Unix socket path |
-| `PAL_HISTORY_DEPTH` | `50` | Conversation history window |
-| `PAL_COLLECTION_ID` | `vault` | Retrieval collection ID |
+| `PAL_HISTORY_DEPTH` | `50` | In-memory conversation window |
+| `PAL_COLLECTION_ID` | `vault` | Retrieval collection ID on the inference server |
 | `PAL_USERNAME` | `user` | Profile username |
+
+**Web research:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `PAL_SEARXNG_URL` | `http://192.168.1.14:8080` | SearxNG instance for web search |
 | `PAL_FETCH_MAX_BYTES` | `2000000` | Max bytes when fetching URLs |
 | `PAL_FETCH_TIMEOUT` | `30` | Fetch timeout in seconds |
+
+**Per-channel context:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `PAL_CHANNELS_DIR` | `~/.local/share/pal/channels` | Per-channel conversation history location |
 | `PAL_SCRATCHPAD_MAX_BYTES` | `2048` | Size cap for per-channel scratchpad |
-| `PAL_BATCH_ENABLED` | `false` | Enable batch-inference slot for background workloads (Phase B) |
+
+**Batch inference (Phase B):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PAL_BATCH_ENABLED` | `false` | Enable batch slot for background workloads |
 | `PAL_BATCH_INFERENCE_URL` | `http://192.168.1.14:11434` | Manager URL for the batch slot (usually same as main) |
 | `PAL_BATCH_MODEL` | `gemma-4-E4B-it-Q4_K_M` | Default model for the batch slot |
+
+**Discord:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `PAL_DISCORD_TOKEN` | - | Discord bot token (required for Discord) |
 | `PAL_DISCORD_ALLOWED_USERS` | - | Comma-separated Discord user IDs |
 
@@ -166,7 +194,7 @@ python -m pal.discord_main
 - Supports slash commands via `!command` syntax (e.g. `!note`, `!search`)
 - Shows tool progress as the daemon works
 - Access is restricted to user IDs listed in `PAL_DISCORD_ALLOWED_USERS`
-- **Per-channel isolation**: each Discord channel keeps its own conversation history and scratchpad. Talking to PAL in `#gdb-mcp` doesn't leak into `#general` or your DMs. See Per-Channel Context below.
+- **Per-channel isolation**: each Discord channel keeps its own conversation history and scratchpad. Talking to PAL in `#gdb-mcp` doesn't leak into `#general` or your DMs. See [Per-Channel Context](#per-channel-context) below.
 - A systemd service (`pal-discord.service`) is included, configured to start after the daemon
 
 ## Usage
@@ -190,7 +218,7 @@ Type naturally. PAL streams responses with live markdown rendering. During conve
 | `/summarize <path>` | Summarize fetched content |
 | `/compile <path>` | Compile a summary into a wiki article |
 | `/compile-batch` | Compile every summary in `raw/summaries/` in one pass |
-| `/scratch <text>` | Append a timestamped note to this channel's scratchpad (see Per-Channel Context) |
+| `/scratch <text>` | Append a timestamped note to this channel's scratchpad (see [Per-Channel Context](#per-channel-context)) |
 | `/learn` | Extract learnings from the conversation |
 | `/learnings` | List saved learnings |
 | `/promote <id>` | Promote a learning to active wisdom |
@@ -348,80 +376,19 @@ PAL can research topics from the web with a controlled pipeline. Two entry point
 2. `/research path/to/topics.md` accepts a markdown bullet list of topics and processes them as a batch. Query refinement kicks in automatically when initial results are thin.
 3. `/compile-batch` compiles every summary in `raw/summaries/` in one pass, with topic matching so multiple sources on the same subject merge into a single article.
 
-Both pipelines end with articles in the compiled truth + timeline format described below. The review gate before compilation is preserved: summaries sit in `raw/summaries/` until you explicitly compile them.
+Both pipelines end with articles in the compiled truth + timeline format. The review gate before compilation is preserved: summaries sit in `raw/summaries/` until you explicitly compile them.
 
 ## Article Format
 
-Compiled articles use a two-zone structural convention that separates current understanding from the evidence trail.
+Compiled articles use a two-zone structure: a regenerated "compiled truth" zone (Overview, Key Concepts, etc.) above a `<!-- TIMELINE -->` marker, and an append-only timeline of dated source entries below it. Each timeline entry is self-contained with its own source URL, hash, and summary, so raw files can age out without losing provenance.
 
-```markdown
----
-title: ...
-sources:
-  - url: ...
-    hash: ...
-    added: ...
----
-
-## Overview
-Current best understanding, rewritten when new evidence arrives.
-
-## Key Concepts
-Core ideas, terminology, mental model.
-
-## Usage / Configuration / Gotchas / Related (optional sections)
-Included when relevant to the topic.
-
-<!-- TIMELINE -->
-
-### 2026-04-12 - source.example.com
-**Source:** https://source.example.com/article
-**Added:** 2026-04-12T14:30:00+00:00
-**Source hash:** abc12345
-
-Thorough summary of what this source contributed.
-```
-
-The compiled truth (above the `<!-- TIMELINE -->` marker) is regenerated on each compile. The timeline below is append-only. When `/compile` runs on a summary that matches an existing article's topic, PAL rewrites the compiled truth to incorporate the new source and appends a new timeline entry. Timeline entries are self-contained, so raw files can age out of `raw/archived/` without losing provenance.
+Full format specification, frontmatter fields, and update semantics in [docs/article-format.md](docs/article-format.md).
 
 ## Document Import
 
-PAL can import local documents into the vault:
+Drop a file (PDF, DOCX, XLSX, PPTX, HTML, EPUB, CSV) into `raw/` in your vault and run `/import raw/filename.pdf`. PAL converts, summarizes, compiles, and auto-categorizes each section into the best-fitting vault directory. For PDFs, a three-tier chapter detector (embedded TOC → typography → LLM-based) finds boundaries.
 
-1. Place a file (PDF, DOCX, XLSX, PPTX, HTML, EPUB, CSV) in `raw/` in your vault.
-2. `/import raw/filename.pdf` converts, summarizes, compiles, and auto-categorizes the article.
-3. The source file is archived to `raw/archived/` and cleaned up after 30 days.
-
-Articles are automatically placed in the best-fitting vault directory based on their content.
-
-## Security
-
-PAL is an agentic system that processes untrusted content and executes LLM-directed tool calls. Several layers of defense keep the vault and host safe.
-
-### Prompt Injection
-
-Fetched web content is wrapped in GUID-tagged `<untrusted-content>` boundaries with a per-request random UUID the attacker cannot predict. A sanitizer runs defense-in-depth before wrapping: Unicode NFC normalization, zero-width and bidirectional character stripping, model special-token removal, and token-budget truncation.
-
-### Path Traversal
-
-All file operations resolve paths through a safe-path check that rejects `..` components, leading `/`, and any resolved path outside the vault root. System directories (underscore-prefixed like `_wisdom/`, `_profile/`) are additionally blocked from write operations. The same guards apply to chat tools, slash commands, and the retrieval client.
-
-### Web Fetch
-
-- Domain allowlist (`_config/allowlist.md`) gates both `/search-web` results and `/fetch` targets
-- Only `http` and `https` schemes are accepted
-- Redirects are not followed (prevents SSRF via open redirects to internal hosts)
-- Content-Type is validated and response size is capped
-
-### Access Control
-
-- The daemon listens on a Unix socket (filesystem permissions)
-- Discord access is restricted to an explicit user ID allowlist (`PAL_DISCORD_ALLOWED_USERS`)
-- Each Discord user gets an isolated daemon connection
-
-### Git Safety Net
-
-Every vault write is automatically git-committed, so any unwanted change can be reviewed and reverted.
+Details and limitations in [docs/document-import.md](docs/document-import.md).
 
 ## Development
 
