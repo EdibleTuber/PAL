@@ -50,7 +50,8 @@ class Scratchpad:
         if not path.exists():
             return ""
         try:
-            return path.open("r", encoding="utf-8").read()
+            with path.open("r", encoding="utf-8") as f:
+                return f.read()
         except OSError as exc:
             logger.warning(
                 "scratchpad %s unreadable (%s) — treating as empty",

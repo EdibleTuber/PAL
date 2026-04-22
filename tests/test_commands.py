@@ -16,7 +16,7 @@ def test_every_command_has_shape():
 def test_expected_commands_present():
     names = {c.name for c in COMMANDS}
     expected = {
-        "help", "status", "read", "search", "get", "note", "lint",
+        "help", "status", "read", "search", "get", "scratch", "lint",
         "profile", "wisdom", "search-web", "fetch", "summarize",
         "compile", "compile-batch", "import", "learn", "learnings",
         "promote", "rate", "model", "think", "research", "quit",

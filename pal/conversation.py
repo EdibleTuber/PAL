@@ -1,8 +1,9 @@
-"""In-memory conversation history management.
+"""In-memory conversation history with optional JSONL persistence.
 
-Maintains a rolling window of messages, truncated to history_depth.
-No persistence — memorable content goes into the wiki or learning system,
-not a chat log.
+Maintains a rolling in-memory window of messages, truncated to `history_depth`.
+When `history_path` is set, every message is also appended to a JSONL file on
+disk, enabling replay across daemon restarts (see pal.channels.ChannelStore).
+The in-memory window is bounded; the on-disk log grows unbounded.
 """
 from __future__ import annotations
 

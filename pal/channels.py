@@ -62,7 +62,8 @@ class ChannelStore:
     def _replay_into(self, conv: Conversation, history_path: Path) -> None:
         """Replay existing messages into the Conversation. Safe on bad data."""
         try:
-            raw = history_path.open("r", encoding="utf-8").read()
+            with history_path.open("r", encoding="utf-8") as f:
+                raw = f.read()
         except OSError as exc:
             logger.warning(
                 "slot=%s history unreadable (%s) — renaming and starting fresh",

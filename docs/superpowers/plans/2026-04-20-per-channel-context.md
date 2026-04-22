@@ -1868,3 +1868,5 @@ Document observations, anything surprising, perf hiccups, etc., in a follow-up n
 ## Appendix: Observations recorded during execution
 
 Reserve this section for issues found during implementation that deserve follow-up but shouldn't block.
+
+- **Slash command renamed during execution**: Plan's Task 12 originally specified `/note` for the user-facing append-to-scratchpad command. Renamed to `/scratch` before implementation because PAL's daemon already has an existing `/note` command (creates wiki articles via inference). Spec text still reads `/note` — interpret all references in the spec as `/scratch` in the implementation. Tests and code use `/scratch` throughout.
