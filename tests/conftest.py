@@ -357,7 +357,7 @@ def socket_path(tmp_path) -> Path:
 
 @pytest.fixture()
 async def running_daemon(
-    socket_path, mock_inference_server
+    socket_path, mock_inference_server, tmp_path
 ) -> AsyncGenerator[Daemon, None]:
     """Start a daemon with a mock inference backend, yield it, then shut down."""
     cfg = Config(
@@ -365,6 +365,8 @@ async def running_daemon(
         model="test-model",
         socket_path=socket_path,
         history_depth=50,
+        vault_path=tmp_path / "vault",
+        channels_dir=tmp_path / "channels",
     )
     daemon = Daemon(cfg)
     task = asyncio.create_task(daemon.serve())

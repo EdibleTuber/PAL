@@ -16,6 +16,8 @@ import httpx
 from pal.config import Config
 from pal.wiki import WikiManager
 from pal.conversation import Conversation
+from pal.channels import ChannelStore, validate_channel_id
+from pal.scratchpad import Scratchpad
 from pal.inference import InferenceClient
 from pal.retrieval import RetrievalClient
 from pal.profile import ProfileManager
@@ -62,6 +64,26 @@ from pal.protocol import (
 from pal.commands import COMMANDS
 
 logger = logging.getLogger(__name__)
+
+CLI_DEFAULT_CHANNEL = "cli-default"
+
+
+def resolve_channel_id(raw: str | None) -> str:
+    """Return a safe, in-range channel_id.
+
+    None or empty -> CLI_DEFAULT_CHANNEL (the backward-compat fallback).
+    Invalid characters -> logged warning, falls back to CLI_DEFAULT_CHANNEL.
+    Valid -> returned as-is.
+    """
+    if not raw:
+        return CLI_DEFAULT_CHANNEL
+    if not validate_channel_id(raw):
+        logger.warning(
+            "invalid channel_id %r received; falling back to %s",
+            raw, CLI_DEFAULT_CHANNEL,
+        )
+        return CLI_DEFAULT_CHANNEL
+    return raw
 
 
 def render_help_text() -> str:
@@ -145,6 +167,11 @@ class Daemon:
             max_body_chars=config.max_inference_body_chars,
         )
         cleanup_archived(config.vault_path)
+        self.config.channels_dir.mkdir(parents=True, exist_ok=True)
+        self.channel_store = ChannelStore(
+            channels_dir=self.config.channels_dir,
+            history_depth=self.config.history_depth,
+        )
 
     async def serve(self) -> None:
         """Start listening on the unix socket."""
@@ -181,7 +208,6 @@ class Daemon:
         writer: asyncio.StreamWriter,
     ) -> None:
         """Handle a single client connection."""
-        conv = Conversation(history_depth=self.config.history_depth)
         logger.info("Client connected")
 
         approval_registry = ApprovalRegistry()
@@ -295,8 +321,10 @@ class Daemon:
                         writer.write(encode_message(error))
                         await writer.drain()
                         continue
+                    channel_id = resolve_channel_id(msg.channel_id)
+                    conv = await self.channel_store.get_or_create(channel_id)
                     current_chat_task = asyncio.create_task(
-                        self._handle_chat(msg, conv, writer, tool_executor, scanner)
+                        self._handle_chat(msg, conv, channel_id, writer, tool_executor, scanner)
                     )
                 elif isinstance(msg, CommandMessage):
                     if current_chat_task is not None and not current_chat_task.done():
@@ -306,8 +334,10 @@ class Daemon:
                         writer.write(encode_message(error))
                         await writer.drain()
                         continue
+                    channel_id = resolve_channel_id(msg.channel_id)
+                    conv = await self.channel_store.get_or_create(channel_id)
                     await self._handle_command(
-                        msg, conv, writer, approval_registry, emit_proposal,
+                        msg, conv, channel_id, writer, approval_registry, emit_proposal,
                     )
                 else:
                     error = ErrorMessage(error=f"Unexpected message type: {msg.type}")
@@ -368,9 +398,10 @@ class Daemon:
         self,
         msg: ChatMessage,
         conv: Conversation,
+        channel_id: str,
         writer: asyncio.StreamWriter,
         tool_executor,
-        scanner,  # NEW
+        scanner,
     ) -> None:
         """Process a chat message with optional tool use.
 
@@ -383,7 +414,19 @@ class Daemon:
 
         conv.add_user(msg.text)
         mode = decide_mode(conv)
-        messages = conv.get_messages_for_api(system_prompt=self.prompt_builder.build())
+
+        scratchpad = Scratchpad(
+            vault_path=self.config.vault_path,
+            channel_id=channel_id,
+            wiki=self.wiki,
+            max_bytes=self.config.scratchpad_max_bytes,
+        )
+        scratchpad_content = scratchpad.read()
+        tool_executor.scratchpad = scratchpad
+
+        messages = conv.get_messages_for_api(
+            system_prompt=self.prompt_builder.build(channel_scratchpad=scratchpad_content),
+        )
         max_tool_rounds = 50
 
         try:
@@ -464,7 +507,7 @@ class Daemon:
                     conv.add_tool_result(tc.id, result)
 
                 messages = conv.get_messages_for_api(
-                    system_prompt=self.prompt_builder.build()
+                    system_prompt=self.prompt_builder.build(channel_scratchpad=scratchpad_content),
                 )
                 completion = await self.inference.complete(messages, tools=TOOL_DEFINITIONS, reasoning=mode)
 
@@ -512,6 +555,7 @@ class Daemon:
         self,
         msg: CommandMessage,
         conv: Conversation,
+        channel_id: str,
         writer: asyncio.StreamWriter,
         approval_registry: ApprovalRegistry | None = None,
         proposal_emitter=None,
