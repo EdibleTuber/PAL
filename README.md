@@ -22,6 +22,71 @@ Done. I've reorganized the article with sections for...
 
 Every write is git-committed automatically, so you can always review or revert changes.
 
+## Quickstart
+
+A 5-minute path from zero to a working PAL CLI. Assumes you have Python 3.12+ and git.
+
+**1. Get an inference server running.** PAL talks to any OpenAI-compatible endpoint. The simplest option is [Ollama](https://ollama.com):
+
+```bash
+# Install and start Ollama (defaults to localhost:11434)
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen2.5:32b     # or any model you want as your chat default
+```
+
+Already running a llama.cpp server, vLLM, LM Studio, or a remote manager? Skip this step and use its URL below.
+
+**2. Clone and install PAL.**
+
+```bash
+git clone https://github.com/EdibleTuber/PAL.git
+cd PAL
+pip install -e .
+```
+
+**3. Create your vault.** PAL's vault is just a directory of markdown files. PAL will `git init` it on first write so your changes are tracked automatically:
+
+```bash
+mkdir -p ~/vault
+```
+
+**4. Point PAL at your inference server.** Set env vars (or put them in your shell rc):
+
+```bash
+export PAL_INFERENCE_URL=http://localhost:11434
+export PAL_MODEL=qwen2.5:32b       # whatever you pulled in step 1
+export PAL_VAULT_PATH=~/vault
+```
+
+**5. Start the daemon and CLI.** Two terminals:
+
+```bash
+# Terminal 1
+pal-daemon
+
+# Terminal 2
+pal
+```
+
+You should see a prompt. Try:
+
+```
+you> make a note about mitmproxy cert pinning
+  [creating raw/notes/mitmproxy-cert-pinning.md...]
+
+Saved. The note covers common pinning strategies and how mitmproxy's
+certificate injection sidesteps them.
+
+you> what's in my vault?
+  [listing vault...]
+
+raw/notes/mitmproxy-cert-pinning.md
+```
+
+That's it. From here, explore `/help` for commands, `/research <topic>` for web research, or just keep chatting and let PAL use tools as it sees fit.
+
+**Discord (optional).** If you want mobile access, set `PAL_DISCORD_TOKEN` and `PAL_DISCORD_ALLOWED_USERS` and run `pal-discord` in a third terminal. Each Discord channel keeps its own conversation and scratchpad — see [Per-Channel Context](#per-channel-context) below.
+
 ## Architecture
 
 ```
