@@ -27,7 +27,7 @@ from pal.prompt_builder import SystemPromptBuilder
 from pal.allowlist import AllowlistManager
 from pal.websearch import WebSearchClient
 from pal.fetcher import URLFetcher, FetchError
-from pal.converter import DocumentConverter, ConversionError
+from agent_core.utils.converter import DocumentConverter, ConversionError
 from pal.categorizer import Categorizer
 from pal.compiler import Compiler
 from pal.archive import archive_raw_files, cleanup_archived
