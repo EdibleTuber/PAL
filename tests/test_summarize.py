@@ -37,7 +37,7 @@ async def summarize_daemon(socket_path, mock_inference_server, tmp_path):
 
 def _write_raw_file(vault, path: str, body: str) -> None:
     """Helper: write a raw/web/ file with frontmatter."""
-    from pal.frontmatter import serialize_frontmatter
+    from agent_core.utils.frontmatter import serialize_frontmatter
     full_path = vault / path
     full_path.parent.mkdir(parents=True, exist_ok=True)
     meta = {

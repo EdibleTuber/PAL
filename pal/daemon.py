@@ -1014,7 +1014,7 @@ class Daemon:
         raw_dir.mkdir(parents=True, exist_ok=True)
 
         from datetime import datetime, timezone
-        from pal.frontmatter import serialize_frontmatter
+        from agent_core.utils.frontmatter import serialize_frontmatter
         fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         meta = {
             "source_url": url,
@@ -1300,7 +1300,7 @@ class Daemon:
         target_dir.mkdir(parents=True, exist_ok=True)
 
         from datetime import datetime, timezone
-        from pal.frontmatter import serialize_frontmatter
+        from agent_core.utils.frontmatter import serialize_frontmatter
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
         saved_articles: list[str] = []
@@ -1638,7 +1638,7 @@ class Daemon:
         try:
             body = self.learning.get(slug)
             meta_path = self.learning.learning_dir / f"{slug}.md"
-            from pal.frontmatter import parse_frontmatter
+            from agent_core.utils.frontmatter import parse_frontmatter
             meta, _ = parse_frontmatter(meta_path.read_text())
             title = meta.get("title", slug)
         except FileNotFoundError:

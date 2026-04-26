@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pal.article import parse_article, serialize_article, Article
-from pal.frontmatter import parse_frontmatter
+from agent_core.utils.frontmatter import parse_frontmatter
 from pal.title_cleanup import is_bad_title, regenerate_title
 from pal.wiki import WikiManager
 

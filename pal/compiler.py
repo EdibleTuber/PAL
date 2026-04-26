@@ -17,7 +17,7 @@ from pal.article import (
     serialize_article,
     validate_compiled_truth,
 )
-from pal.frontmatter import parse_frontmatter
+from agent_core.utils.frontmatter import parse_frontmatter
 from pal.archive import archive_raw_files, MAX_SLUG_BYTES
 
 logger = logging.getLogger(__name__)

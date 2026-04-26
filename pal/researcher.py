@@ -14,7 +14,7 @@ from typing import Callable, Optional
 from urllib.parse import urlparse
 
 from pal.fetcher import FetchError
-from pal.frontmatter import serialize_frontmatter
+from agent_core.utils.frontmatter import serialize_frontmatter
 from pal.summarizer import summarize_raw_file
 
 logger = logging.getLogger(__name__)
