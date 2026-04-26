@@ -32,7 +32,7 @@ from pal.categorizer import Categorizer
 from pal.compiler import Compiler
 from pal.archive import archive_raw_files, cleanup_archived
 from pal.summarizer import summarize_raw_file
-from pal.chunker import chunk_markdown
+from agent_core.utils.chunker import chunk_markdown
 import fitz  # pymupdf
 from pal.pdf_structure import (
     detect_chapters,
