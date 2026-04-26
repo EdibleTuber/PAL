@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlparse
 
-from pal.fetcher import FetchError
+from agent_core.utils.fetcher import FetchError
 from agent_core.utils.frontmatter import serialize_frontmatter
 from pal.summarizer import summarize_raw_file
 

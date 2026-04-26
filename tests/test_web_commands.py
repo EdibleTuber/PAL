@@ -11,7 +11,7 @@ from pal.daemon import Daemon
 @pytest.fixture(autouse=True)
 def _disable_blocklist(monkeypatch):
     """Tests use 127.0.0.1 mock server -- disable blocklist for test suite."""
-    monkeypatch.setattr("pal.fetcher.check_url_safety", lambda url: None)
+    monkeypatch.setattr("agent_core.utils.fetcher.check_url_safety", lambda url: None)
 
 
 @pytest.fixture()

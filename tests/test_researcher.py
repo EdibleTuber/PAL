@@ -8,7 +8,7 @@ import pytest
 
 from pal.researcher import Researcher, ResearchReport, ResearchResult, SourceResult, parse_topic_file
 from pal.websearch import SearchResult
-from pal.fetcher import FetchResult, FetchError
+from agent_core.utils.fetcher import FetchResult, FetchError
 
 
 @dataclass
