@@ -315,7 +315,7 @@ class Reorganizer:
                     "reason": "compiler not available",
                     "references_rewritten": 0}
 
-        from pal.frontmatter import parse_frontmatter
+        from agent_core.utils.frontmatter import parse_frontmatter
         src_meta, src_body = parse_frontmatter(src_full.read_text())
         src_title = src_meta.get("title", src_full.stem)
 

@@ -221,7 +221,7 @@ async def test_model_default_resets_to_config(running_daemon, socket_path):
 @pytest.mark.asyncio
 async def test_model_switch_routes_summarize_to_new_model(model_switch_daemon, socket_path):
     """/model <name> must propagate to subsequent /summarize inference calls."""
-    from pal.frontmatter import serialize_frontmatter
+    from agent_core.utils.frontmatter import serialize_frontmatter
     from tests.conftest import REQUEST_LOG
 
     daemon, vault = model_switch_daemon
@@ -269,7 +269,7 @@ async def test_model_switch_routes_compile_to_new_model(model_switch_daemon, soc
     /compile makes multiple inference calls: categorize, then compile (and
     topic-match when applicable). Every call must use the switched model.
     """
-    from pal.frontmatter import serialize_frontmatter
+    from agent_core.utils.frontmatter import serialize_frontmatter
     from tests.conftest import REQUEST_LOG
 
     daemon, vault = model_switch_daemon

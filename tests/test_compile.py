@@ -41,7 +41,7 @@ def _write_summary_file(vault, path: str, body: str, title="Quantum Computing Ba
                         source_raw="raw/web/quantum-abc.md",
                         source_hash="abc123") -> None:
     """Helper: write a raw/summaries/ file with frontmatter."""
-    from pal.frontmatter import serialize_frontmatter
+    from agent_core.utils.frontmatter import serialize_frontmatter
     full_path = vault / path
     full_path.parent.mkdir(parents=True, exist_ok=True)
     meta = {
@@ -273,7 +273,7 @@ async def test_compile_archives_raw_files(compile_daemon, socket_path, monkeypat
     monkeypatch.setattr(daemon.inference, "complete", fake_complete)
 
     # Create both the raw file and the summary file
-    from pal.frontmatter import serialize_frontmatter
+    from agent_core.utils.frontmatter import serialize_frontmatter
     raw_file = vault / "raw" / "web" / "quantum-abc.md"
     raw_file.parent.mkdir(parents=True, exist_ok=True)
     raw_file.write_text(serialize_frontmatter({"title": "Raw"}, "raw body\n"))

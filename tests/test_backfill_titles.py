@@ -61,7 +61,7 @@ async def test_backfill_flags_and_regenerates_only_bad_titles(vault):
     assert report.skipped_error == 0
 
     # The two bad articles got overwritten with the new title.
-    from pal.frontmatter import parse_frontmatter
+    from agent_core.utils.frontmatter import parse_frontmatter
     long_meta, _ = parse_frontmatter((vault / "AI/long.md").read_text())
     gh_meta, _ = parse_frontmatter((vault / "AI/github.md").read_text())
     clean_meta, _ = parse_frontmatter((vault / "AI/clean.md").read_text())
@@ -88,7 +88,7 @@ async def test_backfill_dry_run_does_not_write(vault):
     )
 
     assert report.updated == 1  # counted as "would update"
-    from pal.frontmatter import parse_frontmatter
+    from agent_core.utils.frontmatter import parse_frontmatter
     meta, _ = parse_frontmatter((vault / "AI/long.md").read_text())
     # Dry-run must not touch the file.
     assert meta["title"] == "a" * 120
@@ -271,7 +271,7 @@ async def test_backfill_refreshes_updated_timestamp(vault):
     """Regenerated articles should have their updated timestamp refreshed."""
     _write_article(vault, "AI/long.md", title="a" * 120)
     # Seed a specific 'updated' timestamp we can detect as stale.
-    from pal.frontmatter import parse_frontmatter, serialize_frontmatter
+    from agent_core.utils.frontmatter import parse_frontmatter, serialize_frontmatter
     text = (vault / "AI/long.md").read_text()
     meta, body = parse_frontmatter(text)
     meta["updated"] = "2020-01-01T00:00:00+00:00"

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from pal.article import validate_compiled_truth
-from pal.frontmatter import parse_frontmatter
+from agent_core.utils.frontmatter import parse_frontmatter
 
 logger = logging.getLogger(__name__)
 

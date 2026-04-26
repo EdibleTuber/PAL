@@ -26,13 +26,13 @@ from pal.learning import LearningManager
 from pal.prompt_builder import SystemPromptBuilder
 from pal.allowlist import AllowlistManager
 from pal.websearch import WebSearchClient
-from pal.fetcher import URLFetcher, FetchError
-from pal.converter import DocumentConverter, ConversionError
+from agent_core.utils.fetcher import URLFetcher, FetchError
+from agent_core.utils.converter import DocumentConverter, ConversionError
 from pal.categorizer import Categorizer
 from pal.compiler import Compiler
 from pal.archive import archive_raw_files, cleanup_archived
 from pal.summarizer import summarize_raw_file
-from pal.chunker import chunk_markdown
+from agent_core.utils.chunker import chunk_markdown
 import fitz  # pymupdf
 from pal.pdf_structure import (
     detect_chapters,
@@ -1014,7 +1014,7 @@ class Daemon:
         raw_dir.mkdir(parents=True, exist_ok=True)
 
         from datetime import datetime, timezone
-        from pal.frontmatter import serialize_frontmatter
+        from agent_core.utils.frontmatter import serialize_frontmatter
         fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         meta = {
             "source_url": url,
@@ -1300,7 +1300,7 @@ class Daemon:
         target_dir.mkdir(parents=True, exist_ok=True)
 
         from datetime import datetime, timezone
-        from pal.frontmatter import serialize_frontmatter
+        from agent_core.utils.frontmatter import serialize_frontmatter
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
         saved_articles: list[str] = []
@@ -1638,7 +1638,7 @@ class Daemon:
         try:
             body = self.learning.get(slug)
             meta_path = self.learning.learning_dir / f"{slug}.md"
-            from pal.frontmatter import parse_frontmatter
+            from agent_core.utils.frontmatter import parse_frontmatter
             meta, _ = parse_frontmatter(meta_path.read_text())
             title = meta.get("title", slug)
         except FileNotFoundError:

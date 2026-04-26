@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from pal.frontmatter import parse_frontmatter, serialize_frontmatter
+from agent_core.utils.frontmatter import parse_frontmatter, serialize_frontmatter
 
 TIMELINE_MARKER = "<!-- TIMELINE -->"
 

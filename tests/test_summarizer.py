@@ -64,7 +64,7 @@ async def test_summarize_preserves_source_metadata(mock_inference, raw_file):
         vault_path=vault,
         inference=mock_inference,
     )
-    from pal.frontmatter import parse_frontmatter
+    from agent_core.utils.frontmatter import parse_frontmatter
     meta, body = parse_frontmatter(result.summary_path.read_text())
     assert meta["source_url"] == "https://example.com/test"
     assert meta["source_hash"] == "abc12345"
@@ -136,7 +136,7 @@ async def test_summarize_uses_clean_title_from_response(raw_file):
         vault_path=vault,
         inference=inference,
     )
-    from pal.frontmatter import parse_frontmatter
+    from agent_core.utils.frontmatter import parse_frontmatter
     meta, body = parse_frontmatter(result.summary_path.read_text())
     assert meta["title"] == "Clean Short Title"
     assert "This is the summary body." in body
@@ -156,7 +156,7 @@ async def test_summarize_falls_back_to_raw_stem_when_no_title_prefix(raw_file):
         vault_path=vault,
         inference=inference,
     )
-    from pal.frontmatter import parse_frontmatter
+    from agent_core.utils.frontmatter import parse_frontmatter
     meta, body = parse_frontmatter(result.summary_path.read_text())
     # Expect fallback to the raw file's stem.
     assert meta["title"] == path.stem
