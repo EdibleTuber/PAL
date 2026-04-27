@@ -12,27 +12,33 @@ Predecessors:
 
 Phase A extracted the leaf utilities. Phase B extracted the stateless HTTP clients (`reasoning`, `inference`, `retrieval`, `websearch`). PAL now consumes `agent_core@v0.2.0` with 9 modules in active use.
 
-Phase C extracts six PAL modules that hold or read agent-specific state on disk: `approval_registry` (in-memory only, included for completeness), `profile`, `allowlist`, `wisdom`, `learning`, and `learning_scanner`. After this phase, agent_core will expose 15 modules total.
+Phase C extracts five PAL modules that hold or read agent-specific state on disk: `approval_registry` (in-memory only, included for completeness), `profile`, `allowlist`, `wisdom`, and `learning`. After this phase, agent_core will expose 14 modules total.
 
 The wrinkle that did not exist in Phases A or B: these managers are vault-rooted. PAL writes wisdom to `<vault>/_wisdom/`, learnings to `<vault>/_learning/`, profile to `<vault>/_profile/<username>.md`, and allowlist to `<vault>/_config/allowlist.md`. The umbrella spec aspirationally described a separate XDG-style state tree, but the actual code stores everything inside the vault. Phase C reconciles the umbrella's per-agent intent with the vault-rooted reality by adding a per-agent subdirectory under each existing storage prefix. PAL's data lands at `_wisdom/pal/`, RE Lab at `_wisdom/re-lab/`, etc.
 
+### Scope change from initial brainstorm
+
+The brainstorm originally included `learning_scanner` as a sixth module in this phase. During plan-write, the implementation discovered that `learning_scanner.py` imports `from pal.protocol import LearningCandidateProposalMessage`. The protocol module is not in Phase C scope (it moves in Phase E with the daemon migration), so a clean migration of the scanner would either require introducing a new `LearningCandidate` dataclass in agent_core for decoupling, or staying tangled with PAL's protocol module.
+
+The user chose to defer `learning_scanner` to Phase D or E, where the protocol question gets attacked together with the other channel/scratchpad/conversation modules that also touch the protocol. Phase C ships five modules; the scanner stays in PAL with its imports updated to consume the migrated `LearningManager` from agent_core.
+
 ## Goals
 
-1. Move six modules from PAL into agent_core, byte-identically except for the `agent_name` parameterization required to namespace storage and the corresponding path properties.
+1. Move five modules from PAL into agent_core, byte-identically except for the `agent_name` parameterization required to namespace storage and the corresponding path properties.
 2. Migrate PAL's existing on-disk state into the new namespaced subdirectories with a one-time `mv` runbook executed at deploy.
 3. Tag `agent_core@v0.3.0` and migrate PAL to consume it. PAL keeps shipping throughout; per-module commits preserve bisect.
 4. Add two new tests in agent_core (`test_two_agents_have_isolated_dirs` shape) to lock the multi-agent namespacing invariant for `wisdom` and `learning`.
+5. Update PAL's `learning_scanner.py` (which stays in PAL) to import `LearningManager` from agent_core; no other change to that module.
 
 ## Non-Goals
 
 1. Adopting the umbrella spec's full XDG layout. Defer until multi-agent operation makes the vault-rooted layout uncomfortable.
 2. Changing the on-disk markdown format of any wisdom, learning, profile, or allowlist file. Frontmatter shape and body structure stay identical.
 3. Adding persistence to `ApprovalRegistry`. Stays in-memory.
-4. Generalizing `learning_scanner`'s English-language signal regex (`_SIGNAL_PATTERNS`). The patterns ship as-is; agents that want a different signal set override the prompt template entirely.
-5. Refactoring `learning_scanner` beyond the agent_name parameterization. The 252-LOC orchestration logic stays.
-6. Designing `agent_core.BaseConfig`, the `Agent` base class, or any other Phase E machinery.
-7. Moving the per-channel state managers (`channels`, `scratchpad`, `conversation`). Those are Phase D.
-8. Touching anything in PAL outside the construction sites and import lines for these six modules.
+4. Moving `learning_scanner` to agent_core. Deferred to Phase D or E because it imports `pal.protocol`. PAL's `learning_scanner.py` stays in place; only its `from pal.learning import LearningManager` line gets rewritten to `from agent_core.learning import LearningManager`.
+5. Designing `agent_core.BaseConfig`, the `Agent` base class, or any other Phase E machinery.
+6. Moving the per-channel state managers (`channels`, `scratchpad`, `conversation`). Those are Phase D.
+7. Touching anything in PAL outside the construction sites and import lines for these five modules.
 
 ## Architecture
 
@@ -49,7 +55,7 @@ inference_server (HTTP, on 192.168.1.14, localhost-only)
    +-------------+
 ```
 
-After Phase C, `agent_core` exposes 15 modules:
+After Phase C, `agent_core` exposes 14 modules:
 
 ```
 agent_core/
@@ -68,10 +74,11 @@ agent_core/
     allowlist.py           (Phase C)
     wisdom.py              (Phase C)
     learning.py            (Phase C)
-    learning_scanner.py    (Phase C)
 ```
 
-The six Phase C modules live at the top level of the package, alongside the Phase B clients, matching the umbrella spec's package layout. They are not in `utils/` because they are stateful managers tied to specific agent state, not generic utilities.
+The five Phase C modules live at the top level of the package, alongside the Phase B clients, matching the umbrella spec's package layout. They are not in `utils/` because they are stateful managers tied to specific agent state, not generic utilities.
+
+`learning_scanner.py` stays in PAL for Phase C and gets folded into a later phase together with the protocol module.
 
 ## Storage Layout
 
@@ -120,7 +127,6 @@ All vault-rooted managers gain `agent_name` as a required positional argument af
 | `AllowlistManager` | `(vault_path: Path)` | `(vault_path: Path, agent_name: str)` |
 | `WisdomManager` | `(vault_path: Path)` | `(vault_path: Path, agent_name: str)` |
 | `LearningManager` | `(vault_path: Path)` | `(vault_path: Path, agent_name: str)` |
-| `LearningScanner` | `(learning_manager, inference_client, ...)` | adds `agent_name: str` and optional `prompt_template: str | None = None` |
 
 The `_<thing>_dir` properties update to include the agent_name subdir:
 
@@ -138,20 +144,9 @@ def wisdom_dir(self) -> Path:
 
 Same shape for `learning_dir`, `allowlist_path`, `profile_path`. ApprovalRegistry has no path properties.
 
-### LearningScanner prompt template
-
-The current PAL prompt contains the literal string `"shape PAL's future behavior across sessions"`. After Phase C, agent_core ships a default template that interpolates `{agent_name}`:
-
-```
-A durable lesson is a behavioral preference, a correction, or a confirmed
-approach that should shape {agent_name}'s future behavior across sessions...
-```
-
-PAL constructs the scanner with `agent_name="PAL"` (mixed case for the human-readable interpolation; the directory namespacing uses the lowercase `"pal"` slug). Different agents pass their own readable name. Agents that want a substantively different prompt pass `prompt_template=...` to override.
-
 ## PAL-Side Construction Sites
 
-PAL's `daemon.py` constructs each manager today; Phase C updates these construction sites to pass `agent_name`. The agent name is hardcoded `"pal"` in PAL (matching the directory namespacing); for the LearningScanner's prompt interpolation, PAL uses `"PAL"` mixed case.
+PAL's `daemon.py` constructs each manager today; Phase C updates these construction sites to pass `agent_name="pal"`.
 
 ```python
 # Before
@@ -159,47 +154,45 @@ self.profile = ProfileManager(config.vault_path, config.username)
 self.allowlist = AllowlistManager(config.vault_path)
 self.wisdom = WisdomManager(config.vault_path)
 self.learning = LearningManager(config.vault_path)
-self.learning_scanner = LearningScanner(self.learning, self.inference, ...)
 
 # After
 self.profile = ProfileManager(config.vault_path, "pal", config.username)
 self.allowlist = AllowlistManager(config.vault_path, "pal")
 self.wisdom = WisdomManager(config.vault_path, "pal")
 self.learning = LearningManager(config.vault_path, "pal")
-self.learning_scanner = LearningScanner(
-    self.learning, self.inference, "PAL", ...
-)
 ```
 
-When `agent_core.BaseConfig` lands in Phase E, these strings move into the config; for now they are inline literals at the daemon's construction call sites.
+The `LearningScanner` construction stays unchanged; the scanner remains in PAL.
+
+When `agent_core.BaseConfig` lands in Phase E, the `"pal"` literal moves into the config; for now it is inline at the daemon's construction call sites.
 
 ## Migration Order
 
-agent_core gets six feature commits plus a version bump, in dependency-respecting order:
+agent_core gets five feature commits plus a version bump, in dependency-respecting order (none of the five depends on another, so the order is just smallest-to-largest by complexity):
 
-1. `approval_registry` (no storage; pure dataclass + dict; nothing on it depends on other agent_core code)
+1. `approval_registry` (no storage; pure dataclass + dict)
 2. `profile` (single file, simplest persistent module)
 3. `allowlist` (single file)
 4. `wisdom` (directory of files)
-5. `learning` (directory of files; required by LearningScanner)
-6. `learning_scanner` (depends on LearningManager + InferenceClient; both already in agent_core after step 5)
-7. Version bump to `0.3.0` and tag `v0.3.0`
+5. `learning` (directory of files)
+6. Version bump to `0.3.0` and tag `v0.3.0`
 
-PAL's feature branch gets seven commits:
+PAL's feature branch gets six commits:
 
 1. Bump dep pin to `agent_core@v0.3.0`
 2. Migrate `approval_registry` callers
 3. Migrate `profile` callers
 4. Migrate `allowlist` callers
 5. Migrate `wisdom` callers
-6. Migrate `learning` callers
-7. Migrate `learning_scanner` callers (final per-module migration; the final smoke + clean install + PR open happens in this commit's task or a separate Task 14-style commit, decided in the implementation plan)
+6. Migrate `learning` callers (this also rewrites the `from pal.learning import LearningManager` line in PAL's `learning_scanner.py` since the scanner is staying)
+
+The final smoke + clean install + PR open happens in a final task after the per-module commits.
 
 ## Test Strategy
 
 ### agent_core
 
-Each module's PAL test file moves alongside its source. Tests for stateful managers use pytest's `tmp_path` for the vault directory (PAL's existing pattern). The `mock_inference_server` fixture from Phase B handles `learning_scanner`'s LLM dispatch; no conftest extension is needed for Phase C.
+Each migrated module's PAL test file moves alongside its source. Tests for stateful managers use pytest's `tmp_path` for the vault directory (PAL's existing pattern). No agent_core conftest extension is needed for Phase C: the migrated managers are filesystem-stateful but do not exercise the inference server, and PAL's existing tests use `tmp_path` directly.
 
 The agent_name parameterization in tests: each test that constructs a manager passes a fixed agent name (e.g., `"test-agent"`). The path-namespacing is exercised implicitly because the tests instantiate the manager and call methods that all go through the agent_name-aware path properties.
 
@@ -224,7 +217,7 @@ Each PAL migration commit runs the targeted PAL tests for that module's callers 
 --ignore=tests/test_learning_e2e.py
 ```
 
-The Phase B baseline was 714 tests passing in this scope. Phase C deletes four module-specific test files (test_wisdom, test_learning, test_profile, test_allowlist; possibly also test_learning_scanner and test_approval_registry depending on what exists). Expect a small reduction in PAL's count; agent_core picks up the moved tests.
+The Phase B baseline was 714 tests passing in this scope. Phase C deletes five module-specific test files (`test_wisdom`, `test_learning`, `test_profile`, `test_allowlist`, `test_approval_registry`). Several PAL test files for `learning_scanner` (`test_learning_scanner*.py`) stay because the scanner stays. Expect a small reduction in PAL's count; agent_core picks up the moved tests.
 
 ### Manual smoke on the server post-merge
 
@@ -233,7 +226,7 @@ In addition to the standard daemon-startup + `/help` + chat checks from Phases A
 - `/wisdom list` and `/wisdom add <text>` (verifies WisdomManager reads and writes the namespaced path)
 - `/profile` (verifies ProfileManager finds the migrated file)
 - `/learnings` (verifies LearningManager finds migrated entries)
-- A short conversation with a "thank you" or "actually" signal phrase (exercises learning_scanner end-to-end via the mock inference server during chat)
+- A short conversation with a "thank you" or "actually" signal phrase (exercises PAL's learning_scanner against the agent_core LearningManager)
 - A research approval flow if convenient (exercises ApprovalRegistry through real traffic)
 
 The migration script must run between `git pull` and `systemctl --user start pal-daemon`. If the daemon starts before the migration, it sees empty `_wisdom/pal/` and `_learning/pal/` directories until the `mv` completes; not destructive but visibly empty in the meantime.
@@ -263,15 +256,15 @@ Phase C's new risk:
 
 | Decision | Choice |
 |---|---|
-| Modules in scope | approval_registry, profile, allowlist, wisdom, learning, learning_scanner |
+| Modules in scope | approval_registry, profile, allowlist, wisdom, learning |
+| Modules deferred | learning_scanner (parked due to `pal.protocol` import; revisit in Phase D or E) |
 | Storage layout | Vault-rooted with per-agent subdir (`<vault>/_wisdom/<agent_name>/...`) |
 | Constructor API | All vault-rooted managers gain `agent_name` positional after `vault_path` |
 | Profile path shape | `_profile/<agent_name>/<username>.md` (keep username axis) |
-| LearningScanner prompt | Default template with `{agent_name}` interpolation; optional override |
 | ApprovalRegistry | unchanged signature, no persistence |
-| Migration sequencing | approval_registry, profile, allowlist, wisdom, learning, learning_scanner |
+| Migration sequencing | approval_registry, profile, allowlist, wisdom, learning |
 | agent_core release | v0.3.0 with matching pyproject version (Phase B's lesson) |
-| PAL-side commits | 7 (1 dep bump, 6 migrations) plus final smoke verification |
+| PAL-side commits | 6 (1 dep bump, 5 migrations) plus final smoke verification |
 | Server data migration | One-time `mv` runbook in PR description; runs between `git pull` and `systemctl start` |
 | New tests | 2 multi-agent isolation tests for wisdom and learning |
 | Test scope | Same flaky-integration ignore list as Phase B |
