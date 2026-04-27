@@ -23,7 +23,7 @@ import re
 
 import pymupdf4llm
 
-from pal.inference import BatchUnavailableError
+from agent_core.inference import BatchUnavailableError
 
 logger = logging.getLogger(__name__)
 

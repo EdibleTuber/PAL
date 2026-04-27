@@ -18,14 +18,14 @@ from pal.wiki import WikiManager
 from pal.conversation import Conversation
 from pal.channels import ChannelStore, validate_channel_id
 from pal.scratchpad import Scratchpad, ScratchpadTooLarge
-from pal.inference import InferenceClient
-from pal.retrieval import RetrievalClient
+from agent_core.inference import InferenceClient
+from agent_core.retrieval import RetrievalClient
 from pal.profile import ProfileManager
 from pal.wisdom import WisdomManager
 from pal.learning import LearningManager
 from pal.prompt_builder import SystemPromptBuilder
 from pal.allowlist import AllowlistManager
-from pal.websearch import WebSearchClient
+from agent_core.websearch import WebSearchClient
 from agent_core.utils.fetcher import URLFetcher, FetchError
 from agent_core.utils.converter import DocumentConverter, ConversionError
 from pal.categorizer import Categorizer
@@ -39,7 +39,7 @@ from pal.pdf_structure import (
     extract_chapters,
     slugify,
 )
-from pal.reasoning import decide_mode
+from agent_core.reasoning import decide_mode
 from pal.researcher import Researcher, parse_topic_file
 from pal.tools import ToolExecutor
 from pal.approval_registry import ApprovalRegistry
@@ -427,7 +427,7 @@ class Daemon:
         text, enters a non-streaming loop: execute tools, show progress, feed
         results back, repeat until the model returns text or the loop cap is hit.
         """
-        from pal.inference import ToolCall
+        from agent_core.inference import ToolCall
         from pal.tools import TOOL_DEFINITIONS
 
         conv.add_user(msg.text)
@@ -1334,7 +1334,7 @@ class Daemon:
                 writer.write(encode_message(progress))
                 await writer.drain()
 
-                from pal.inference import BatchUnavailableError
+                from agent_core.inference import BatchUnavailableError
                 from pal.protocol import BatchFallbackProposal
                 from pal.pdf_structure import DetectionResult
 

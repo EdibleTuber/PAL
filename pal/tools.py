@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
-from pal.retrieval import RetrievalClient
+from agent_core.retrieval import RetrievalClient
 from pal.wiki import WikiManager
 from pal.learning import LearningManager
 from pal.wisdom import WisdomManager
@@ -19,7 +19,7 @@ from pal.scratchpad import ScratchpadTooLarge
 
 if TYPE_CHECKING:
     from pal.approval_registry import ApprovalRegistry
-    from pal.websearch import WebSearchClient
+    from agent_core.websearch import WebSearchClient
     from pal.researcher import Researcher
     from pal.compiler import Compiler
     from pal.reorg import Reorganizer

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from pal.categorizer import Categorizer, build_categorization_prompt, parse_category_response
-from pal.inference import BatchUnavailableError, CompletionResult, InferenceClient
+from agent_core.inference import BatchUnavailableError, CompletionResult, InferenceClient
 
 
 class TestParseCategoryResponse:

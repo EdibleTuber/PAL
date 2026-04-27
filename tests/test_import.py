@@ -7,7 +7,7 @@ import pytest
 from pal.client import PalClient
 from pal.config import Config
 from pal.daemon import Daemon
-from pal.inference import CompletionResult
+from agent_core.inference import CompletionResult
 
 
 @pytest.fixture()
@@ -254,7 +254,7 @@ async def test_import_pdf_llm_toc_fallback_runs_on_main(import_daemon, socket_pa
     """When LLM-TOC triggers, the batch backend raises, and the user
     picks 'main', the retry should succeed on the main inference."""
     import fitz
-    from pal.inference import BatchUnavailableError, CompletionResult
+    from agent_core.inference import BatchUnavailableError, CompletionResult
 
     daemon, vault = import_daemon
 

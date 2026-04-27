@@ -6,7 +6,7 @@ import pytest
 from pal.client import PalClient
 from pal.config import Config
 from pal.daemon import Daemon
-from pal.inference import CompletionResult
+from agent_core.inference import CompletionResult
 from pal.learning import LearningManager
 from pal.wisdom import WisdomManager
 

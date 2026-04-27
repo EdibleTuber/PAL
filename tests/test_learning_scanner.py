@@ -4,7 +4,7 @@ import logging
 import pytest
 from unittest.mock import AsyncMock
 
-from pal.inference import BatchUnavailableError
+from agent_core.inference import BatchUnavailableError
 from pal.learning_scanner import extract_candidate
 
 
