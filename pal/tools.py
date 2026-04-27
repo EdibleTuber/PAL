@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
-from pal.retrieval import RetrievalClient
+from agent_core.retrieval import RetrievalClient
 from pal.wiki import WikiManager
 from pal.learning import LearningManager
 from pal.wisdom import WisdomManager

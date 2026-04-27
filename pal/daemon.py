@@ -19,7 +19,7 @@ from pal.conversation import Conversation
 from pal.channels import ChannelStore, validate_channel_id
 from pal.scratchpad import Scratchpad, ScratchpadTooLarge
 from agent_core.inference import InferenceClient
-from pal.retrieval import RetrievalClient
+from agent_core.retrieval import RetrievalClient
 from pal.profile import ProfileManager
 from pal.wisdom import WisdomManager
 from pal.learning import LearningManager
