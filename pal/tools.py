@@ -19,7 +19,7 @@ from pal.scratchpad import ScratchpadTooLarge
 
 if TYPE_CHECKING:
     from pal.approval_registry import ApprovalRegistry
-    from pal.websearch import WebSearchClient
+    from agent_core.websearch import WebSearchClient
     from pal.researcher import Researcher
     from pal.compiler import Compiler
     from pal.reorg import Reorganizer

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch, call
 import pytest
 
 from pal.researcher import Researcher, ResearchReport, ResearchResult, SourceResult, parse_topic_file
-from pal.websearch import SearchResult
+from agent_core.websearch import SearchResult
 from agent_core.utils.fetcher import FetchResult, FetchError
 
 

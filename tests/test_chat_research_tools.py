@@ -5,7 +5,7 @@ import pytest
 
 from pal.approval_registry import ApprovalRegistry
 from pal.tools import ToolExecutor
-from pal.websearch import SearchResult
+from agent_core.websearch import SearchResult
 
 
 def test_tool_executor_accepts_new_dependencies(tmp_path: Path):

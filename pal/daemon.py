@@ -25,7 +25,7 @@ from pal.wisdom import WisdomManager
 from pal.learning import LearningManager
 from pal.prompt_builder import SystemPromptBuilder
 from pal.allowlist import AllowlistManager
-from pal.websearch import WebSearchClient
+from agent_core.websearch import WebSearchClient
 from agent_core.utils.fetcher import URLFetcher, FetchError
 from agent_core.utils.converter import DocumentConverter, ConversionError
 from pal.categorizer import Categorizer
