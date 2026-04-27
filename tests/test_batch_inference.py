@@ -3,7 +3,7 @@ import httpx
 import pytest
 from unittest.mock import AsyncMock
 
-from pal.inference import InferenceClient, BatchUnavailableError
+from agent_core.inference import InferenceClient, BatchUnavailableError
 from pal.daemon import Daemon
 from pal.config import Config
 
@@ -41,8 +41,8 @@ async def test_batch_client_raises_batch_unavailable_on_503(monkeypatch):
 
     monkeypatch.setattr(client._client, "post", fake_post)
     # Disable retry sleep to keep test fast.
-    monkeypatch.setattr("pal.inference._INITIAL_BACKOFF", 0)
-    monkeypatch.setattr("pal.inference._MAX_BACKOFF", 0)
+    monkeypatch.setattr("agent_core.inference._INITIAL_BACKOFF", 0)
+    monkeypatch.setattr("agent_core.inference._MAX_BACKOFF", 0)
 
     with pytest.raises(BatchUnavailableError):
         await client.complete([{"role": "user", "content": "x"}])

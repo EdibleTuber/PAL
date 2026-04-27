@@ -6,7 +6,7 @@ directory best fits the content. Falls back to Research/ on any failure.
 import logging
 from pathlib import Path
 
-from pal.inference import BatchUnavailableError, InferenceClient
+from agent_core.inference import BatchUnavailableError, InferenceClient
 from pal.protocol import BatchFallbackProposal
 
 logger = logging.getLogger(__name__)

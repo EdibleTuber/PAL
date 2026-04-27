@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pal.backfill_titles import backfill_titles
 from pal.config import load_config
-from pal.inference import InferenceClient
+from agent_core.inference import InferenceClient
 from pal.wiki import WikiManager
 
 

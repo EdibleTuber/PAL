@@ -18,7 +18,7 @@ from pal.wiki import WikiManager
 from pal.conversation import Conversation
 from pal.channels import ChannelStore, validate_channel_id
 from pal.scratchpad import Scratchpad, ScratchpadTooLarge
-from pal.inference import InferenceClient
+from agent_core.inference import InferenceClient
 from pal.retrieval import RetrievalClient
 from pal.profile import ProfileManager
 from pal.wisdom import WisdomManager
@@ -427,7 +427,7 @@ class Daemon:
         text, enters a non-streaming loop: execute tools, show progress, feed
         results back, repeat until the model returns text or the loop cap is hit.
         """
-        from pal.inference import ToolCall
+        from agent_core.inference import ToolCall
         from pal.tools import TOOL_DEFINITIONS
 
         conv.add_user(msg.text)
@@ -1334,7 +1334,7 @@ class Daemon:
                 writer.write(encode_message(progress))
                 await writer.drain()
 
-                from pal.inference import BatchUnavailableError
+                from agent_core.inference import BatchUnavailableError
                 from pal.protocol import BatchFallbackProposal
                 from pal.pdf_structure import DetectionResult
 

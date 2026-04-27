@@ -16,7 +16,7 @@ import uuid
 from collections import deque
 from typing import Awaitable, Callable, Optional
 
-from pal.inference import BatchUnavailableError
+from agent_core.inference import BatchUnavailableError
 
 logger = logging.getLogger(__name__)
 
