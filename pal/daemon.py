@@ -39,7 +39,7 @@ from pal.pdf_structure import (
     extract_chapters,
     slugify,
 )
-from pal.reasoning import decide_mode
+from agent_core.reasoning import decide_mode
 from pal.researcher import Researcher, parse_topic_file
 from pal.tools import ToolExecutor
 from pal.approval_registry import ApprovalRegistry

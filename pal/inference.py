@@ -14,7 +14,7 @@ from typing import Literal
 
 import httpx
 
-from pal.reasoning import shape_request, extract_reasoning
+from agent_core.reasoning import shape_request, extract_reasoning
 
 logger = logging.getLogger(__name__)
 
