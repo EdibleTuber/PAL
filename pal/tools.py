@@ -13,12 +13,12 @@ logger = logging.getLogger(__name__)
 
 from agent_core.retrieval import RetrievalClient
 from pal.wiki import WikiManager
-from pal.learning import LearningManager
-from pal.wisdom import WisdomManager
+from agent_core.learning import LearningManager
+from agent_core.wisdom import WisdomManager
 from pal.scratchpad import ScratchpadTooLarge
 
 if TYPE_CHECKING:
-    from pal.approval_registry import ApprovalRegistry
+    from agent_core.approval_registry import ApprovalRegistry
     from agent_core.websearch import WebSearchClient
     from pal.researcher import Researcher
     from pal.compiler import Compiler

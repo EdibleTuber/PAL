@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pal.approval_registry import ApprovalRegistry
+from agent_core.approval_registry import ApprovalRegistry
 from pal.researcher import Researcher
 from pal.tools import ToolExecutor
 
@@ -131,7 +131,7 @@ async def test_daemon_routes_approval_response_while_chat_in_flight(tmp_path, mo
     #
     # This is structurally equivalent to the daemon's new behavior.
 
-    from pal.approval_registry import ApprovalRegistry
+    from agent_core.approval_registry import ApprovalRegistry
     registry = ApprovalRegistry()
     pid = registry.create_proposal(topic="t", depth=3, rationale="r")
 

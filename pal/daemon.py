@@ -20,11 +20,11 @@ from pal.channels import ChannelStore, validate_channel_id
 from pal.scratchpad import Scratchpad, ScratchpadTooLarge
 from agent_core.inference import InferenceClient
 from agent_core.retrieval import RetrievalClient
-from pal.profile import ProfileManager
-from pal.wisdom import WisdomManager
-from pal.learning import LearningManager
+from agent_core.profile import ProfileManager
+from agent_core.wisdom import WisdomManager
+from agent_core.learning import LearningManager
 from pal.prompt_builder import SystemPromptBuilder
-from pal.allowlist import AllowlistManager
+from agent_core.allowlist import AllowlistManager
 from agent_core.websearch import WebSearchClient
 from agent_core.utils.fetcher import URLFetcher, FetchError
 from agent_core.utils.converter import DocumentConverter, ConversionError
@@ -42,7 +42,7 @@ from pal.pdf_structure import (
 from agent_core.reasoning import decide_mode
 from pal.researcher import Researcher, parse_topic_file
 from pal.tools import ToolExecutor
-from pal.approval_registry import ApprovalRegistry
+from agent_core.approval_registry import ApprovalRegistry
 from pal.article import (
     parse_article, serialize_article, append_timeline_entry,
     validate_compiled_truth, find_existing_article, Article,
@@ -138,14 +138,14 @@ class Daemon:
             base_url=config.inference_url,
             collection_id=config.collection_id,
         )
-        self.profile = ProfileManager(config.vault_path, username=config.username)
-        self.wisdom = WisdomManager(config.vault_path)
+        self.profile = ProfileManager(config.vault_path, "pal", username=config.username)
+        self.wisdom = WisdomManager(config.vault_path, "pal")
         self.prompt_builder = SystemPromptBuilder(
             profile=self.profile,
             wisdom=self.wisdom,
         )
-        self.learning = LearningManager(config.vault_path)
-        self.allowlist = AllowlistManager(config.vault_path)
+        self.learning = LearningManager(config.vault_path, "pal")
+        self.allowlist = AllowlistManager(config.vault_path, "pal")
         self.allowlist.seed()
         self.websearch = WebSearchClient(
             base_url=config.searxng_url,
@@ -950,7 +950,7 @@ class Daemon:
             resp = ResponseMessage(
                 text=(
                     "No allowlisted results. "
-                    "Edit `_config/allowlist.md` in the vault to add domains."
+                    f"Edit `{self.allowlist.allowlist_path.relative_to(self.allowlist.vault_path)}` in the vault to add domains."
                 ),
                 command="search-web",
             )
@@ -980,7 +980,7 @@ class Daemon:
             error = ErrorMessage(
                 error=(
                     f"URL not on allowlist: {url}\n"
-                    "Add its domain to _config/allowlist.md in the vault, then retry."
+                    f"Add its domain to {self.allowlist.allowlist_path.relative_to(self.allowlist.vault_path)} in the vault, then retry."
                 )
             )
             writer.write(encode_message(error))

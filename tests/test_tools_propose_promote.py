@@ -3,10 +3,10 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from pal.approval_registry import ApprovalRegistry
-from pal.learning import LearningManager
+from agent_core.approval_registry import ApprovalRegistry
+from agent_core.learning import LearningManager
 from pal.tools import ToolExecutor
-from pal.wisdom import WisdomManager
+from agent_core.wisdom import WisdomManager
 
 
 def _make_executor(
@@ -23,8 +23,8 @@ def _make_executor(
         wiki=wiki,
         approval_registry=registry or ApprovalRegistry(),
         proposal_emitter=emitter,
-        learning=learning or LearningManager(vault),
-        wisdom=wisdom or WisdomManager(vault),
+        learning=learning or LearningManager(vault, "pal"),
+        wisdom=wisdom or WisdomManager(vault, "test-agent"),
     )
 
 
@@ -41,11 +41,11 @@ def _auto_decline_emitter(registry: ApprovalRegistry):
 
 
 def test_propose_promote_emits_and_promotes_on_approve(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     slug = lm.add("Granularity", "keep it focused", source="conversation")
 
     registry = ApprovalRegistry()
-    wm = WisdomManager(tmp_path)
+    wm = WisdomManager(tmp_path, "test-agent")
     executor = _make_executor(
         tmp_path,
         emitter=_auto_approve_emitter(registry),
@@ -68,10 +68,10 @@ def test_propose_promote_emits_and_promotes_on_approve(tmp_path: Path):
 
 
 def test_propose_promote_returns_declined_on_decline(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     slug = lm.add("Temp", "body", source="conversation")
     registry = ApprovalRegistry()
-    wm = WisdomManager(tmp_path)
+    wm = WisdomManager(tmp_path, "test-agent")
 
     executor = _make_executor(
         tmp_path,
@@ -108,7 +108,7 @@ def test_propose_promote_errors_on_missing_slug(tmp_path: Path):
 
 
 def test_propose_promote_errors_on_already_promoted(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     slug = lm.add("X", "body", source="conversation")
     lm.mark_promoted(slug)
 

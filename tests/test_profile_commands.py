@@ -69,7 +69,7 @@ async def test_profile_persists_on_disk(profile_daemon, socket_path):
 
     await client.command("profile", "set ## World\n\nLinux user.")
 
-    profile_path = vault / "_profile" / "testuser.md"
+    profile_path = vault / "_profile" / "pal" / "testuser.md"
     assert profile_path.exists()
     content = profile_path.read_text()
     assert "Linux user." in content

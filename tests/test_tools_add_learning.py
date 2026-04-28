@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from pal.learning import LearningManager
+from agent_core.learning import LearningManager
 from pal.tools import ToolExecutor
 
 
@@ -12,7 +12,7 @@ def _make_executor(vault: Path) -> ToolExecutor:
         vault_path=vault,
         retrieval=None,
         wiki=None,
-        learning=LearningManager(vault),
+        learning=LearningManager(vault, "pal"),
     )
 
 
@@ -26,7 +26,7 @@ def test_add_learning_writes_file(tmp_path: Path):
     slug = parsed["slug"]
     assert parsed["title"] == "Granularity Over Consolidation"
 
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     assert lm.exists(slug)
     assert "focused" in lm.get(slug)
 

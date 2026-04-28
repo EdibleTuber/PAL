@@ -48,8 +48,8 @@ async def test_search_web_returns_allowed_results(web_daemon, socket_path):
     # Add the mock server host to allowlist so search results pass through
     import re
     host = re.sub(r"^https?://", "", daemon.websearch.base_url).split(":")[0]
-    (vault / "_config").mkdir(parents=True, exist_ok=True)
-    (vault / "_config" / "allowlist.md").write_text(
+    (vault / "_config" / "pal").mkdir(parents=True, exist_ok=True)
+    (vault / "_config" / "pal" / "allowlist.md").write_text(
         f"# Allowlist\n\n- {host}\n"
     )
 
@@ -82,14 +82,14 @@ async def test_search_web_empty_query(web_daemon, socket_path):
 async def test_search_web_seeds_allowlist_on_first_use(web_daemon, socket_path):
     daemon, vault = web_daemon
     # Seeding happens in Daemon __init__, so it should already exist
-    assert (vault / "_config" / "allowlist.md").exists()
+    assert (vault / "_config" / "pal" / "allowlist.md").exists()
 
     client = PalClient(socket_path)
     await client.connect()
     await client.command("search-web", "test")
     await client.close()
 
-    assert (vault / "_config" / "allowlist.md").exists()
+    assert (vault / "_config" / "pal" / "allowlist.md").exists()
 
 
 @pytest.mark.asyncio
@@ -102,8 +102,8 @@ async def test_fetch_saves_to_raw_web(web_daemon, socket_path):
     # Add the mock server host to allowlist so /fetch will accept it
     import re
     host = re.sub(r"^https?://", "", daemon.websearch.base_url).split(":")[0]
-    (vault / "_config").mkdir(parents=True, exist_ok=True)
-    (vault / "_config" / "allowlist.md").write_text(
+    (vault / "_config" / "pal").mkdir(parents=True, exist_ok=True)
+    (vault / "_config" / "pal" / "allowlist.md").write_text(
         f"# Allowlist\n\n- {host}\n"
     )
 
