@@ -950,7 +950,7 @@ class Daemon:
             resp = ResponseMessage(
                 text=(
                     "No allowlisted results. "
-                    "Edit `_config/allowlist.md` in the vault to add domains."
+                    f"Edit `{self.allowlist.allowlist_path.relative_to(self.allowlist.vault_path)}` in the vault to add domains."
                 ),
                 command="search-web",
             )
@@ -980,7 +980,7 @@ class Daemon:
             error = ErrorMessage(
                 error=(
                     f"URL not on allowlist: {url}\n"
-                    "Add its domain to _config/allowlist.md in the vault, then retry."
+                    f"Add its domain to {self.allowlist.allowlist_path.relative_to(self.allowlist.vault_path)} in the vault, then retry."
                 )
             )
             writer.write(encode_message(error))
