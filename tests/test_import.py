@@ -295,8 +295,8 @@ async def test_import_pdf_llm_toc_fallback_runs_on_main(import_daemon, socket_pa
     # emit_proposal indirectly: intercept the writer.write path.
     # Simplest: patch approval_registry.create_proposal to immediately
     # mark the proposal as approved with state="main".
-    import pal.approval_registry
-    original_create = pal.approval_registry.ApprovalRegistry.create_proposal
+    import agent_core.approval_registry
+    original_create = agent_core.approval_registry.ApprovalRegistry.create_proposal
 
     def auto_approve_create(self, *args, **kwargs):
         pid = original_create(self, *args, **kwargs)
@@ -306,7 +306,7 @@ async def test_import_pdf_llm_toc_fallback_runs_on_main(import_daemon, socket_pa
 
     monkeypatch_obj = pytest.MonkeyPatch()
     monkeypatch_obj.setattr(
-        pal.approval_registry.ApprovalRegistry,
+        agent_core.approval_registry.ApprovalRegistry,
         "create_proposal",
         auto_approve_create,
     )

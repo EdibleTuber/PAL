@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pal.approval_registry import ApprovalRegistry
+from agent_core.approval_registry import ApprovalRegistry
 from pal.tools import ToolExecutor
 
 

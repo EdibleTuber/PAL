@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from pal.approval_registry import ApprovalRegistry
+from agent_core.approval_registry import ApprovalRegistry
 from pal.learning import LearningManager
 from pal.tools import ToolExecutor
 from pal.wisdom import WisdomManager

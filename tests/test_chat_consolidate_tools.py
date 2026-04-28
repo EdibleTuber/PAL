@@ -3,7 +3,7 @@ import json
 import pytest
 from pathlib import Path
 
-from pal.approval_registry import ApprovalRegistry
+from agent_core.approval_registry import ApprovalRegistry
 from pal.tools import ToolExecutor
 
 

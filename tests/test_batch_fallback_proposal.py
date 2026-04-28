@@ -38,7 +38,7 @@ def test_batch_fallback_proposal_accepts_llm_toc_caller():
 
 
 def test_approval_registry_accepts_batch_fallback_kind():
-    from pal.approval_registry import ApprovalRegistry
+    from agent_core.approval_registry import ApprovalRegistry
     reg = ApprovalRegistry()
     pid = reg.create_proposal(
         kind="batch_fallback",
@@ -55,7 +55,7 @@ def test_approval_registry_accepts_batch_fallback_kind():
 
 
 def test_approval_registry_batch_fallback_retry_state():
-    from pal.approval_registry import ApprovalRegistry
+    from agent_core.approval_registry import ApprovalRegistry
     reg = ApprovalRegistry()
     pid = reg.create_proposal(
         kind="batch_fallback",
@@ -70,7 +70,7 @@ def test_approval_registry_batch_fallback_retry_state():
 
 
 def test_approval_registry_batch_fallback_skip_declines():
-    from pal.approval_registry import ApprovalRegistry
+    from agent_core.approval_registry import ApprovalRegistry
     reg = ApprovalRegistry()
     pid = reg.create_proposal(
         kind="batch_fallback",
@@ -108,7 +108,7 @@ def test_batch_fallback_approval_skip_round_trips():
 def test_approval_registry_approve_without_state_is_backward_compatible():
     """Existing callers (research, compile, etc.) call approve(proposal_id)
     with no state argument. This must continue to work unchanged."""
-    from pal.approval_registry import ApprovalRegistry
+    from agent_core.approval_registry import ApprovalRegistry
     reg = ApprovalRegistry()
     pid = reg.create_proposal(
         kind="research",

@@ -2,7 +2,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from pal.approval_registry import ApprovalRegistry
+from agent_core.approval_registry import ApprovalRegistry
 from pal.learning import LearningManager
 from pal.learning_scanner import LearningScanner
 from pal.protocol import (
