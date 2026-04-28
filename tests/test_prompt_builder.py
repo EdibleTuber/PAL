@@ -5,7 +5,7 @@ import pytest
 
 from agent_core.profile import ProfileManager
 from pal.prompt_builder import SystemPromptBuilder, BASE_PROMPT
-from pal.wisdom import WisdomManager
+from agent_core.wisdom import WisdomManager
 
 
 @pytest.fixture()
@@ -18,7 +18,7 @@ def vault(tmp_path) -> Path:
 @pytest.fixture()
 def builder(vault) -> SystemPromptBuilder:
     profile = ProfileManager(vault, "test-agent", username="edible")
-    wisdom = WisdomManager(vault)
+    wisdom = WisdomManager(vault, "test-agent")
     return SystemPromptBuilder(profile=profile, wisdom=wisdom)
 
 
@@ -38,7 +38,7 @@ def test_build_includes_profile(builder, vault):
 
 
 def test_build_includes_wisdom(builder, vault):
-    wisdom = WisdomManager(vault)
+    wisdom = WisdomManager(vault, "test-agent")
     wisdom.add(title="Concise", body="Lead with the answer.")
     wisdom.add(title="Accurate", body="Verify claims.")
     result = builder.build()
@@ -50,7 +50,7 @@ def test_build_includes_wisdom(builder, vault):
 
 def test_build_includes_both(builder, vault):
     ProfileManager(vault, "test-agent", username="edible").write("## Bio\n\nEngineer.\n")
-    WisdomManager(vault).add(title="Rule", body="Measure twice.")
+    WisdomManager(vault, "test-agent").add(title="Rule", body="Measure twice.")
     result = builder.build()
     assert "## About the User" in result
     assert "Engineer." in result
@@ -60,7 +60,7 @@ def test_build_includes_both(builder, vault):
 
 def test_build_sections_ordered(builder, vault):
     ProfileManager(vault, "test-agent", username="edible").write("## Bio\n\nEngineer.\n")
-    WisdomManager(vault).add(title="Rule", body="Measure twice.")
+    WisdomManager(vault, "test-agent").add(title="Rule", body="Measure twice.")
     result = builder.build()
     base_idx = result.find(BASE_PROMPT)
     profile_idx = result.find("## About the User")
@@ -159,7 +159,7 @@ def test_build_none_scratchpad_omits_section(builder):
 
 
 def test_build_scratchpad_appears_between_wisdom_and_commands(builder, vault):
-    WisdomManager(vault).add(title="Rule", body="some wisdom")
+    WisdomManager(vault, "test-agent").add(title="Rule", body="some wisdom")
     prompt = builder.build(channel_scratchpad="scratch content")
     wisdom_idx = prompt.find("Active Wisdom")
     scratch_idx = prompt.find("Channel Scratchpad")

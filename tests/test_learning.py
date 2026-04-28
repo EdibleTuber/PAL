@@ -87,7 +87,7 @@ def test_add_stores_metadata(learning, vault):
     assert meta["status"] == "active"
 
 
-from pal.wisdom import WisdomManager
+from agent_core.wisdom import WisdomManager
 
 
 def test_mark_promoted_updates_status(learning, vault):

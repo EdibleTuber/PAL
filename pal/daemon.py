@@ -21,7 +21,7 @@ from pal.scratchpad import Scratchpad, ScratchpadTooLarge
 from agent_core.inference import InferenceClient
 from agent_core.retrieval import RetrievalClient
 from agent_core.profile import ProfileManager
-from pal.wisdom import WisdomManager
+from agent_core.wisdom import WisdomManager
 from pal.learning import LearningManager
 from pal.prompt_builder import SystemPromptBuilder
 from agent_core.allowlist import AllowlistManager
@@ -139,7 +139,7 @@ class Daemon:
             collection_id=config.collection_id,
         )
         self.profile = ProfileManager(config.vault_path, "pal", username=config.username)
-        self.wisdom = WisdomManager(config.vault_path)
+        self.wisdom = WisdomManager(config.vault_path, "pal")
         self.prompt_builder = SystemPromptBuilder(
             profile=self.profile,
             wisdom=self.wisdom,

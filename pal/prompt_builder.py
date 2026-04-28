@@ -4,7 +4,7 @@ The base prompt establishes PAL's identity. Profile and wisdom are appended
 dynamically so PAL has fresh user context on every chat turn.
 """
 from agent_core.profile import ProfileManager
-from pal.wisdom import WisdomManager
+from agent_core.wisdom import WisdomManager
 
 
 BASE_PROMPT = """You are PAL, a personal AI librarian. You help the user think, answer questions, and manage knowledge in their vault.

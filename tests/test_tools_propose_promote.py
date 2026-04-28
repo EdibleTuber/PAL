@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 from agent_core.approval_registry import ApprovalRegistry
 from pal.learning import LearningManager
 from pal.tools import ToolExecutor
-from pal.wisdom import WisdomManager
+from agent_core.wisdom import WisdomManager
 
 
 def _make_executor(
@@ -24,7 +24,7 @@ def _make_executor(
         approval_registry=registry or ApprovalRegistry(),
         proposal_emitter=emitter,
         learning=learning or LearningManager(vault),
-        wisdom=wisdom or WisdomManager(vault),
+        wisdom=wisdom or WisdomManager(vault, "test-agent"),
     )
 
 
@@ -45,7 +45,7 @@ def test_propose_promote_emits_and_promotes_on_approve(tmp_path: Path):
     slug = lm.add("Granularity", "keep it focused", source="conversation")
 
     registry = ApprovalRegistry()
-    wm = WisdomManager(tmp_path)
+    wm = WisdomManager(tmp_path, "test-agent")
     executor = _make_executor(
         tmp_path,
         emitter=_auto_approve_emitter(registry),
@@ -71,7 +71,7 @@ def test_propose_promote_returns_declined_on_decline(tmp_path: Path):
     lm = LearningManager(tmp_path)
     slug = lm.add("Temp", "body", source="conversation")
     registry = ApprovalRegistry()
-    wm = WisdomManager(tmp_path)
+    wm = WisdomManager(tmp_path, "test-agent")
 
     executor = _make_executor(
         tmp_path,

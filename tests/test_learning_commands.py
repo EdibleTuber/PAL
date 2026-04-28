@@ -8,7 +8,7 @@ from pal.config import Config
 from pal.daemon import Daemon
 from agent_core.inference import CompletionResult
 from pal.learning import LearningManager
-from pal.wisdom import WisdomManager
+from agent_core.wisdom import WisdomManager
 
 
 @pytest.fixture()
@@ -120,7 +120,7 @@ async def test_promote_moves_to_wisdom(learn_daemon, socket_path):
     assert "promoted" in resp.text.lower() or "wisdom" in resp.text.lower()
     await client.close()
 
-    wm = WisdomManager(vault)
+    wm = WisdomManager(vault, "pal")
     entries = wm.list()
     assert any("Good Rule" in e["title"] for e in entries)
 
