@@ -24,7 +24,7 @@ from agent_core.profile import ProfileManager
 from pal.wisdom import WisdomManager
 from pal.learning import LearningManager
 from pal.prompt_builder import SystemPromptBuilder
-from pal.allowlist import AllowlistManager
+from agent_core.allowlist import AllowlistManager
 from agent_core.websearch import WebSearchClient
 from agent_core.utils.fetcher import URLFetcher, FetchError
 from agent_core.utils.converter import DocumentConverter, ConversionError
@@ -145,7 +145,7 @@ class Daemon:
             wisdom=self.wisdom,
         )
         self.learning = LearningManager(config.vault_path)
-        self.allowlist = AllowlistManager(config.vault_path)
+        self.allowlist = AllowlistManager(config.vault_path, "pal")
         self.allowlist.seed()
         self.websearch = WebSearchClient(
             base_url=config.searxng_url,
