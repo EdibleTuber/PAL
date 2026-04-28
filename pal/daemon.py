@@ -20,7 +20,7 @@ from pal.channels import ChannelStore, validate_channel_id
 from pal.scratchpad import Scratchpad, ScratchpadTooLarge
 from agent_core.inference import InferenceClient
 from agent_core.retrieval import RetrievalClient
-from pal.profile import ProfileManager
+from agent_core.profile import ProfileManager
 from pal.wisdom import WisdomManager
 from pal.learning import LearningManager
 from pal.prompt_builder import SystemPromptBuilder
@@ -138,7 +138,7 @@ class Daemon:
             base_url=config.inference_url,
             collection_id=config.collection_id,
         )
-        self.profile = ProfileManager(config.vault_path, username=config.username)
+        self.profile = ProfileManager(config.vault_path, "pal", username=config.username)
         self.wisdom = WisdomManager(config.vault_path)
         self.prompt_builder = SystemPromptBuilder(
             profile=self.profile,

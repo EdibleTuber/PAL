@@ -3,7 +3,7 @@
 The base prompt establishes PAL's identity. Profile and wisdom are appended
 dynamically so PAL has fresh user context on every chat turn.
 """
-from pal.profile import ProfileManager
+from agent_core.profile import ProfileManager
 from pal.wisdom import WisdomManager
 
 
