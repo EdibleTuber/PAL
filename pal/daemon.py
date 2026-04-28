@@ -22,7 +22,7 @@ from agent_core.inference import InferenceClient
 from agent_core.retrieval import RetrievalClient
 from agent_core.profile import ProfileManager
 from agent_core.wisdom import WisdomManager
-from pal.learning import LearningManager
+from agent_core.learning import LearningManager
 from pal.prompt_builder import SystemPromptBuilder
 from agent_core.allowlist import AllowlistManager
 from agent_core.websearch import WebSearchClient
@@ -144,7 +144,7 @@ class Daemon:
             profile=self.profile,
             wisdom=self.wisdom,
         )
-        self.learning = LearningManager(config.vault_path)
+        self.learning = LearningManager(config.vault_path, "pal")
         self.allowlist = AllowlistManager(config.vault_path, "pal")
         self.allowlist.seed()
         self.websearch = WebSearchClient(

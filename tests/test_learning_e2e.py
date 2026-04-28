@@ -7,12 +7,12 @@ with the right content.
 import asyncio
 from pathlib import Path
 
-from pal.learning import LearningManager
+from agent_core.learning import LearningManager
 from pal.learning_scanner import LearningScanner
 
 
 def test_full_flow_to_disk(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
 
     async def fake_extract(recent, trigger):
@@ -38,7 +38,7 @@ def test_full_flow_to_disk(tmp_path: Path):
     slug = lm.add(popped.title, popped.body, source="scanner")
 
     # File on disk
-    path = tmp_path / "_learning" / f"{slug}.md"
+    path = tmp_path / "_learning" / "pal" / f"{slug}.md"
     assert path.exists()
     text = path.read_text()
     assert "Granularity" in text
@@ -51,7 +51,7 @@ def test_full_flow_to_disk(tmp_path: Path):
 
 
 def test_full_flow_declined_keeps_nothing_on_disk(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
 
     async def fake_extract(recent, trigger):
@@ -74,7 +74,7 @@ def test_full_flow_declined_keeps_nothing_on_disk(tmp_path: Path):
     assert popped is not None
 
     # No file written
-    learning_dir = tmp_path / "_learning"
+    learning_dir = tmp_path / "_learning" / "pal"
     if learning_dir.exists():
         assert list(learning_dir.glob("*.md")) == []
     # Scanner pending cleared
@@ -82,7 +82,7 @@ def test_full_flow_declined_keeps_nothing_on_disk(tmp_path: Path):
 
 
 def test_full_flow_with_queued_second_candidate(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
     extractor_returns = [
         {"title": "First", "body": "body-1"},
@@ -121,7 +121,7 @@ def test_full_flow_with_queued_second_candidate(tmp_path: Path):
     popped = scanner.take_pending(first.proposal_id)
     assert popped.title == "First"
     slug1 = lm.add(popped.title, popped.body, source="scanner")
-    assert (tmp_path / "_learning" / f"{slug1}.md").exists()
+    assert (tmp_path / "_learning" / "pal" / f"{slug1}.md").exists()
 
     # After take_pending drained the queue, second is now emitted and pending.
     assert len(emitted) == 2
@@ -131,5 +131,5 @@ def test_full_flow_with_queued_second_candidate(tmp_path: Path):
     # Approve second.
     popped2 = scanner.take_pending(emitted[1].proposal_id)
     slug2 = lm.add(popped2.title, popped2.body, source="scanner")
-    assert (tmp_path / "_learning" / f"{slug2}.md").exists()
-    assert len(list((tmp_path / "_learning").glob("*.md"))) == 2
+    assert (tmp_path / "_learning" / "pal" / f"{slug2}.md").exists()
+    assert len(list((tmp_path / "_learning" / "pal").glob("*.md"))) == 2

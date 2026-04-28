@@ -2,12 +2,12 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from pal.learning import LearningManager
+from agent_core.learning import LearningManager
 from pal.learning_scanner import LearningScanner
 
 
 def test_scanner_emits_candidate_on_signal(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
     extractor = AsyncMock(return_value={"title": "Granularity", "body": "focused"})
     scanner = LearningScanner(
@@ -26,7 +26,7 @@ def test_scanner_emits_candidate_on_signal(tmp_path: Path):
 
 
 def test_scanner_silent_on_no_signal(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
     extractor = AsyncMock(return_value={"title": "x", "body": "y"})
     scanner = LearningScanner(
@@ -43,7 +43,7 @@ def test_scanner_silent_on_no_signal(tmp_path: Path):
 
 
 def test_scanner_silent_on_duplicate(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     lm.add("Granularity Over Consolidation", "keep focused", source="conversation")
     emitted: list = []
     extractor = AsyncMock(return_value={"title": "Granularity Over Consolidation", "body": "x"})
@@ -60,7 +60,7 @@ def test_scanner_silent_on_duplicate(tmp_path: Path):
 
 
 def test_scanner_silent_when_extractor_returns_none(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
     extractor = AsyncMock(return_value=None)
     scanner = LearningScanner(
@@ -76,7 +76,7 @@ def test_scanner_silent_when_extractor_returns_none(tmp_path: Path):
 
 
 def test_scanner_queues_while_proposal_pending(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
     extractor = AsyncMock(return_value={"title": "Another", "body": "x"})
     scanner = LearningScanner(
@@ -95,7 +95,7 @@ def test_scanner_queues_while_proposal_pending(tmp_path: Path):
 
 
 def test_scanner_drains_queue_when_cleared(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
     extractor = AsyncMock(return_value={"title": "q", "body": "x"})
     scanner = LearningScanner(
@@ -116,7 +116,7 @@ def test_scanner_drains_queue_when_cleared(tmp_path: Path):
 
 
 def test_scanner_generates_unique_proposal_ids(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
     extractor = AsyncMock(return_value={"title": "A", "body": "x"})
     scanner = LearningScanner(

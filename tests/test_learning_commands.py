@@ -7,7 +7,7 @@ from pal.client import PalClient
 from pal.config import Config
 from pal.daemon import Daemon
 from agent_core.inference import CompletionResult
-from pal.learning import LearningManager
+from agent_core.learning import LearningManager
 from agent_core.wisdom import WisdomManager
 
 
@@ -65,7 +65,7 @@ async def test_learn_extracts_from_conversation(learn_daemon, socket_path, monke
     assert "learning" in resp.text.lower() or "extracted" in resp.text.lower()
 
     # Learnings should exist in the vault
-    learning_files = list((vault / "_learning").glob("*.md"))
+    learning_files = list((vault / "_learning" / "pal").glob("*.md"))
     learning_files = [f for f in learning_files if f.stem != "ratings"]
     assert len(learning_files) >= 1
 
@@ -124,7 +124,7 @@ async def test_promote_moves_to_wisdom(learn_daemon, socket_path):
     entries = wm.list()
     assert any("Good Rule" in e["title"] for e in entries)
 
-    lm = LearningManager(vault)
+    lm = LearningManager(vault, "pal")
     entries = lm.list()
     promoted = [e for e in entries if e["slug"] == "good-rule"]
     assert promoted[0]["status"] == "promoted"
@@ -151,7 +151,7 @@ async def test_rate_good(learn_daemon, socket_path):
     assert "good" in resp.text.lower()
     await client.close()
 
-    ratings_path = vault / "_learning" / "ratings.md"
+    ratings_path = vault / "_learning" / "pal" / "ratings.md"
     assert ratings_path.exists()
     content = ratings_path.read_text()
     assert "**good**" in content

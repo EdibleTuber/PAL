@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from agent_core.approval_registry import ApprovalRegistry
-from pal.learning import LearningManager
+from agent_core.learning import LearningManager
 from pal.learning_scanner import LearningScanner
 from pal.protocol import (
     LearningCandidateProposalMessage,
@@ -15,7 +15,7 @@ def _make_daemon(tmp_path: Path):
     """Minimal daemon-like shim with only the fields _route_approval_response touches."""
     class Shim:
         def __init__(self):
-            self.learning = LearningManager(tmp_path)
+            self.learning = LearningManager(tmp_path, "pal")
             self.wiki = MagicMock()
             self.wiki.git_commit = MagicMock()
 

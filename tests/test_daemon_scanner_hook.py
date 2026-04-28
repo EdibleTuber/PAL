@@ -11,12 +11,12 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from pal.learning import LearningManager
+from agent_core.learning import LearningManager
 from pal.learning_scanner import LearningScanner, extract_candidate
 
 
 def test_scanner_extractor_closure_calls_inference_and_emits(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
 
     # Stub inference: simulate InferenceClient.complete returning text.
     inference = MagicMock()
@@ -58,7 +58,7 @@ def test_scanner_extractor_closure_calls_inference_and_emits(tmp_path: Path):
 
 
 def test_scanner_extractor_returns_none_when_inference_is_not_text(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
 
     inference = MagicMock()
     tool_result = MagicMock()
@@ -96,7 +96,7 @@ def test_scanner_extractor_returns_none_when_inference_is_not_text(tmp_path: Pat
 
 
 def test_scanner_does_not_fire_on_neutral_message(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
 
     inference = MagicMock()
     inference.complete = AsyncMock()

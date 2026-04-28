@@ -2,13 +2,13 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from pal.learning import LearningManager
+from agent_core.learning import LearningManager
 from pal.learning_scanner import LearningScanner
 from pal.protocol import LearningCandidateProposalMessage
 
 
 def test_take_pending_returns_message_on_match(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
     extractor = AsyncMock(return_value={"title": "T", "body": "B"})
     scanner = LearningScanner(
@@ -30,7 +30,7 @@ def test_take_pending_returns_message_on_match(tmp_path: Path):
 
 
 def test_take_pending_returns_none_for_mismatch(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
     extractor = AsyncMock(return_value={"title": "T", "body": "B"})
     scanner = LearningScanner(
@@ -49,7 +49,7 @@ def test_take_pending_returns_none_for_mismatch(tmp_path: Path):
 
 
 def test_take_pending_drains_queue(tmp_path: Path):
-    lm = LearningManager(tmp_path)
+    lm = LearningManager(tmp_path, "pal")
     emitted: list = []
     extractor = AsyncMock(return_value={"title": "A", "body": "x"})
     scanner = LearningScanner(
