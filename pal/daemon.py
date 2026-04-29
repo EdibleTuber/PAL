@@ -454,6 +454,7 @@ class Daemon:
             if mode == "on":
                 completion = await self.inference.complete(
                     messages, tools=TOOL_DEFINITIONS, reasoning=mode,
+                    max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 )
                 if completion.type == "text":
                     response_text = completion.content or ""
@@ -477,6 +478,7 @@ class Daemon:
             else:
                 async for item in self.inference.stream(
                     messages, tools=TOOL_DEFINITIONS, reasoning=mode,
+                    max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 ):
                     if isinstance(item, list):
                         tool_calls = item
@@ -529,7 +531,10 @@ class Daemon:
                 messages = conv.get_messages_for_api(
                     system_prompt=self.prompt_builder.build(channel_scratchpad=scratchpad_content),
                 )
-                completion = await self.inference.complete(messages, tools=TOOL_DEFINITIONS, reasoning=mode)
+                completion = await self.inference.complete(
+                    messages, tools=TOOL_DEFINITIONS, reasoning=mode,
+                    max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
+                )
 
                 if completion.type == "text":
                     response_text = completion.content or ""
