@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, AsyncMock
 @pytest.mark.asyncio
 async def test_two_channels_get_separate_conversations(tmp_path):
     """Messages on C1 and C2 populate different Conversation instances."""
-    from pal.channels import ChannelStore
+    from agent_core.channels import ChannelStore
 
-    store = ChannelStore(channels_dir=tmp_path, history_depth=50)
+    store = ChannelStore(vault_path=tmp_path, agent_name="pal", history_depth=50)
     conv1 = await store.get_or_create("C1")
     conv1.add_user("hello from C1")
     conv2 = await store.get_or_create("C2")
@@ -42,15 +42,15 @@ async def test_channel_id_invalid_falls_back_to_cli_default_with_log(tmp_path, c
 @pytest.mark.asyncio
 async def test_daemon_restart_replays_history(tmp_path):
     """Simulate restart: create store, drop it, create a new store on same dir."""
-    from pal.channels import ChannelStore
+    from agent_core.channels import ChannelStore
 
-    store1 = ChannelStore(channels_dir=tmp_path, history_depth=50)
+    store1 = ChannelStore(vault_path=tmp_path, agent_name="pal", history_depth=50)
     conv1 = await store1.get_or_create("C1")
     conv1.add_user("turn 1")
     conv1.add_assistant("turn 2")
 
     del store1
-    store2 = ChannelStore(channels_dir=tmp_path, history_depth=50)
+    store2 = ChannelStore(vault_path=tmp_path, agent_name="pal", history_depth=50)
     conv2 = await store2.get_or_create("C1")
 
     assert len(conv2.messages) == 2

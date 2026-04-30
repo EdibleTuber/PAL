@@ -16,7 +16,7 @@ import httpx
 from pal.config import Config
 from pal.wiki import WikiManager
 from agent_core.conversation import Conversation
-from pal.channels import ChannelStore, validate_channel_id
+from agent_core.channels import ChannelStore, validate_channel_id
 from pal.scratchpad import Scratchpad, ScratchpadTooLarge
 from agent_core.inference import InferenceClient, StreamEnd
 from agent_core.retrieval import RetrievalClient
@@ -189,7 +189,8 @@ class Daemon:
         cleanup_archived(config.vault_path)
         self.config.channels_dir.mkdir(parents=True, exist_ok=True)
         self.channel_store = ChannelStore(
-            channels_dir=self.config.channels_dir,
+            vault_path=self.config.vault_path,
+            agent_name="pal",
             history_depth=self.config.history_depth,
         )
 
