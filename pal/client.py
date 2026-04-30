@@ -6,18 +6,18 @@ import asyncio
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from pal.protocol import (
+from agent_core.protocol import (
     ChatMessage,
     CommandMessage,
     StreamChunkMessage,
     ResponseMessage,
     ErrorMessage,
     ToolProgressMessage,
-    Message,
     STREAM_BUFFER_LIMIT,
     encode_message,
     decode_message,
 )
+from pal.protocol import Message
 
 
 class PalClient:

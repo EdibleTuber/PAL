@@ -47,19 +47,21 @@ from pal.article import (
     parse_article, serialize_article, append_timeline_entry,
     validate_compiled_truth, find_existing_article, Article,
 )
-from pal.protocol import (
+from agent_core.protocol import (
     ChatMessage,
     CommandMessage,
     StreamChunkMessage,
     ResponseMessage,
     ErrorMessage,
     ToolProgressMessage,
-    ResearchApprovalResponseMessage,
-    BatchFallbackApprovalMessage,
-    Message,
     STREAM_BUFFER_LIMIT,
     encode_message,
     decode_message,
+)
+from pal.protocol import (
+    ResearchApprovalResponseMessage,
+    BatchFallbackApprovalMessage,
+    Message,
 )
 from pal.commands import COMMANDS
 
