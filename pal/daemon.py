@@ -17,7 +17,7 @@ from pal.config import Config
 from pal.wiki import WikiManager
 from agent_core.conversation import Conversation
 from agent_core.channels import ChannelStore, validate_channel_id
-from pal.scratchpad import Scratchpad, ScratchpadTooLarge
+from agent_core.scratchpad import Scratchpad, ScratchpadTooLarge
 from agent_core.inference import InferenceClient, StreamEnd
 from agent_core.retrieval import RetrievalClient
 from agent_core.profile import ProfileManager
@@ -436,11 +436,15 @@ class Daemon:
         conv.add_user(msg.text)
         mode = decide_mode(conv)
 
+        def _commit_scratchpad(path, message):
+            self.wiki.git_commit(message)
+
         scratchpad = Scratchpad(
             vault_path=self.config.vault_path,
+            agent_name="pal",
             channel_id=channel_id,
-            wiki=self.wiki,
             max_bytes=self.config.scratchpad_max_bytes,
+            commit_callback=_commit_scratchpad,
         )
         scratchpad_content = scratchpad.read()
         tool_executor.scratchpad = scratchpad
@@ -665,11 +669,15 @@ class Daemon:
         elif msg.name == "research":
             await self._handle_research(msg.args, writer)
         elif msg.name == "scratch":
+            def _commit_scratchpad(path, message):
+                self.wiki.git_commit(message)
+
             scratchpad = Scratchpad(
                 vault_path=self.config.vault_path,
+                agent_name="pal",
                 channel_id=channel_id,
-                wiki=self.wiki,
                 max_bytes=self.config.scratchpad_max_bytes,
+                commit_callback=_commit_scratchpad,
             )
             text = await handle_scratch(scratchpad=scratchpad, text=msg.args)
             resp = ResponseMessage(text=text, command="scratch")
