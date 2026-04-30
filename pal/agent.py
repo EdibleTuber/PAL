@@ -28,8 +28,39 @@ from agent_core.protocol import (
 )
 
 from pal.config import PALConfig
+from pal.commands import COMMANDS
+from agent_core.scratchpad import ScratchpadTooLarge
 
 logger = logging.getLogger(__name__)
+
+
+async def handle_scratch(scratchpad, text: str) -> str:
+    """Append a timestamped note to the given scratchpad. Returns user-facing message."""
+    from datetime import datetime, timezone
+    text = text.strip()
+    if not text:
+        return "Usage: /scratch <text>. Appends a timestamped line to this channel's scratchpad."
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    appended = f"- {ts}: {text}\n"
+    try:
+        scratchpad.append(appended)
+    except ScratchpadTooLarge as exc:
+        return (
+            f"Error: note would push scratchpad over {exc.max_bytes} bytes. "
+            "Prune the scratchpad (edit in Obsidian or call update_scratch) and retry."
+        )
+    return f"Note added ({len(appended)} bytes)."
+
+
+def render_help_text() -> str:
+    """Render /help output from the COMMANDS registry."""
+    lines = ["Available commands:"]
+    max_name = max(len(f"/{c.name} {c.args}".rstrip()) for c in COMMANDS)
+    for cmd in COMMANDS:
+        prefix = f"/{cmd.name} {cmd.args}".rstrip()
+        padded = prefix.ljust(max_name)
+        lines.append(f"  {padded}  - {cmd.description}")
+    return "\n".join(lines)
 
 
 class PALAgent(Agent):
@@ -487,7 +518,6 @@ class PALAgent(Agent):
         self, msg: CommandMessage, ctx: HandlerContext,
     ) -> AsyncIterator[object]:
         """Handle /help — show command list."""
-        from pal.daemon import render_help_text
         resp = ResponseMessage(text=render_help_text(), command="help")
         ctx.writer.write(encode_message(resp))
         await ctx.writer.drain()
@@ -1944,8 +1974,6 @@ class PALAgent(Agent):
         self, msg: CommandMessage, ctx: HandlerContext,
     ) -> AsyncIterator[object]:
         """Handle /scratch <text> — append a timestamped note to the channel scratchpad."""
-        from pal.daemon import handle_scratch
-
         writer = ctx.writer
         scratchpad = self._build_scratchpad(ctx.channel_id)
         text = await handle_scratch(scratchpad=scratchpad, text=msg.args)
