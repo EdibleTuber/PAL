@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 from agent_core.approval_registry import ApprovalRegistry
 from agent_core.learning import LearningManager
-from pal.learning_scanner import LearningScanner
+from agent_core.learning_scanner import LearningScanner
 from agent_core.protocol import LearningCandidateProposalMessage
 from pal.protocol import ResearchApprovalResponseMessage
 

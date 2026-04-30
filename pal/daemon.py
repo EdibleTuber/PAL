@@ -264,7 +264,7 @@ class Daemon:
             max_body_chars=self.config.max_inference_body_chars,
         )
 
-        from pal.learning_scanner import LearningScanner, extract_candidate
+        from agent_core.learning_scanner import LearningScanner, extract_candidate
 
         effective_inference = self.batch_inference if self.batch_inference is not None else self.inference
 
