@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from pal.client import PalClient
-from pal.protocol import StreamChunkMessage, ResponseMessage, ChatMessage, decode_message
+from agent_core.protocol import StreamChunkMessage, ResponseMessage, ChatMessage, decode_message
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,7 @@ async def test_chat_defaults_channel_id_to_none():
 
 @pytest.mark.asyncio
 async def test_command_sends_channel_id_when_provided():
-    from pal.protocol import ResponseMessage, encode_message
+    from agent_core.protocol import ResponseMessage, encode_message
     client = PalClient(socket_path=Path("/tmp/unused.sock"))
     writer = MagicMock()
     writer.write = MagicMock()

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 from agent_core.learning import LearningManager
 from pal.learning_scanner import LearningScanner
-from pal.protocol import LearningCandidateProposalMessage
+from agent_core.protocol import LearningCandidateProposalMessage
 
 
 def test_take_pending_returns_message_on_match(tmp_path: Path):

@@ -6,7 +6,7 @@ import pytest
 from pal.client import PalClient
 from pal.config import Config
 from pal.daemon import Daemon
-from pal.protocol import ResponseMessage, StreamChunkMessage
+from agent_core.protocol import ResponseMessage, StreamChunkMessage
 
 
 @pytest.fixture()

@@ -1,4 +1,4 @@
-from pal.protocol import (
+from agent_core.protocol import (
     LearningCandidateProposalMessage,
     encode_message,
     decode_message,

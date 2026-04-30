@@ -2,7 +2,7 @@ from pal.discord_interactions import (
     build_learning_candidate_embed,
     parse_button_custom_id,
 )
-from pal.protocol import LearningCandidateProposalMessage
+from agent_core.protocol import LearningCandidateProposalMessage
 
 
 def _sample() -> LearningCandidateProposalMessage:

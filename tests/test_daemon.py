@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from pal.protocol import (
+from agent_core.protocol import (
     ChatMessage, StreamChunkMessage, ResponseMessage,
     ToolProgressMessage, ErrorMessage, encode_message, decode_message,
 )

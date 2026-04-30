@@ -115,7 +115,7 @@ async def test_allowlist_empty_blocks_all():
 # --- Task 9: channel_id forwarding ---
 
 from pal.discord_adapter import PalDiscordBot
-from pal.protocol import ResponseMessage, StreamChunkMessage
+from agent_core.protocol import ResponseMessage, StreamChunkMessage
 
 
 def _make_fake_message(content: str, author_id: int, channel_id: int, *, in_guild: bool = False):

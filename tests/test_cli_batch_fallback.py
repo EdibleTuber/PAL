@@ -4,11 +4,10 @@ import json
 import pytest
 
 from pal.cli import format_batch_fallback_proposal
+from agent_core.protocol import decode_message, encode_message
 from pal.protocol import (
     BatchFallbackApprovalMessage,
     BatchFallbackProposal,
-    decode_message,
-    encode_message,
 )
 
 
