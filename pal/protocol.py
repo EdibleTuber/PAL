@@ -1,73 +1,32 @@
-"""Message protocol for PAL — newline-delimited JSON over unix socket.
+"""PAL protocol: PAL-specific message types registered with agent_core's
+protocol registry, plus a local Message union over both generic and
+PAL-specific message types for type hints.
 
-Message types:
-    chat                        — user text message
-    command                     — parsed slash command (name + args)
-    stream_chunk                — single streaming token from daemon
-    response                    — complete response (non-streaming commands)
-    error                       — error message
-    tool_progress               — tool execution progress indicator
-    research_proposal           — daemon-to-CLI research approval request
-    research_approval_response  — CLI-to-daemon approval decision
-    compile_proposal            — daemon-to-CLI compile approval request
-    reorg_proposal              — daemon-to-CLI reorganization approval request
-    consolidate_proposal        — daemon-to-CLI consolidation approval request
-    batch_fallback_proposal     — daemon-to-CLI batch inference fallback request
-    batch_fallback_approval     — CLI-to-daemon batch fallback choice
+Generic primitives (Chat, Command, StreamChunk, Response, Error, ToolProgress,
+LearningCandidateProposal) live in agent_core.protocol. The transport
+machinery (encode_message, decode_message, STREAM_BUFFER_LIMIT) does too.
 
-All messages are serialized as a single JSON line terminated by newline.
+Message types defined here are PAL-specific approval/proposal messages tied to
+PAL's domain workflows (research, compile, reorg, consolidate, promote,
+batch_fallback). They register with agent_core.protocol's registry at import
+time so encode_message/decode_message round-trip them correctly.
 """
-import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Literal
 
-# asyncio StreamReader default is 64 KiB, which /research and similar
-# commands can exceed in a single NDJSON line after aggregating sources.
-STREAM_BUFFER_LIMIT = 16 * 1024 * 1024
+from agent_core.protocol import (
+    ChatMessage,
+    CommandMessage,
+    ErrorMessage,
+    LearningCandidateProposalMessage,
+    ResponseMessage,
+    StreamChunkMessage,
+    ToolProgressMessage,
+    register_message,
+)
 
 
-@dataclass
-class ChatMessage:
-    text: str
-    channel_id: str | None = None
-    type: str = "chat"
-
-
-@dataclass
-class CommandMessage:
-    name: str
-    args: str
-    channel_id: str | None = None
-    type: str = "command"
-
-
-@dataclass
-class StreamChunkMessage:
-    token: str
-    type: str = "stream_chunk"
-
-
-@dataclass
-class ResponseMessage:
-    text: str
-    command: str = ""
-    reasoning: str = ""
-    type: str = "response"
-
-
-@dataclass
-class ErrorMessage:
-    error: str
-    type: str = "error"
-
-
-@dataclass
-class ToolProgressMessage:
-    tool: str
-    arguments: dict
-    type: str = "tool_progress"
-
-
+@register_message
 @dataclass
 class ResearchProposalMessage:
     proposal_id: str
@@ -77,6 +36,7 @@ class ResearchProposalMessage:
     type: str = "research_proposal"
 
 
+@register_message
 @dataclass
 class ResearchApprovalResponseMessage:
     proposal_id: str
@@ -87,6 +47,7 @@ class ResearchApprovalResponseMessage:
     type: str = "research_approval_response"
 
 
+@register_message
 @dataclass
 class CompileProposalMessage:
     proposal_id: str
@@ -95,6 +56,7 @@ class CompileProposalMessage:
     type: str = "compile_proposal"
 
 
+@register_message
 @dataclass
 class ReorgProposalMessage:
     proposal_id: str
@@ -104,6 +66,7 @@ class ReorgProposalMessage:
     type: str = "reorg_proposal"
 
 
+@register_message
 @dataclass
 class ConsolidateProposalMessage:
     proposal_id: str
@@ -114,6 +77,7 @@ class ConsolidateProposalMessage:
     type: str = "consolidate_proposal"
 
 
+@register_message
 @dataclass
 class PromoteProposalMessage:
     proposal_id: str
@@ -124,20 +88,11 @@ class PromoteProposalMessage:
     type: str = "promote_proposal"
 
 
-@dataclass
-class LearningCandidateProposalMessage:
-    proposal_id: str
-    title: str
-    body: str
-    trigger_excerpt: str  # user-message fragment that triggered the scan
-    type: str = "learning_candidate_proposal"
-
-
+@register_message
 @dataclass
 class BatchFallbackProposal:
-    """Emitted when a user-facing call to the batch inference backend
-    fails and the user should choose: retry on batch, run on main, or
-    skip this step.
+    """Emitted when a user-facing call to the batch inference backend fails
+    and the user should choose: retry on batch, run on main, or skip this step.
 
     Approval states carried via approval_choice in the approval registry:
       - approved with state "retry": retry on batch
@@ -151,6 +106,7 @@ class BatchFallbackProposal:
     type: str = "batch_fallback_proposal"
 
 
+@register_message
 @dataclass
 class BatchFallbackApprovalMessage:
     """Client to daemon: the user's choice for a BatchFallbackProposal.
@@ -165,24 +121,9 @@ class BatchFallbackApprovalMessage:
     type: str = "batch_fallback_approval"
 
 
-_MESSAGE_TYPES: dict[str, type] = {
-    "chat": ChatMessage,
-    "command": CommandMessage,
-    "stream_chunk": StreamChunkMessage,
-    "response": ResponseMessage,
-    "error": ErrorMessage,
-    "tool_progress": ToolProgressMessage,
-    "research_proposal": ResearchProposalMessage,
-    "research_approval_response": ResearchApprovalResponseMessage,
-    "compile_proposal": CompileProposalMessage,
-    "reorg_proposal": ReorgProposalMessage,
-    "consolidate_proposal": ConsolidateProposalMessage,
-    "promote_proposal": PromoteProposalMessage,
-    "learning_candidate_proposal": LearningCandidateProposalMessage,
-    "batch_fallback_proposal": BatchFallbackProposal,
-    "batch_fallback_approval": BatchFallbackApprovalMessage,
-}
-
+# Local Message union over BOTH generic and PAL-specific types for type hints.
+# Consumers like pal/client.py and pal/cli.py import this for their isinstance
+# branches and type annotations.
 Message = (
     ChatMessage
     | CommandMessage
@@ -200,22 +141,3 @@ Message = (
     | BatchFallbackProposal
     | BatchFallbackApprovalMessage
 )
-
-
-def encode_message(msg: Message) -> bytes:
-    """Serialize a message to a newline-terminated JSON bytes line."""
-    return json.dumps(asdict(msg), ensure_ascii=False).encode("utf-8") + b"\n"
-
-
-def decode_message(data: bytes) -> Message:
-    """Deserialize a JSON bytes line into a message object.
-
-    Raises ValueError for unknown message types.
-    """
-    obj = json.loads(data)
-    msg_type = obj.get("type")
-    cls = _MESSAGE_TYPES.get(msg_type)
-    if cls is None:
-        raise ValueError(f"Unknown message type: {msg_type!r}")
-    obj.pop("type", None)
-    return cls(**obj)
