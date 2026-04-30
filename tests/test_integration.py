@@ -2,7 +2,7 @@
 import pytest
 
 from pal.client import PalClient
-from pal.protocol import StreamChunkMessage, ResponseMessage, ErrorMessage
+from agent_core.protocol import StreamChunkMessage, ResponseMessage, ErrorMessage
 
 
 @pytest.mark.asyncio

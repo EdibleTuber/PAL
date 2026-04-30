@@ -11,12 +11,14 @@ from pal.discord_interactions import (
     build_research_edit_modal,
     build_compile_edit_modal,
 )
-from pal.protocol import (
-    ResearchProposalMessage,
-    CompileProposalMessage,
+from agent_core.protocol import (
     ResponseMessage,
     StreamChunkMessage,
     ToolProgressMessage,
+)
+from pal.protocol import (
+    ResearchProposalMessage,
+    CompileProposalMessage,
 )
 
 

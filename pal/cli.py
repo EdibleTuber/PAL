@@ -17,11 +17,13 @@ from rich.text import Text
 from pal.client import PalClient
 from pal.commands import COMMANDS
 from pal.config import load_config
-from pal.protocol import (
+from agent_core.protocol import (
     StreamChunkMessage,
     ResponseMessage,
     ErrorMessage,
     ToolProgressMessage,
+)
+from pal.protocol import (
     ResearchProposalMessage,
     ResearchApprovalResponseMessage,
     CompileProposalMessage,

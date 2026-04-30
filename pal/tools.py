@@ -15,7 +15,7 @@ from agent_core.retrieval import RetrievalClient
 from pal.wiki import WikiManager
 from agent_core.learning import LearningManager
 from agent_core.wisdom import WisdomManager
-from pal.scratchpad import ScratchpadTooLarge
+from agent_core.scratchpad import ScratchpadTooLarge
 
 if TYPE_CHECKING:
     from agent_core.approval_registry import ApprovalRegistry

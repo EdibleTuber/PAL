@@ -42,7 +42,7 @@ async def test_learn_extracts_from_conversation(learn_daemon, socket_path, monke
     """After chatting, /learn extracts lessons from conversation history."""
     daemon, vault = learn_daemon
 
-    from pal.protocol import StreamChunkMessage, ResponseMessage
+    from agent_core.protocol import StreamChunkMessage, ResponseMessage
     client = PalClient(socket_path)
     await client.connect()
 

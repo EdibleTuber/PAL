@@ -441,13 +441,13 @@ def build_compile_edit_modal(ctx: ProposalContext) -> discord.ui.Modal:
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from pal.protocol import (
+from agent_core.protocol import (
     ErrorMessage,
-    Message,
     ResponseMessage,
     StreamChunkMessage,
     ToolProgressMessage,
 )
+from pal.protocol import Message
 
 
 class DiscordStreamProcessor:

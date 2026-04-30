@@ -1,11 +1,10 @@
 """Tests for BatchFallbackProposal protocol message."""
 import pytest
 
+from agent_core.protocol import encode_message, decode_message
 from pal.protocol import (
     BatchFallbackProposal,
     BatchFallbackApprovalMessage,
-    encode_message,
-    decode_message,
 )
 
 

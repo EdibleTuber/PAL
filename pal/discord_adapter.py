@@ -20,13 +20,13 @@ from pal.discord_interactions import (
     parse_modal_custom_id,
     extract_modal_field_values,
 )
-from pal.protocol import (
+from agent_core.protocol import (
     StreamChunkMessage,
     ResponseMessage,
     ErrorMessage,
     ToolProgressMessage,
-    ResearchApprovalResponseMessage,
 )
+from pal.protocol import ResearchApprovalResponseMessage
 
 logger = logging.getLogger(__name__)
 

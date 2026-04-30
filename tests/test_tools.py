@@ -472,13 +472,18 @@ async def test_wait_for_reindex_unknown_job(vault):
 @pytest.mark.asyncio
 async def test_update_scratch_writes_content(tmp_path):
     from unittest.mock import MagicMock
-    from pal.scratchpad import Scratchpad
+    from agent_core.scratchpad import Scratchpad
     from pal.tools import ToolExecutor
 
     wiki = MagicMock()
     wiki.git_commit = MagicMock()
-    sp = Scratchpad(vault_path=tmp_path, channel_id="C1",
-                    wiki=wiki, max_bytes=1024)
+    sp = Scratchpad(
+        vault_path=tmp_path,
+        agent_name="pal",
+        channel_id="C1",
+        max_bytes=1024,
+        commit_callback=lambda path, msg: wiki.git_commit(msg),
+    )
     executor = ToolExecutor(
         vault_path=tmp_path,
         retrieval=None,
@@ -494,13 +499,18 @@ async def test_update_scratch_writes_content(tmp_path):
 @pytest.mark.asyncio
 async def test_update_scratch_returns_error_on_oversize(tmp_path):
     from unittest.mock import MagicMock
-    from pal.scratchpad import Scratchpad
+    from agent_core.scratchpad import Scratchpad
     from pal.tools import ToolExecutor
 
     wiki = MagicMock()
     wiki.git_commit = MagicMock()
-    sp = Scratchpad(vault_path=tmp_path, channel_id="C1",
-                    wiki=wiki, max_bytes=10)
+    sp = Scratchpad(
+        vault_path=tmp_path,
+        agent_name="pal",
+        channel_id="C1",
+        max_bytes=10,
+        commit_callback=lambda path, msg: wiki.git_commit(msg),
+    )
     executor = ToolExecutor(
         vault_path=tmp_path,
         retrieval=None,

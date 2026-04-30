@@ -8,7 +8,7 @@ import asyncio
 from pathlib import Path
 
 from agent_core.learning import LearningManager
-from pal.learning_scanner import LearningScanner
+from agent_core.learning_scanner import LearningScanner
 
 
 def test_full_flow_to_disk(tmp_path: Path):

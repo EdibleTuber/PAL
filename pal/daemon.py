@@ -15,9 +15,9 @@ import httpx
 
 from pal.config import Config
 from pal.wiki import WikiManager
-from pal.conversation import Conversation
-from pal.channels import ChannelStore, validate_channel_id
-from pal.scratchpad import Scratchpad, ScratchpadTooLarge
+from agent_core.conversation import Conversation
+from agent_core.channels import ChannelStore, validate_channel_id
+from agent_core.scratchpad import Scratchpad, ScratchpadTooLarge
 from agent_core.inference import InferenceClient, StreamEnd
 from agent_core.retrieval import RetrievalClient
 from agent_core.profile import ProfileManager
@@ -47,19 +47,21 @@ from pal.article import (
     parse_article, serialize_article, append_timeline_entry,
     validate_compiled_truth, find_existing_article, Article,
 )
-from pal.protocol import (
+from agent_core.protocol import (
     ChatMessage,
     CommandMessage,
     StreamChunkMessage,
     ResponseMessage,
     ErrorMessage,
     ToolProgressMessage,
-    ResearchApprovalResponseMessage,
-    BatchFallbackApprovalMessage,
-    Message,
     STREAM_BUFFER_LIMIT,
     encode_message,
     decode_message,
+)
+from pal.protocol import (
+    ResearchApprovalResponseMessage,
+    BatchFallbackApprovalMessage,
+    Message,
 )
 from pal.commands import COMMANDS
 
@@ -187,7 +189,8 @@ class Daemon:
         cleanup_archived(config.vault_path)
         self.config.channels_dir.mkdir(parents=True, exist_ok=True)
         self.channel_store = ChannelStore(
-            channels_dir=self.config.channels_dir,
+            vault_path=self.config.vault_path,
+            agent_name="pal",
             history_depth=self.config.history_depth,
         )
 
@@ -261,7 +264,7 @@ class Daemon:
             max_body_chars=self.config.max_inference_body_chars,
         )
 
-        from pal.learning_scanner import LearningScanner, extract_candidate
+        from agent_core.learning_scanner import LearningScanner, extract_candidate
 
         effective_inference = self.batch_inference if self.batch_inference is not None else self.inference
 
@@ -433,11 +436,15 @@ class Daemon:
         conv.add_user(msg.text)
         mode = decide_mode(conv)
 
+        def _commit_scratchpad(path, message):
+            self.wiki.git_commit(message)
+
         scratchpad = Scratchpad(
             vault_path=self.config.vault_path,
+            agent_name="pal",
             channel_id=channel_id,
-            wiki=self.wiki,
             max_bytes=self.config.scratchpad_max_bytes,
+            commit_callback=_commit_scratchpad,
         )
         scratchpad_content = scratchpad.read()
         tool_executor.scratchpad = scratchpad
@@ -604,7 +611,7 @@ class Daemon:
         elif msg.name == "status":
             articles = self.wiki.list_articles()
             reasoning_mode = decide_mode(conv)
-            reasoning_label = conv.reasoning_override or "auto"
+            reasoning_label = conv.overrides.get("reasoning") or "auto"
             resp = ResponseMessage(
                 text=(
                     f"Model: {self.inference.default_model}\n"
@@ -662,11 +669,15 @@ class Daemon:
         elif msg.name == "research":
             await self._handle_research(msg.args, writer)
         elif msg.name == "scratch":
+            def _commit_scratchpad(path, message):
+                self.wiki.git_commit(message)
+
             scratchpad = Scratchpad(
                 vault_path=self.config.vault_path,
+                agent_name="pal",
                 channel_id=channel_id,
-                wiki=self.wiki,
                 max_bytes=self.config.scratchpad_max_bytes,
+                commit_callback=_commit_scratchpad,
             )
             text = await handle_scratch(scratchpad=scratchpad, text=msg.args)
             resp = ResponseMessage(text=text, command="scratch")
@@ -1961,7 +1972,7 @@ class Daemon:
         """Handle /think -- control reasoning mode for this conversation."""
         arg = args.strip().lower()
         if arg == "on":
-            conv.reasoning_override = "on"
+            conv.overrides["reasoning"] = "on"
             logger.info(
                 "reasoning_toggle conversation_id=%s turn_idx=%d action=on last_user_message=%.200s",
                 id(conv),
@@ -1970,7 +1981,7 @@ class Daemon:
             )
             resp = ResponseMessage(text="Reasoning: on", command="think")
         elif arg == "off":
-            conv.reasoning_override = "off"
+            conv.overrides["reasoning"] = "off"
             logger.info(
                 "reasoning_toggle conversation_id=%s turn_idx=%d action=off last_user_message=%.200s",
                 id(conv),
@@ -1979,7 +1990,7 @@ class Daemon:
             )
             resp = ResponseMessage(text="Reasoning: off", command="think")
         elif arg == "auto":
-            conv.reasoning_override = None
+            conv.overrides.pop("reasoning", None)
             logger.info(
                 "reasoning_toggle conversation_id=%s turn_idx=%d action=auto last_user_message=%.200s",
                 id(conv),
@@ -1995,7 +2006,7 @@ class Daemon:
         elif arg == "":
             mode = decide_mode(conv)
             resp = ResponseMessage(
-                text=f"Reasoning mode: {conv.reasoning_override or 'auto'} (effective: {mode})",
+                text=f"Reasoning mode: {conv.overrides.get('reasoning') or 'auto'} (effective: {mode})",
                 command="think",
             )
         else:

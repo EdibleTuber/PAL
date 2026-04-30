@@ -73,12 +73,14 @@ async def test_consumed_proposal_cannot_be_reused(tmp_path):
 
 import asyncio as _asyncio
 
-from pal.protocol import (
+from agent_core.protocol import (
     ChatMessage,
-    ResearchApprovalResponseMessage,
-    ResearchProposalMessage,
     decode_message,
     encode_message,
+)
+from pal.protocol import (
+    ResearchApprovalResponseMessage,
+    ResearchProposalMessage,
 )
 
 

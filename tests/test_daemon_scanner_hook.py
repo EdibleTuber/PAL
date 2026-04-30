@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from agent_core.learning import LearningManager
-from pal.learning_scanner import LearningScanner, extract_candidate
+from agent_core.learning_scanner import LearningScanner, extract_candidate
 
 
 def test_scanner_extractor_closure_calls_inference_and_emits(tmp_path: Path):

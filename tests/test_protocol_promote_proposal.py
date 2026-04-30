@@ -1,4 +1,5 @@
-from pal.protocol import PromoteProposalMessage, encode_message, decode_message
+from agent_core.protocol import encode_message, decode_message
+from pal.protocol import PromoteProposalMessage
 
 
 def test_promote_proposal_roundtrip():
