@@ -18,7 +18,7 @@ from pal.wiki import WikiManager
 from pal.conversation import Conversation
 from pal.channels import ChannelStore, validate_channel_id
 from pal.scratchpad import Scratchpad, ScratchpadTooLarge
-from agent_core.inference import InferenceClient
+from agent_core.inference import InferenceClient, StreamEnd
 from agent_core.retrieval import RetrievalClient
 from agent_core.profile import ProfileManager
 from agent_core.wisdom import WisdomManager
@@ -483,11 +483,15 @@ class Daemon:
                     if isinstance(item, list):
                         tool_calls = item
                         break
-                    else:
-                        chunk = StreamChunkMessage(token=item)
-                        writer.write(encode_message(chunk))
-                        await writer.drain()
-                        full_response.append(item)
+                    if isinstance(item, StreamEnd):
+                        # End-of-stream sentinel from agent_core 0.3.1+. Full
+                        # finish_reason handling lands in the deferred safety
+                        # fix; for now, treat as normal end-of-text.
+                        break
+                    chunk = StreamChunkMessage(token=item)
+                    writer.write(encode_message(chunk))
+                    await writer.drain()
+                    full_response.append(item)
 
                 if tool_calls is None:
                     response_text = "".join(full_response)
