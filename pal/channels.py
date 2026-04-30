@@ -15,7 +15,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pal.conversation import Conversation
+from agent_core.conversation import Conversation
 
 logger = logging.getLogger(__name__)
 

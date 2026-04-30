@@ -15,7 +15,7 @@ import httpx
 
 from pal.config import Config
 from pal.wiki import WikiManager
-from pal.conversation import Conversation
+from agent_core.conversation import Conversation
 from pal.channels import ChannelStore, validate_channel_id
 from pal.scratchpad import Scratchpad, ScratchpadTooLarge
 from agent_core.inference import InferenceClient, StreamEnd
@@ -606,7 +606,7 @@ class Daemon:
         elif msg.name == "status":
             articles = self.wiki.list_articles()
             reasoning_mode = decide_mode(conv)
-            reasoning_label = conv.reasoning_override or "auto"
+            reasoning_label = conv.overrides.get("reasoning") or "auto"
             resp = ResponseMessage(
                 text=(
                     f"Model: {self.inference.default_model}\n"
@@ -1963,7 +1963,7 @@ class Daemon:
         """Handle /think -- control reasoning mode for this conversation."""
         arg = args.strip().lower()
         if arg == "on":
-            conv.reasoning_override = "on"
+            conv.overrides["reasoning"] = "on"
             logger.info(
                 "reasoning_toggle conversation_id=%s turn_idx=%d action=on last_user_message=%.200s",
                 id(conv),
@@ -1972,7 +1972,7 @@ class Daemon:
             )
             resp = ResponseMessage(text="Reasoning: on", command="think")
         elif arg == "off":
-            conv.reasoning_override = "off"
+            conv.overrides["reasoning"] = "off"
             logger.info(
                 "reasoning_toggle conversation_id=%s turn_idx=%d action=off last_user_message=%.200s",
                 id(conv),
@@ -1981,7 +1981,7 @@ class Daemon:
             )
             resp = ResponseMessage(text="Reasoning: off", command="think")
         elif arg == "auto":
-            conv.reasoning_override = None
+            conv.overrides.pop("reasoning", None)
             logger.info(
                 "reasoning_toggle conversation_id=%s turn_idx=%d action=auto last_user_message=%.200s",
                 id(conv),
@@ -1997,7 +1997,7 @@ class Daemon:
         elif arg == "":
             mode = decide_mode(conv)
             resp = ResponseMessage(
-                text=f"Reasoning mode: {conv.reasoning_override or 'auto'} (effective: {mode})",
+                text=f"Reasoning mode: {conv.overrides.get('reasoning') or 'auto'} (effective: {mode})",
                 command="think",
             )
         else:
