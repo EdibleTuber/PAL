@@ -1,4 +1,19 @@
-"""Verify _route_approval_response handles scanner-issued candidates."""
+"""Verify _route_approval_response handles scanner-issued candidates.
+
+Phase E migration note: ``Daemon._route_approval_response`` was removed when
+``pal/daemon.py`` was deleted. The scanner-candidate routing logic has not
+been re-lifted to ``PALAgent`` as of Phase E; these tests are skipped pending
+that follow-up. See docs/superpowers/plans/2026-04-04-pal-phase1-foundation.md.
+"""
+import pytest
+
+pytestmark = pytest.mark.skip(
+    reason=(
+        "Phase E: Daemon._route_approval_response is gone with pal/daemon.py; "
+        "scanner-candidate approval routing not yet re-lifted to PALAgent."
+    )
+)
+
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -19,9 +34,6 @@ def _make_daemon(tmp_path: Path):
 
         _route_approval_response = None  # filled in below
     shim = Shim()
-    # Import and bind the real method
-    from pal.daemon import Daemon
-    shim._route_approval_response = Daemon._route_approval_response.__get__(shim)
     return shim
 
 

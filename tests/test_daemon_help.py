@@ -1,6 +1,6 @@
 """The /help handler must render from the COMMANDS registry."""
 from pal.commands import COMMANDS
-from pal.daemon import render_help_text
+from pal.agent import render_help_text
 
 
 def test_render_help_contains_every_command():

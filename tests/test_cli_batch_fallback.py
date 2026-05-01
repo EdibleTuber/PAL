@@ -43,7 +43,7 @@ async def test_client_send_batch_fallback_approval_writes_correct_wire():
     """Verify the client sends a well-formed BatchFallbackApprovalMessage
     over the wire when the user picks `retry`.
     """
-    from pal.client import PalClient
+    from agent_core.client import DaemonConnection
 
     class FakeWriter:
         def __init__(self) -> None:
@@ -56,14 +56,14 @@ async def test_client_send_batch_fallback_approval_writes_correct_wire():
         async def drain(self) -> None:
             self.drained += 1
 
-    client = PalClient.__new__(PalClient)
-    client._writer = FakeWriter()
+    client = DaemonConnection.__new__(DaemonConnection)
+    client.writer = FakeWriter()
     msg = BatchFallbackApprovalMessage(proposal_id="pid123", choice="retry")
     await client.send(msg)
 
-    assert client._writer.drained == 1
-    assert len(client._writer.writes) == 1
-    wire = client._writer.writes[0]
+    assert client.writer.drained == 1
+    assert len(client.writer.writes) == 1
+    wire = client.writer.writes[0]
     data = json.loads(wire.decode().strip())
     assert data["type"] == "batch_fallback_approval"
     assert data["proposal_id"] == "pid123"
@@ -73,7 +73,7 @@ async def test_client_send_batch_fallback_approval_writes_correct_wire():
 @pytest.mark.asyncio
 async def test_client_send_batch_fallback_approval_main_and_skip():
     """Same as above but for the `main` and `skip` choices."""
-    from pal.client import PalClient
+    from agent_core.client import DaemonConnection
 
     class FakeWriter:
         def __init__(self) -> None:
@@ -86,10 +86,10 @@ async def test_client_send_batch_fallback_approval_main_and_skip():
             pass
 
     for choice in ("main", "skip"):
-        client = PalClient.__new__(PalClient)
-        client._writer = FakeWriter()
+        client = DaemonConnection.__new__(DaemonConnection)
+        client.writer = FakeWriter()
         await client.send(BatchFallbackApprovalMessage(proposal_id="pX", choice=choice))
-        data = json.loads(client._writer.writes[0].decode().strip())
+        data = json.loads(client.writer.writes[0].decode().strip())
         assert data["type"] == "batch_fallback_approval"
         assert data["choice"] == choice
 

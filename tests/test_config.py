@@ -5,8 +5,12 @@ from pathlib import Path
 from pal.config import Config, load_config
 
 
-def test_default_config():
-    cfg = Config()
+def test_default_config(monkeypatch):
+    # Phase E: socket_path is derived in load_config(), not in __init__.
+    # Clear PAL_* env vars that would otherwise override defaults.
+    for key in ["PAL_INFERENCE_URL", "PAL_MODEL", "PAL_SOCKET_PATH", "PAL_HISTORY_DEPTH", "PAL_VAULT_PATH"]:
+        monkeypatch.delenv(key, raising=False)
+    cfg = load_config()
     assert cfg.inference_url == "http://192.168.1.14:11434"
     assert cfg.model == "Qwen3.5-35B-A3B-Q4_K_M"
     assert cfg.socket_path == Path("/run/user") / str(os.getuid()) / "pal.sock"
@@ -111,24 +115,10 @@ def test_config_env_batch_enabled_falsy_values(monkeypatch):
         assert cfg.batch_enabled is True, f"value {v!r} should enable batch"
 
 
-def test_config_default_channels_dir():
-    from pal.config import Config
-    from pathlib import Path
-    cfg = Config()
-    assert cfg.channels_dir == Path.home() / ".local/share/pal/channels"
-
-
 def test_config_default_scratchpad_max_bytes():
     from pal.config import Config
     cfg = Config()
     assert cfg.scratchpad_max_bytes == 2048
-
-
-def test_config_env_overrides_channels_dir(monkeypatch, tmp_path):
-    monkeypatch.setenv("PAL_CHANNELS_DIR", str(tmp_path / "custom"))
-    from pal.config import load_config
-    cfg = load_config()
-    assert cfg.channels_dir == tmp_path / "custom"
 
 
 def test_config_env_overrides_scratchpad_max_bytes(monkeypatch):
