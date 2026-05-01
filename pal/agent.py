@@ -92,6 +92,12 @@ class PALAgent(Agent):
         from agent_core.utils.converter import DocumentConverter
         from agent_core.utils.fetcher import URLFetcher
 
+        # Seed the allowlist with PAL's default trusted domains on first run.
+        # Idempotent; AllowlistManager.seed() only writes if the file is missing.
+        # The legacy Daemon.__init__ called this; run_daemon doesn't, so PAL
+        # owns the call.
+        self.allowlist.seed()
+
         from pal.categorizer import Categorizer
         from pal.compiler import Compiler
         from pal.consolidator import Consolidator
