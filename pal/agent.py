@@ -104,9 +104,12 @@ class PALAgent(Agent):
         config = self.config
 
         # Wiki: vault read/write surface. init_vault() ensures the vault
-        # directory and _index.md exist.
+        # directory and _index.md exist; rebuild_index() reconciles
+        # _index.md with on-disk articles, so external modifications made
+        # while the agent was offline are reflected on startup.
         self.wiki = WikiManager(config.vault_path)
         self.wiki.init_vault()
+        self.wiki.rebuild_index()
 
         # Optional batch inference client. The framework run_daemon only
         # constructs the primary inference client; the batch client is
