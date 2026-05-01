@@ -14,7 +14,7 @@ from rich.markdown import Markdown
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
 from rich.text import Text
 
-from pal.client import PalClient
+from agent_core.client import DaemonConnection as PalClient  # API-compatible alias
 from pal.commands import COMMANDS
 from pal.config import load_config
 from agent_core.protocol import (

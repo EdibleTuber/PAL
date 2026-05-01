@@ -3,9 +3,10 @@ import asyncio
 
 import pytest
 
-from pal.client import PalClient
+from agent_core.client import DaemonConnection as PalClient
 from pal.config import Config
-from pal.daemon import Daemon
+
+from tests.conftest import make_pal_agent, start_pal_daemon
 from agent_core.protocol import ResponseMessage
 from pal.wiki import WikiManager
 
@@ -24,17 +25,19 @@ async def wiki_daemon(socket_path, mock_inference_server, vault_path):
         socket_path=socket_path,
         history_depth=50,
         vault_path=vault_path,
-        channels_dir=vault_path.parent / "channels",
     )
-    daemon = Daemon(cfg)
-    task = asyncio.create_task(daemon.serve())
+    daemon = make_pal_agent(cfg)
+    task = await start_pal_daemon(daemon)
     for _ in range(100):
         if socket_path.exists():
             break
         await asyncio.sleep(0.01)
     yield daemon
-    daemon.shutdown()
-    await task
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
 
 
 @pytest.mark.asyncio
@@ -141,10 +144,9 @@ async def test_daemon_rebuilds_index_on_startup(tmp_path, mock_inference_server)
         socket_path=socket_path,
         history_depth=50,
         vault_path=vault,
-        channels_dir=tmp_path / "channels",
     )
-    daemon = Daemon(cfg)
-    task = asyncio.create_task(daemon.serve())
+    daemon = make_pal_agent(cfg)
+    task = await start_pal_daemon(daemon)
     for _ in range(100):
         if socket_path.exists():
             break
@@ -156,5 +158,8 @@ async def test_daemon_rebuilds_index_on_startup(tmp_path, mock_inference_server)
         assert "Projects/external.md" in index_text
         assert "_stale_" not in index_text
     finally:
-        daemon.shutdown()
-        await task
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass

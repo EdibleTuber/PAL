@@ -3,9 +3,10 @@ import asyncio
 
 import pytest
 
-from pal.client import PalClient
+from agent_core.client import DaemonConnection as PalClient
 from pal.config import Config
-from pal.daemon import Daemon
+
+from tests.conftest import make_pal_agent, start_pal_daemon
 
 
 @pytest.fixture()
@@ -18,17 +19,19 @@ async def retrieval_daemon(socket_path, mock_inference_server, tmp_path):
         history_depth=50,
         vault_path=tmp_path / "vault",
         collection_id="vault",
-        channels_dir=tmp_path / "channels",
     )
-    daemon = Daemon(cfg)
-    task = asyncio.create_task(daemon.serve())
+    daemon = make_pal_agent(cfg)
+    task = await start_pal_daemon(daemon)
     for _ in range(100):
         if socket_path.exists():
             break
         await asyncio.sleep(0.01)
     yield daemon
-    daemon.shutdown()
-    await task
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
 
 
 @pytest.mark.asyncio

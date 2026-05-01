@@ -23,7 +23,7 @@ async def test_two_channels_get_separate_conversations(tmp_path):
 
 @pytest.mark.asyncio
 async def test_channel_id_none_falls_back_to_cli_default(tmp_path):
-    from pal.daemon import resolve_channel_id
+    from agent_core.daemon import resolve_channel_id
     assert resolve_channel_id(None) == "cli-default"
     assert resolve_channel_id("") == "cli-default"
     assert resolve_channel_id("C1") == "C1"
@@ -32,7 +32,7 @@ async def test_channel_id_none_falls_back_to_cli_default(tmp_path):
 @pytest.mark.asyncio
 async def test_channel_id_invalid_falls_back_to_cli_default_with_log(tmp_path, caplog):
     import logging
-    from pal.daemon import resolve_channel_id
+    from agent_core.daemon import resolve_channel_id
     with caplog.at_level(logging.WARNING):
         resolved = resolve_channel_id("../evil")
     assert resolved == "cli-default"

@@ -1,91 +1,37 @@
-"""PAL agent daemon — unix socket server.
+"""PALAgent: PAL's agent_core Agent subclass.
 
-Accepts connections from CLI clients, manages conversation state per connection,
-dispatches chat messages to the inference server, and streams responses back.
+Owns the PAL-specific infrastructure (wiki, categorizer, researcher, compiler,
+tool executor, prompt builder, learning scanner) and implements the
+chat/command/system-prompt extension points for the agent_core daemon.
+
+Framework managers (profile, wisdom, learning, allowlist, approval_registry,
+channels, inference, retrieval, websearch) are populated on `self` by
+`agent_core.runtime.run_daemon` BEFORE `setup()` runs, so this class can
+freely use them when constructing PAL-specific objects.
 """
+from __future__ import annotations
+
 import asyncio
-import hashlib
 import json
 import logging
-import os
-import time
-from pathlib import Path
+from typing import AsyncIterator
 
-import httpx
-
-from pal.config import Config
-from pal.wiki import WikiManager
-from agent_core.conversation import Conversation
-from agent_core.channels import ChannelStore, validate_channel_id
-from agent_core.scratchpad import Scratchpad, ScratchpadTooLarge
-from agent_core.inference import InferenceClient, StreamEnd
-from agent_core.retrieval import RetrievalClient
-from agent_core.profile import ProfileManager
-from agent_core.wisdom import WisdomManager
-from agent_core.learning import LearningManager
-from pal.prompt_builder import SystemPromptBuilder
-from agent_core.allowlist import AllowlistManager
-from agent_core.websearch import WebSearchClient
-from agent_core.utils.fetcher import URLFetcher, FetchError
-from agent_core.utils.converter import DocumentConverter, ConversionError
-from pal.categorizer import Categorizer
-from pal.compiler import Compiler
-from pal.archive import archive_raw_files, cleanup_archived
-from pal.summarizer import summarize_raw_file
-from agent_core.utils.chunker import chunk_markdown
-import fitz  # pymupdf
-from pal.pdf_structure import (
-    detect_chapters,
-    extract_chapters,
-    slugify,
-)
-from agent_core.reasoning import decide_mode
-from pal.researcher import Researcher, parse_topic_file
-from pal.tools import ToolExecutor
-from agent_core.approval_registry import ApprovalRegistry
-from pal.article import (
-    parse_article, serialize_article, append_timeline_entry,
-    validate_compiled_truth, find_existing_article, Article,
-)
+from agent_core.agent import Agent, HandlerContext
 from agent_core.protocol import (
     ChatMessage,
     CommandMessage,
-    StreamChunkMessage,
-    ResponseMessage,
     ErrorMessage,
+    ResponseMessage,
+    StreamChunkMessage,
     ToolProgressMessage,
-    STREAM_BUFFER_LIMIT,
     encode_message,
-    decode_message,
 )
-from pal.protocol import (
-    ResearchApprovalResponseMessage,
-    BatchFallbackApprovalMessage,
-    Message,
-)
+
+from pal.config import PALConfig
 from pal.commands import COMMANDS
+from agent_core.scratchpad import ScratchpadTooLarge
 
 logger = logging.getLogger(__name__)
-
-CLI_DEFAULT_CHANNEL = "cli-default"
-
-
-def resolve_channel_id(raw: str | None) -> str:
-    """Return a safe, in-range channel_id.
-
-    None or empty -> CLI_DEFAULT_CHANNEL (the backward-compat fallback).
-    Invalid characters -> logged warning, falls back to CLI_DEFAULT_CHANNEL.
-    Valid -> returned as-is.
-    """
-    if not raw:
-        return CLI_DEFAULT_CHANNEL
-    if not validate_channel_id(raw):
-        logger.warning(
-            "invalid channel_id %r received; falling back to %s",
-            raw, CLI_DEFAULT_CHANNEL,
-        )
-        return CLI_DEFAULT_CHANNEL
-    return raw
 
 
 async def handle_scratch(scratchpad, text: str) -> str:
@@ -117,13 +63,63 @@ def render_help_text() -> str:
     return "\n".join(lines)
 
 
-class Daemon:
-    def __init__(self, config: Config) -> None:
-        self.config = config
-        self.inference = InferenceClient(
-            base_url=config.inference_url,
-            model=config.model,
-        )
+class PALAgent(Agent):
+    """The PAL agent. Subclass of agent_core.agent.Agent.
+
+    `setup()` constructs PAL-specific infrastructure (wiki, prompt builder,
+    categorizer, fetcher, converter, researcher, compiler, tool executor,
+    learning scanner). Per-turn objects whose construction requires the
+    client `writer` (e.g. progress/proposal callbacks) are wired with no-op
+    placeholders here and rebuilt or overridden per-turn in handle_chat
+    (Task 16).
+    """
+
+    name = "pal"
+    config: PALConfig  # type-narrows the framework attr
+
+    def setup(self) -> None:
+        """Construct PAL-specific infrastructure.
+
+        Framework managers (profile, wisdom, learning, allowlist,
+        approval_registry, channels, inference, retrieval, websearch) are
+        already populated by run_daemon when this runs.
+        """
+        # Imports inside setup() to defer until after agent_core has
+        # populated framework attrs and to avoid circular imports at
+        # module load time.
+        from agent_core.inference import InferenceClient
+        from agent_core.learning_scanner import LearningScanner, extract_candidate
+        from agent_core.utils.converter import DocumentConverter
+        from agent_core.utils.fetcher import URLFetcher
+
+        # Seed the allowlist with PAL's default trusted domains on first run.
+        # Idempotent; AllowlistManager.seed() only writes if the file is missing.
+        # The legacy Daemon.__init__ called this; run_daemon doesn't, so PAL
+        # owns the call.
+        self.allowlist.seed()
+
+        from pal.categorizer import Categorizer
+        from pal.compiler import Compiler
+        from pal.consolidator import Consolidator
+        from pal.prompt_builder import SystemPromptBuilder
+        from pal.reorg import Reorganizer
+        from pal.researcher import Researcher
+        from pal.tools import ToolExecutor
+        from pal.wiki import WikiManager
+
+        config = self.config
+
+        # Wiki: vault read/write surface. init_vault() ensures the vault
+        # directory and _index.md exist; rebuild_index() reconciles
+        # _index.md with on-disk articles, so external modifications made
+        # while the agent was offline are reflected on startup.
+        self.wiki = WikiManager(config.vault_path)
+        self.wiki.init_vault()
+        self.wiki.rebuild_index()
+
+        # Optional batch inference client. The framework run_daemon only
+        # constructs the primary inference client; the batch client is
+        # PAL-specific and gated by config.batch_enabled.
         if config.batch_enabled:
             self.batch_inference: InferenceClient | None = InferenceClient(
                 base_url=config.batch_inference_url,
@@ -132,35 +128,46 @@ class Daemon:
             )
         else:
             self.batch_inference = None
-        self._server: asyncio.AbstractServer | None = None
-        self._should_exit = False
-        self.wiki = WikiManager(config.vault_path)
-        self.wiki.init_vault()
-        self.retrieval = RetrievalClient(
-            base_url=config.inference_url,
-            collection_id=config.collection_id,
+
+        # Inference client used for cheap "batch" tasks (categorization,
+        # learning extraction). Falls back to the primary client when no
+        # batch endpoint is configured.
+        effective_batch = (
+            self.batch_inference if self.batch_inference is not None else self.inference
         )
-        self.profile = ProfileManager(config.vault_path, "pal", username=config.username)
-        self.wisdom = WisdomManager(config.vault_path, "pal")
+
+        # System prompt builder: composes base prompt + profile + wisdom.
         self.prompt_builder = SystemPromptBuilder(
             profile=self.profile,
             wisdom=self.wisdom,
         )
-        self.learning = LearningManager(config.vault_path, "pal")
-        self.allowlist = AllowlistManager(config.vault_path, "pal")
-        self.allowlist.seed()
-        self.websearch = WebSearchClient(
-            base_url=config.searxng_url,
-            timeout=config.fetch_timeout,
-        )
+
+        # Categorizer: routes raw summaries to vault categories. Uses
+        # the batch client when available.
+        self.categorizer = Categorizer(effective_batch)
+
+        # URL fetch + document conversion utilities (used by researcher
+        # and by some tool handlers).
         self.fetcher = URLFetcher(
             max_bytes=config.fetch_max_bytes,
             timeout=config.fetch_timeout,
         )
         self.converter = DocumentConverter()
-        self.categorizer = Categorizer(
-            self.batch_inference if self.batch_inference is not None else self.inference
+
+        # Researcher: search -> fetch -> summarize pipeline. The progress
+        # callback is wired per-turn in handle_chat (Task 16) because it
+        # writes to the connected client. Default is None (no progress
+        # emission); handle_chat rebuilds with a writer-aware callback.
+        self.researcher = Researcher(
+            websearch=self.websearch,
+            fetcher=self.fetcher,
+            inference=self.inference,
+            vault_path=config.vault_path,
+            on_progress=None,
+            max_body_chars=config.max_inference_body_chars,
         )
+
+        # Compiler: promotes raw summaries into vault articles.
         self.compiler = Compiler(
             vault_path=config.vault_path,
             wiki=self.wiki,
@@ -170,14 +177,16 @@ class Daemon:
             retrieval=self.retrieval,
             max_body_chars=config.max_inference_body_chars,
         )
-        from pal.reorg import Reorganizer
+
+        # Reorganizer: vault file moves and merges.
         self.reorganizer = Reorganizer(
             vault_path=config.vault_path,
             wiki=self.wiki,
             compiler=self.compiler,
             retrieval=self.retrieval,
         )
-        from pal.consolidator import Consolidator
+
+        # Consolidator: fuses 2+ existing articles into a new article.
         self.consolidator = Consolidator(
             vault_path=config.vault_path,
             wiki=self.wiki,
@@ -186,91 +195,36 @@ class Daemon:
             retrieval=self.retrieval,
             max_body_chars=config.max_inference_body_chars,
         )
-        cleanup_archived(config.vault_path)
-        self.config.channels_dir.mkdir(parents=True, exist_ok=True)
-        self.channel_store = ChannelStore(
-            vault_path=self.config.vault_path,
-            agent_name="pal",
-            history_depth=self.config.history_depth,
-        )
 
-    async def serve(self) -> None:
-        """Start listening on the unix socket."""
-        sock_path = self.config.socket_path
-        # Clean up stale socket
-        if sock_path.exists():
-            sock_path.unlink()
-        sock_path.parent.mkdir(parents=True, exist_ok=True)
+        # Tool executor: dispatches LLM tool calls. The proposal emitter
+        # is wired per-turn in handle_chat (Task 16); a no-op placeholder
+        # is installed here so the attribute exists for code paths that
+        # introspect it.
+        def _noop_proposal_emitter(_msg) -> None:  # pragma: no cover
+            return None
 
-        # Reconcile _index.md with vault state on startup so external
-        # modifications made while the daemon was down are reflected.
-        self.wiki.rebuild_index()
-
-        self._server = await asyncio.start_unix_server(
-            self._handle_connection,
-            path=str(sock_path),
-            limit=STREAM_BUFFER_LIMIT,
-        )
-        logger.info("Daemon listening on %s", sock_path)
-
-        async with self._server:
-            while not self._should_exit:
-                await asyncio.sleep(0.1)
-
-    def shutdown(self) -> None:
-        """Signal the daemon to stop."""
-        self._should_exit = True
-        if self._server:
-            self._server.close()
-
-    async def _handle_connection(
-        self,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
-    ) -> None:
-        """Handle a single client connection."""
-        logger.info("Client connected")
-
-        approval_registry = ApprovalRegistry()
-
-        def emit_proposal(msg):
-            writer.write(encode_message(msg))
-            drain_task = asyncio.create_task(writer.drain())
-            def _log_drain_failure(task: asyncio.Task) -> None:
-                exc = task.exception()
-                if exc is not None:
-                    logger.warning("proposal drain failed: %s", exc)
-            drain_task.add_done_callback(_log_drain_failure)
-
-        def emit_progress(status: str) -> None:
-            progress = ToolProgressMessage(
-                tool="research_topic",
-                arguments={"status": status},
-            )
-            writer.write(encode_message(progress))
-            drain_task = asyncio.create_task(writer.drain())
-            def _log_drain_failure(task: asyncio.Task) -> None:
-                exc = task.exception()
-                if exc is not None:
-                    logger.warning("progress drain failed: %s", exc)
-            drain_task.add_done_callback(_log_drain_failure)
-
-        researcher = Researcher(
+        self.tool_executor = ToolExecutor(
+            vault_path=config.vault_path,
+            retrieval=self.retrieval,
+            wiki=self.wiki,
+            approval_registry=self.approval_registry,
             websearch=self.websearch,
-            fetcher=self.fetcher,
-            inference=self.inference,
-            vault_path=self.config.vault_path,
-            on_progress=emit_progress,
-            max_body_chars=self.config.max_inference_body_chars,
+            researcher=self.researcher,
+            proposal_emitter=_noop_proposal_emitter,
+            compiler=self.compiler,
+            reorganizer=self.reorganizer,
+            consolidator=self.consolidator,
+            learning=self.learning,
+            wisdom=self.wisdom,
         )
 
-        from agent_core.learning_scanner import LearningScanner, extract_candidate
-
-        effective_inference = self.batch_inference if self.batch_inference is not None else self.inference
-
+        # Learning scanner: surfaces durable-lesson candidates after each
+        # turn. The extractor calls back into inference; the emit callback
+        # is a no-op placeholder and is replaced per-turn in handle_chat
+        # (Task 16) so proposals stream to the connected client.
         async def _scanner_extractor(recent_turns, trigger_message):
-            async def call(prompt: str) -> str:
-                result = await effective_inference.complete(
+            async def _call(prompt: str) -> str:
+                result = await effective_batch.complete(
                     messages=[{"role": "user", "content": prompt}],
                     tools=None,
                 )
@@ -280,174 +234,166 @@ class Daemon:
             return await extract_candidate(
                 recent_turns=recent_turns,
                 trigger_message=trigger_message,
-                inference_call=call,
+                inference_call=_call,
                 timeout=15.0,
             )
 
-        scanner = LearningScanner(
+        def _noop_emit(_proposal_msg) -> None:  # pragma: no cover
+            return None
+
+        self.scanner = LearningScanner(
             learning_manager=self.learning,
             extractor=_scanner_extractor,
-            emit=emit_proposal,
+            emit=_noop_emit,
         )
 
-        tool_executor = ToolExecutor(
-            vault_path=self.config.vault_path,
-            retrieval=self.retrieval,
-            wiki=self.wiki,
-            approval_registry=approval_registry,
-            websearch=self.websearch,
-            researcher=researcher,
-            proposal_emitter=emit_proposal,
-            compiler=self.compiler,
-            reorganizer=self.reorganizer,
-            consolidator=self.consolidator,
-            learning=self.learning,
-            wisdom=self.wisdom,
-        )
-
-        current_chat_task: asyncio.Task | None = None
-
-        try:
-            while True:
-                line = await reader.readline()
-                if not line:
-                    break
-
-                try:
-                    msg = decode_message(line.strip())
-                except ValueError as exc:
-                    error = ErrorMessage(error=str(exc))
-                    writer.write(encode_message(error))
-                    await writer.drain()
-                    continue
-
-                if isinstance(msg, ResearchApprovalResponseMessage):
-                    # Fast, synchronous registry update. Processed immediately
-                    # so the tool coroutine awaiting the proposal event can
-                    # proceed even while a chat turn is in flight.
-                    self._route_approval_response(msg, approval_registry, scanner)
-                elif isinstance(msg, BatchFallbackApprovalMessage):
-                    # Batch fallback choices feed the approval registry with
-                    # an explicit state so the caller can branch on "retry"
-                    # vs "main" vs a plain decline.
-                    if msg.choice in ("retry", "main"):
-                        approval_registry.approve(msg.proposal_id, state=msg.choice)
-                    else:
-                        approval_registry.decline(msg.proposal_id)
-                elif isinstance(msg, ChatMessage):
-                    if current_chat_task is not None and not current_chat_task.done():
-                        error = ErrorMessage(
-                            error="A previous turn is still being processed. Wait for it to complete."
-                        )
-                        writer.write(encode_message(error))
-                        await writer.drain()
-                        continue
-                    channel_id = resolve_channel_id(msg.channel_id)
-                    conv = await self.channel_store.get_or_create(channel_id)
-                    current_chat_task = asyncio.create_task(
-                        self._handle_chat(msg, conv, channel_id, writer, tool_executor, scanner)
-                    )
-                elif isinstance(msg, CommandMessage):
-                    if current_chat_task is not None and not current_chat_task.done():
-                        error = ErrorMessage(
-                            error="A previous turn is still being processed. Wait for it to complete."
-                        )
-                        writer.write(encode_message(error))
-                        await writer.drain()
-                        continue
-                    channel_id = resolve_channel_id(msg.channel_id)
-                    conv = await self.channel_store.get_or_create(channel_id)
-                    await self._handle_command(
-                        msg, conv, channel_id, writer, approval_registry, emit_proposal,
-                    )
-                else:
-                    error = ErrorMessage(error=f"Unexpected message type: {msg.type}")
-                    writer.write(encode_message(error))
-                    await writer.drain()
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            logger.exception("Connection error: %s", exc)
-        finally:
-            # Cancel any in-flight chat task on disconnect and await its cleanup.
-            if current_chat_task is not None and not current_chat_task.done():
-                current_chat_task.cancel()
-                try:
-                    await current_chat_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            writer.close()
-            await writer.wait_closed()
-            logger.info("Client disconnected")
-
-    def _route_approval_response(
-        self,
-        msg: ResearchApprovalResponseMessage,
-        registry: ApprovalRegistry,
-        scanner=None,  # LearningScanner | None
-    ) -> None:
-        # If the proposal_id matches a scanner pending candidate, handle
-        # it as a learning candidate rather than a registry proposal.
-        candidate = scanner.take_pending(msg.proposal_id) if scanner is not None else None
-        if candidate is not None:
-            if msg.decision == "approve":
-                self.learning.add(
-                    title=candidate.title,
-                    body=candidate.body,
-                    source="scanner",
-                )
-                self.wiki.git_commit(f"learn: scanner-captured {candidate.title}")
-            # decline/skip: do nothing, candidate is already cleared
-            return
-
-        # Existing registry-backed routing.
-        if msg.decision == "approve":
-            registry.approve(msg.proposal_id)
-        elif msg.decision == "decline":
-            registry.decline(msg.proposal_id)
-        elif msg.decision == "edit":
-            if msg.summary_paths is not None:
-                registry.edit(msg.proposal_id, summary_paths=msg.summary_paths)
-            else:
-                registry.edit(
-                    msg.proposal_id,
-                    new_topic=msg.new_topic or None,
-                    new_depth=msg.new_depth or None,
-                )
-
-    async def _handle_chat(
-        self,
-        msg: ChatMessage,
-        conv: Conversation,
-        channel_id: str,
-        writer: asyncio.StreamWriter,
-        tool_executor,
-        scanner,
-    ) -> None:
-        """Process a chat message with optional tool use.
-
-        First call uses streaming. If the model returns tool calls instead of
-        text, enters a non-streaming loop: execute tools, show progress, feed
-        results back, repeat until the model returns text or the loop cap is hit.
-        """
-        from agent_core.inference import ToolCall
-        from pal.tools import TOOL_DEFINITIONS
-
-        conv.add_user(msg.text)
-        mode = decide_mode(conv)
+    def _build_scratchpad(self, channel_id: str):
+        """Construct the per-channel Scratchpad bound to the wiki commit hook."""
+        from agent_core.scratchpad import Scratchpad
 
         def _commit_scratchpad(path, message):
             self.wiki.git_commit(message)
 
-        scratchpad = Scratchpad(
+        return Scratchpad(
             vault_path=self.config.vault_path,
             agent_name="pal",
             channel_id=channel_id,
             max_bytes=self.config.scratchpad_max_bytes,
             commit_callback=_commit_scratchpad,
         )
+
+    async def handle_other(self, msg, ctx: HandlerContext) -> None:
+        """Route PAL-specific approval / batch-fallback messages.
+
+        Lifted from the legacy Daemon._route_approval_response plus the inline
+        BatchFallbackApprovalMessage handling in _handle_connection. The
+        agent_core daemon dispatches non-Chat/non-Command messages here.
+        """
+        from pal.protocol import (
+            ResearchApprovalResponseMessage,
+            BatchFallbackApprovalMessage,
+        )
+
+        if isinstance(msg, ResearchApprovalResponseMessage):
+            # Dual-purpose: scanner candidates AND registry-backed proposals
+            # share the same response message type (the CLI uses the same
+            # interactive prompt for both).
+            candidate = self.scanner.take_pending(msg.proposal_id)
+            if candidate is not None:
+                if msg.decision == "approve":
+                    self.learning.add(
+                        title=candidate.title,
+                        body=candidate.body,
+                        source="scanner",
+                    )
+                    self.wiki.git_commit(
+                        f"learn: scanner-captured {candidate.title}",
+                    )
+                # decline/skip: candidate already cleared by take_pending
+                return
+
+            # Registry-backed routing for research/compile/reorg/consolidate/promote.
+            if msg.decision == "approve":
+                self.approval_registry.approve(msg.proposal_id)
+            elif msg.decision == "decline":
+                self.approval_registry.decline(msg.proposal_id)
+            elif msg.decision == "edit":
+                if msg.summary_paths is not None:
+                    self.approval_registry.edit(
+                        msg.proposal_id,
+                        summary_paths=msg.summary_paths,
+                    )
+                else:
+                    self.approval_registry.edit(
+                        msg.proposal_id,
+                        new_topic=msg.new_topic or None,
+                        new_depth=msg.new_depth or None,
+                    )
+            return
+
+        if isinstance(msg, BatchFallbackApprovalMessage):
+            if msg.choice in ("retry", "main"):
+                self.approval_registry.approve(
+                    msg.proposal_id, state=msg.choice,
+                )
+            else:
+                self.approval_registry.decline(msg.proposal_id)
+            return
+
+        logger.warning(
+            "PALAgent.handle_other received unrecognized message: %s",
+            type(msg).__name__,
+        )
+
+    def system_prompt(self, ctx: HandlerContext) -> str:
+        """Return PAL's system prompt for this turn, including channel scratchpad."""
+        scratchpad = self._build_scratchpad(ctx.channel_id)
         scratchpad_content = scratchpad.read()
-        tool_executor.scratchpad = scratchpad
+        return self.prompt_builder.build(channel_scratchpad=scratchpad_content)
+
+    async def handle_chat(
+        self, msg: ChatMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
+        """Process a chat message with optional tool use.
+
+        First call uses streaming (when reasoning != "on"). If the model
+        returns tool calls instead of text, enters a non-streaming loop:
+        execute tools, show progress, feed results back, repeat until the
+        model returns text or the loop cap is hit.
+
+        Lifted from pal.daemon.Daemon._handle_chat. Phase E preserves the
+        writer-passing pattern: streaming chunks and tool-progress messages
+        are written directly to ctx.writer as side effects, while terminal
+        messages (Response, Error) are yielded so the framework's
+        _run_handler emission loop can also flush them.
+        """
+        from agent_core.inference import StreamEnd, ToolCall
+
+        from pal.tools import TOOL_DEFINITIONS
+
+        conv = ctx.conversation
+        channel_id = ctx.channel_id
+        writer = ctx.writer
+
+        # Per-turn callback wiring. PALAgent.setup() created tool_executor,
+        # researcher, and scanner with no-op placeholders because the writer
+        # is only known per-turn. Mutate the long-lived instances now so any
+        # tool/proposal/progress emission during this turn streams to the
+        # connected client.
+        def _emit_proposal(proposal_msg) -> None:
+            writer.write(encode_message(proposal_msg))
+            drain_task = asyncio.create_task(writer.drain())
+
+            def _log_drain_failure(task: asyncio.Task) -> None:
+                exc = task.exception()
+                if exc is not None:
+                    logger.warning("proposal drain failed: %s", exc)
+            drain_task.add_done_callback(_log_drain_failure)
+
+        def _emit_progress(status: str) -> None:
+            progress = ToolProgressMessage(
+                tool="research_topic",
+                arguments={"status": status},
+            )
+            writer.write(encode_message(progress))
+            drain_task = asyncio.create_task(writer.drain())
+
+            def _log_drain_failure(task: asyncio.Task) -> None:
+                exc = task.exception()
+                if exc is not None:
+                    logger.warning("progress drain failed: %s", exc)
+            drain_task.add_done_callback(_log_drain_failure)
+
+        self.tool_executor.proposal_emitter = _emit_proposal
+        self.researcher.on_progress = _emit_progress
+        self.scanner.emit = _emit_proposal
+
+        conv.add_user(msg.text)
+        mode = self.decide_mode(conv)
+
+        scratchpad = self._build_scratchpad(channel_id)
+        scratchpad_content = scratchpad.read()
+        self.tool_executor.scratchpad = scratchpad
 
         messages = conv.get_messages_for_api(
             system_prompt=self.prompt_builder.build(channel_scratchpad=scratchpad_content),
@@ -455,7 +401,7 @@ class Daemon:
         max_tool_rounds = 50
 
         try:
-            full_response = []
+            full_response: list[str] = []
             tool_calls: list[ToolCall] | None = None
 
             if mode == "on":
@@ -476,7 +422,7 @@ class Daemon:
                     await writer.drain()
                     # Proactive learning scan (fire-and-forget).
                     recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
-                    asyncio.create_task(scanner.maybe_scan(
+                    asyncio.create_task(self.scanner.maybe_scan(
                         recent_turns=recent_turns,
                         latest_user_message=msg.text,
                     ))
@@ -508,7 +454,7 @@ class Daemon:
                     await writer.drain()
                     # Proactive learning scan (fire-and-forget).
                     recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
-                    asyncio.create_task(scanner.maybe_scan(
+                    asyncio.create_task(self.scanner.maybe_scan(
                         recent_turns=recent_turns,
                         latest_user_message=msg.text,
                     ))
@@ -534,7 +480,7 @@ class Daemon:
                     writer.write(encode_message(progress))
                     await writer.drain()
 
-                    result = await tool_executor.run_async(tc.name, tc.arguments)
+                    result = await self.tool_executor.run_async(tc.name, tc.arguments)
                     conv.add_tool_result(tc.id, result)
 
                 # Re-read in case an update_scratch tool call modified the file.
@@ -560,7 +506,7 @@ class Daemon:
                     await writer.drain()
                     # Proactive learning scan (fire-and-forget).
                     recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
-                    asyncio.create_task(scanner.maybe_scan(
+                    asyncio.create_task(self.scanner.maybe_scan(
                         recent_turns=recent_turns,
                         latest_user_message=msg.text,
                     ))
@@ -576,122 +522,119 @@ class Daemon:
             await writer.drain()
             # Proactive learning scan (fire-and-forget).
             recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
-            asyncio.create_task(scanner.maybe_scan(
+            asyncio.create_task(self.scanner.maybe_scan(
                 recent_turns=recent_turns,
                 latest_user_message=msg.text,
             ))
 
         except Exception as exc:
             logger.exception("Chat error: %s", exc)
-            error = ErrorMessage(error=f"Chat error: {exc}")
-            writer.write(encode_message(error))
-            await writer.drain()
+            yield ErrorMessage(error=f"Chat error: {exc}")
 
-    async def _handle_command(
-        self,
-        msg: CommandMessage,
-        conv: Conversation,
-        channel_id: str,
-        writer: asyncio.StreamWriter,
-        approval_registry: ApprovalRegistry | None = None,
-        proposal_emitter=None,
-    ) -> None:
-        """Handle a slash command."""
-        if msg.name == "help":
-            resp = ResponseMessage(
-                text=render_help_text(),
-                command="help",
-            )
-            writer.write(encode_message(resp))
-            await writer.drain()
-        elif msg.name in ("quit", "exit"):
-            resp = ResponseMessage(text="Goodbye.", command="quit")
-            writer.write(encode_message(resp))
-            await writer.drain()
-        elif msg.name == "status":
-            articles = self.wiki.list_articles()
-            reasoning_mode = decide_mode(conv)
-            reasoning_label = conv.overrides.get("reasoning") or "auto"
-            resp = ResponseMessage(
-                text=(
-                    f"Model: {self.inference.default_model}\n"
-                    f"Config default: {self.config.model}\n"
-                    f"Reasoning: {reasoning_label} (effective: {reasoning_mode})\n"
-                    f"Server: {self.inference.base_url}\n"
-                    f"Vault: {self.wiki.vault_path} ({len(articles)} articles)\n"
-                    f"Collection: {self.retrieval.collection_id}"
-                ),
-                command="status",
-            )
-            writer.write(encode_message(resp))
-            await writer.drain()
-        elif msg.name == "read":
-            await self._handle_read(msg.args, writer)
-        elif msg.name == "lint":
-            await self._handle_lint(writer)
-        elif msg.name == "note":
-            await self._handle_note(msg.args, writer)
-        elif msg.name == "search":
-            await self._handle_search(msg.args, writer)
-        elif msg.name == "get":
-            await self._handle_get(msg.args, writer)
-        elif msg.name == "profile":
-            await self._handle_profile(msg.args, writer)
-        elif msg.name == "wisdom":
-            await self._handle_wisdom(msg.args, writer)
-        elif msg.name == "search-web":
-            await self._handle_search_web(msg.args, writer)
-        elif msg.name == "fetch":
-            await self._handle_fetch(msg.args, writer)
-        elif msg.name == "summarize":
-            await self._handle_summarize(msg.args, writer)
-        elif msg.name == "compile":
-            await self._handle_compile(msg.args, writer)
-        elif msg.name == "compile-batch":
-            await self._handle_compile_batch(writer)
-        elif msg.name == "import":
-            await self._handle_import(
-                msg.args, writer, approval_registry, proposal_emitter,
-            )
+    async def handle_command(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
+        """Dispatch a slash command to its handler.
 
-        elif msg.name == "learn":
-            await self._handle_learn(conv, writer)
-        elif msg.name == "learnings":
-            await self._handle_learnings(writer)
-        elif msg.name == "promote":
-            await self._handle_promote(msg.args, writer)
-        elif msg.name == "rate":
-            await self._handle_rate(msg.args, writer)
-        elif msg.name == "model":
-            await self._handle_model(msg.args, writer)
-        elif msg.name == "think":
-            await self._handle_think(msg.args, conv, writer)
-        elif msg.name == "research":
-            await self._handle_research(msg.args, writer)
-        elif msg.name == "scratch":
-            def _commit_scratchpad(path, message):
-                self.wiki.git_commit(message)
-
-            scratchpad = Scratchpad(
-                vault_path=self.config.vault_path,
-                agent_name="pal",
-                channel_id=channel_id,
-                max_bytes=self.config.scratchpad_max_bytes,
-                commit_callback=_commit_scratchpad,
-            )
-            text = await handle_scratch(scratchpad=scratchpad, text=msg.args)
-            resp = ResponseMessage(text=text, command="scratch")
-            writer.write(encode_message(resp))
-            await writer.drain()
+        Lifted from pal.daemon.Daemon._handle_command. The dispatch table
+        maps command names to per-handler methods on this class. Each
+        handler is an async generator and uses ctx.writer to emit progress
+        and ctx.conversation / ctx.channel_id for per-turn state.
+        """
+        handler_map = {
+            "help": self._handle_help,
+            "quit": self._handle_quit,
+            "exit": self._handle_quit,
+            "status": self._handle_status,
+            "read": self._handle_read,
+            "lint": self._handle_lint,
+            "note": self._handle_note,
+            "search": self._handle_search,
+            "get": self._handle_get,
+            "profile": self._handle_profile,
+            "wisdom": self._handle_wisdom,
+            "search-web": self._handle_search_web,
+            "fetch": self._handle_fetch,
+            "summarize": self._handle_summarize,
+            "compile": self._handle_compile,
+            "compile-batch": self._handle_compile_batch,
+            "import": self._handle_import,
+            "learn": self._handle_learn,
+            "learnings": self._handle_learnings,
+            "promote": self._handle_promote,
+            "rate": self._handle_rate,
+            "model": self._handle_model,
+            "think": self._handle_think,
+            "research": self._handle_research,
+            "scratch": self._handle_scratch,
+        }
+        handler = handler_map.get(msg.name)
+        if handler is None:
+            yield ErrorMessage(error=f"Unknown command: /{msg.name}")
             return
-        else:
-            error = ErrorMessage(error=f"Unknown command: /{msg.name}")
-            writer.write(encode_message(error))
-            await writer.drain()
+        async for response in handler(msg, ctx):
+            yield response
 
-    async def _handle_read(self, path: str, writer: asyncio.StreamWriter) -> None:
+    # ----- Command handlers (lifted from pal.daemon.Daemon) -----
+    #
+    # All command handlers share this signature:
+    #   async def _handle_X(self, msg: CommandMessage, ctx: HandlerContext)
+    #     -> AsyncIterator[object]
+    #
+    # Most handlers write directly to ctx.writer (preserving the daemon's
+    # explicit-write pattern) and yield nothing. A few yield terminal
+    # messages so the framework's emission loop can also flush them. Both
+    # approaches are valid; see Task 16 notes.
+
+    async def _handle_help(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
+        """Handle /help — show command list."""
+        resp = ResponseMessage(text=render_help_text(), command="help")
+        ctx.writer.write(encode_message(resp))
+        await ctx.writer.drain()
+        return
+        yield  # pragma: no cover
+
+    async def _handle_quit(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
+        """Handle /quit and /exit — say goodbye."""
+        resp = ResponseMessage(text="Goodbye.", command="quit")
+        ctx.writer.write(encode_message(resp))
+        await ctx.writer.drain()
+        return
+        yield  # pragma: no cover
+
+    async def _handle_status(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
+        """Handle /status — show daemon status."""
+        articles = self.wiki.list_articles()
+        reasoning_mode = self.decide_mode(ctx.conversation)
+        reasoning_label = ctx.conversation.overrides.get("reasoning") or "auto"
+        resp = ResponseMessage(
+            text=(
+                f"Model: {self.inference.default_model}\n"
+                f"Config default: {self.config.model}\n"
+                f"Reasoning: {reasoning_label} (effective: {reasoning_mode})\n"
+                f"Server: {self.inference.base_url}\n"
+                f"Vault: {self.wiki.vault_path} ({len(articles)} articles)\n"
+                f"Collection: {self.retrieval.collection_id}"
+            ),
+            command="status",
+        )
+        ctx.writer.write(encode_message(resp))
+        await ctx.writer.drain()
+        return
+        yield  # pragma: no cover
+
+    async def _handle_read(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /read <path> — return article content."""
-        path = path.strip()
+        writer = ctx.writer
+        path = msg.args.strip()
         if not path:
             error = ErrorMessage(error="Usage: /read <path>")
             writer.write(encode_message(error))
@@ -711,9 +654,14 @@ class Daemon:
             error = ErrorMessage(error=f"Article not found: {path}")
             writer.write(encode_message(error))
             await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_lint(self, writer: asyncio.StreamWriter) -> None:
+    async def _handle_lint(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /lint — run vault health check."""
+        writer = ctx.writer
         issues = self.wiki.lint()
         if not issues:
             resp = ResponseMessage(text="Vault is clean — no issues found.", command="lint")
@@ -724,6 +672,8 @@ class Daemon:
             resp = ResponseMessage(text="\n".join(lines), command="lint")
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
     async def _trigger_reindex_for_paths(self, paths: list[str]) -> None:
         """Best-effort reindex trigger for direct daemon writes (slash commands).
@@ -736,12 +686,11 @@ class Daemon:
             logger.warning("daemon reindex trigger failed: %s", exc)
 
     async def _handle_note(
-        self,
-        topic: str,
-        writer: asyncio.StreamWriter,
-    ) -> None:
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /note <topic> — create or update a wiki article."""
-        topic = topic.strip()
+        writer = ctx.writer
+        topic = msg.args.strip()
         if not topic:
             error = ErrorMessage(error="Usage: /note <topic>")
             writer.write(encode_message(error))
@@ -815,10 +764,15 @@ class Daemon:
         )
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_search(self, query: str, writer: asyncio.StreamWriter) -> None:
+    async def _handle_search(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /search <query> — semantic search over the vault collection."""
-        query = query.strip()
+        writer = ctx.writer
+        query = msg.args.strip()
         if not query:
             error = ErrorMessage(error="Usage: /search <query>")
             writer.write(encode_message(error))
@@ -846,10 +800,15 @@ class Daemon:
             resp = ResponseMessage(text="\n".join(lines), command="search")
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_get(self, doc_id: str, writer: asyncio.StreamWriter) -> None:
+    async def _handle_get(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /get <doc_id> — fetch full document content."""
-        doc_id = doc_id.strip()
+        writer = ctx.writer
+        doc_id = msg.args.strip()
         if not doc_id:
             error = ErrorMessage(error="Usage: /get <doc_id>")
             writer.write(encode_message(error))
@@ -877,16 +836,15 @@ class Daemon:
         )
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_wisdom(self, args: str, writer: asyncio.StreamWriter) -> None:
-        """Handle /wisdom [add <title> | <body>] [remove <slug>] — manage wisdom.
-
-        Usage:
-          /wisdom                          — list all wisdom entries
-          /wisdom add <title> | <body>     — add a new entry
-          /wisdom remove <slug>            — remove an entry by slug
-        """
-        args = args.strip()
+    async def _handle_wisdom(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
+        """Handle /wisdom [add <title> | <body>] [remove <slug>] — manage wisdom."""
+        writer = ctx.writer
+        args = msg.args.strip()
 
         if args.startswith("add "):
             rest = args[4:].strip()
@@ -945,10 +903,15 @@ class Daemon:
             resp = ResponseMessage(text="\n".join(lines), command="wisdom")
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_search_web(self, query: str, writer: asyncio.StreamWriter) -> None:
+    async def _handle_search_web(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /search-web <query> — SearxNG query, return allowlisted results."""
-        query = query.strip()
+        writer = ctx.writer
+        query = msg.args.strip()
         if not query:
             error = ErrorMessage(error="Usage: /search-web <query>")
             writer.write(encode_message(error))
@@ -986,10 +949,17 @@ class Daemon:
 
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_fetch(self, url: str, writer: asyncio.StreamWriter) -> None:
+    async def _handle_fetch(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /fetch <url> — download URL content into raw/web/ (quarantine)."""
-        url = url.strip()
+        from agent_core.utils.fetcher import FetchError
+
+        writer = ctx.writer
+        url = msg.args.strip()
         if not url:
             error = ErrorMessage(error="Usage: /fetch <url>")
             writer.write(encode_message(error))
@@ -1059,10 +1029,17 @@ class Daemon:
         )
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_summarize(self, raw_path: str, writer: asyncio.StreamWriter) -> None:
+    async def _handle_summarize(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /summarize <raw-path> — sanitize + boundary-wrap + summarize."""
-        raw_path = raw_path.strip()
+        from pal.summarizer import summarize_raw_file
+
+        writer = ctx.writer
+        raw_path = msg.args.strip()
         if not raw_path:
             error = ErrorMessage(error="Usage: /summarize <raw-path>")
             writer.write(encode_message(error))
@@ -1127,10 +1104,15 @@ class Daemon:
         )
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_compile(self, summary_path: str, writer: asyncio.StreamWriter) -> None:
+    async def _handle_compile(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /compile <summary-path> — build a grounded wiki article from a summary."""
-        summary_path = summary_path.strip()
+        writer = ctx.writer
+        summary_path = msg.args.strip()
         if not summary_path:
             error = ErrorMessage(error="Usage: /compile <summary-path>")
             writer.write(encode_message(error))
@@ -1167,9 +1149,14 @@ class Daemon:
         )
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_compile_batch(self, writer: asyncio.StreamWriter) -> None:
+    async def _handle_compile_batch(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /compile-batch — compile all summaries in raw/summaries/."""
+        writer = ctx.writer
         summaries_dir = self.config.vault_path / "raw" / "summaries"
         if not summaries_dir.exists():
             error = ErrorMessage(error=f"No summaries directory at {summaries_dir}")
@@ -1246,23 +1233,38 @@ class Daemon:
         resp = ResponseMessage(text="\n".join(lines), command="compile-batch")
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
     async def _handle_import(
-        self,
-        file_path: str,
-        writer: asyncio.StreamWriter,
-        approval_registry: ApprovalRegistry | None = None,
-        proposal_emitter=None,
-    ) -> None:
-        """Handle /import <path> - raw-first ingestion.
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
+        """Handle /import <path> - raw-first ingestion."""
+        import fitz  # pymupdf
+        from agent_core.utils.chunker import chunk_markdown
+        from agent_core.utils.converter import ConversionError
+        from agent_core.utils.frontmatter import serialize_frontmatter
+        from datetime import datetime, timezone
 
-        Converts the source to markdown, splits into sections using
-        format-appropriate detection, writes each section to
-        raw/sources/<doc-slug>/NN-slug.md, archives the source, and
-        triggers reindex. No categorization, no wiki-article writes.
-        Promotion to wiki articles is a separate user/agent-driven step.
-        """
-        file_path = file_path.strip()
+        from pal.archive import archive_raw_files
+        from pal.pdf_structure import detect_chapters, extract_chapters, slugify
+        from pal.protocol import BatchFallbackProposal
+
+        writer = ctx.writer
+        approval_registry = self.approval_registry
+
+        # Per-turn proposal emitter wired to ctx.writer.
+        def proposal_emitter(proposal_msg) -> None:
+            writer.write(encode_message(proposal_msg))
+            drain_task = asyncio.create_task(writer.drain())
+
+            def _log_drain_failure(task: asyncio.Task) -> None:
+                exc = task.exception()
+                if exc is not None:
+                    logger.warning("proposal drain failed: %s", exc)
+            drain_task.add_done_callback(_log_drain_failure)
+
+        file_path = msg.args.strip()
         if not file_path:
             error = ErrorMessage(error="Usage: /import <path-in-raw/>")
             writer.write(encode_message(error))
@@ -1319,8 +1321,6 @@ class Daemon:
             return
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        from datetime import datetime, timezone
-        from agent_core.utils.frontmatter import serialize_frontmatter
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
         saved_articles: list[str] = []
@@ -1355,7 +1355,6 @@ class Daemon:
                 await writer.drain()
 
                 from agent_core.inference import BatchUnavailableError
-                from pal.protocol import BatchFallbackProposal
                 from pal.pdf_structure import DetectionResult
 
                 effective_inference = (
@@ -1366,9 +1365,8 @@ class Daemon:
                 try:
                     detection = await detect_chapters(doc, inference=effective_inference)
                 except BatchUnavailableError:
-                    if approval_registry is None or proposal_emitter is None:
-                        # No connection-scoped approval deps wired; fall
-                        # through to single-file.
+                    if approval_registry is None:
+                        # No approval deps wired; fall through to single-file.
                         detection = DetectionResult(method="single-file", boundaries=[])
                     else:
                         pid = approval_registry.create_proposal(
@@ -1547,13 +1545,15 @@ class Daemon:
         resp = ResponseMessage(text="\n".join(lines), command="import")
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
     async def _handle_learn(
-        self,
-        conv: Conversation,
-        writer: asyncio.StreamWriter,
-    ) -> None:
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /learn — extract lessons from the current conversation."""
+        writer = ctx.writer
+        conv = ctx.conversation
         messages = conv.messages
         if not messages:
             error = ErrorMessage(error="No conversation history to learn from.")
@@ -1629,9 +1629,14 @@ class Daemon:
 
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_learnings(self, writer: asyncio.StreamWriter) -> None:
+    async def _handle_learnings(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /learnings — list all extracted learnings."""
+        writer = ctx.writer
         entries = self.learning.list()
         if not entries:
             resp = ResponseMessage(
@@ -1646,10 +1651,17 @@ class Daemon:
             resp = ResponseMessage(text="\n".join(lines), command="learnings")
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_promote(self, slug: str, writer: asyncio.StreamWriter) -> None:
+    async def _handle_promote(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /promote <slug> — promote a learning to wisdom."""
-        slug = slug.strip()
+        from agent_core.utils.frontmatter import parse_frontmatter
+
+        writer = ctx.writer
+        slug = msg.args.strip()
         if not slug:
             error = ErrorMessage(error="Usage: /promote <slug>")
             writer.write(encode_message(error))
@@ -1658,7 +1670,6 @@ class Daemon:
         try:
             body = self.learning.get(slug)
             meta_path = self.learning.learning_dir / f"{slug}.md"
-            from agent_core.utils.frontmatter import parse_frontmatter
             meta, _ = parse_frontmatter(meta_path.read_text())
             title = meta.get("title", slug)
         except FileNotFoundError:
@@ -1679,10 +1690,15 @@ class Daemon:
         )
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_rate(self, args: str, writer: asyncio.StreamWriter) -> None:
+    async def _handle_rate(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /rate <good|bad> [comment] — record session feedback."""
-        args = args.strip()
+        writer = ctx.writer
+        args = msg.args.strip()
         if not args:
             error = ErrorMessage(error="Usage: /rate <good|bad> [comment]")
             writer.write(encode_message(error))
@@ -1700,15 +1716,15 @@ class Daemon:
         )
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
-    async def _handle_profile(self, args: str, writer: asyncio.StreamWriter) -> None:
-        """Handle /profile [set <text>] — show or update user profile.
-
-        Usage:
-          /profile             — show current profile
-          /profile set <text>  — replace profile with <text>
-        """
-        args = args.strip()
+    async def _handle_profile(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
+        """Handle /profile [set <text>] — show or update user profile."""
+        writer = ctx.writer
+        args = msg.args.strip()
         if args.startswith("set "):
             body = args[4:].strip()
             if not body:
@@ -1732,9 +1748,12 @@ class Daemon:
             resp = ResponseMessage(text=body, command="profile")
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
     async def _get_manager_status(self) -> dict:
         """Fetch /status from the manager. Returns empty dict on error."""
+        import httpx
         try:
             async with httpx.AsyncClient(timeout=10.0) as c:
                 resp = await c.get(f"{self.config.inference_url}/status")
@@ -1803,6 +1822,7 @@ class Daemon:
 
     async def _request_model_swap(self, model: str, target: str = "main") -> dict:
         """POST to the manager's swap endpoint with the target slot."""
+        import httpx
         async with httpx.AsyncClient(timeout=120.0) as c:
             resp = await c.post(
                 f"{self.config.inference_url}/swap",
@@ -1812,16 +1832,13 @@ class Daemon:
             return resp.json()
 
     async def _handle_model(
-        self,
-        args: str,
-        writer: asyncio.StreamWriter,
-    ) -> None:
-        """Handle /model -- show or switch the active model.
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
+        """Handle /model -- show or switch the active model."""
+        import httpx
 
-        The active model is a single global setting. Changing it affects
-        every inference call: chat, research, summarize, compile, etc.
-        """
-        arg = args.strip()
+        writer = ctx.writer
+        arg = msg.args.strip()
 
         if arg == "list":
             try:
@@ -1862,12 +1879,17 @@ class Daemon:
         resp = ResponseMessage(text=text, command="model")
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
     async def _handle_research(
-        self, args: str, writer: asyncio.StreamWriter
-    ) -> None:
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /research - search, fetch, and summarize topics."""
-        args = args.strip()
+        from pal.researcher import Researcher, parse_topic_file
+
+        writer = ctx.writer
+        args = msg.args.strip()
         if not args:
             error = ErrorMessage(error="Usage: /research [--verbose] [deep] <topic or path>")
             writer.write(encode_message(error))
@@ -1897,13 +1919,13 @@ class Daemon:
         depth = 10 if deep else 3
 
         # Progress callback - send ToolProgressMessage to client
-        async def send_progress(msg: str) -> None:
-            progress = ToolProgressMessage(tool="research", arguments={"status": msg})
+        async def send_progress(text: str) -> None:
+            progress = ToolProgressMessage(tool="research", arguments={"status": text})
             writer.write(encode_message(progress))
             await writer.drain()
 
-        def on_progress(msg: str) -> None:
-            asyncio.get_running_loop().create_task(send_progress(msg))
+        def on_progress(text: str) -> None:
+            asyncio.get_running_loop().create_task(send_progress(text))
 
         researcher = Researcher(
             websearch=self.websearch,
@@ -1962,15 +1984,16 @@ class Daemon:
         resp = ResponseMessage(text="\n".join(lines), command="research")
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
 
     async def _handle_think(
-        self,
-        args: str,
-        conv: Conversation,
-        writer: asyncio.StreamWriter,
-    ) -> None:
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
         """Handle /think -- control reasoning mode for this conversation."""
-        arg = args.strip().lower()
+        writer = ctx.writer
+        conv = ctx.conversation
+        arg = msg.args.strip().lower()
         if arg == "on":
             conv.overrides["reasoning"] = "on"
             logger.info(
@@ -2004,7 +2027,7 @@ class Daemon:
                 command="think",
             )
         elif arg == "":
-            mode = decide_mode(conv)
+            mode = self.decide_mode(conv)
             resp = ResponseMessage(
                 text=f"Reasoning mode: {conv.overrides.get('reasoning') or 'auto'} (effective: {mode})",
                 command="think",
@@ -2016,3 +2039,18 @@ class Daemon:
             )
         writer.write(encode_message(resp))
         await writer.drain()
+        return
+        yield  # pragma: no cover
+
+    async def _handle_scratch(
+        self, msg: CommandMessage, ctx: HandlerContext,
+    ) -> AsyncIterator[object]:
+        """Handle /scratch <text> — append a timestamped note to the channel scratchpad."""
+        writer = ctx.writer
+        scratchpad = self._build_scratchpad(ctx.channel_id)
+        text = await handle_scratch(scratchpad=scratchpad, text=msg.args)
+        resp = ResponseMessage(text=text, command="scratch")
+        writer.write(encode_message(resp))
+        await writer.drain()
+        return
+        yield  # pragma: no cover

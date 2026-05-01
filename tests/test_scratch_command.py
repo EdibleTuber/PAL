@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 async def test_scratch_appends_to_scratchpad(tmp_path):
     """`/scratch some text` appends a timestamped line to the channel's scratchpad."""
     from agent_core.scratchpad import Scratchpad
-    from pal.daemon import handle_scratch
+    from pal.agent import handle_scratch
 
     wiki = MagicMock()
     wiki.git_commit = MagicMock()
@@ -33,7 +33,7 @@ async def test_scratch_appends_to_scratchpad(tmp_path):
 @pytest.mark.asyncio
 async def test_scratch_returns_error_on_oversize(tmp_path):
     from agent_core.scratchpad import Scratchpad
-    from pal.daemon import handle_scratch
+    from pal.agent import handle_scratch
 
     wiki = MagicMock()
     wiki.git_commit = MagicMock()
@@ -56,7 +56,7 @@ async def test_scratch_returns_error_on_oversize(tmp_path):
 @pytest.mark.asyncio
 async def test_scratch_empty_text_returns_usage(tmp_path):
     from agent_core.scratchpad import Scratchpad
-    from pal.daemon import handle_scratch
+    from pal.agent import handle_scratch
     wiki = MagicMock()
     sp = Scratchpad(
         vault_path=tmp_path,

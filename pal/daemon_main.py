@@ -1,32 +1,17 @@
-"""Entry point for the PAL daemon process."""
-import asyncio
-import logging
-import signal
+"""Entry point for the PAL daemon process.
 
-from pal.config import load_config
-from pal.daemon import Daemon
+Constructs PALAgent, hands it to agent_core.runtime.run_daemon, blocks on the
+daemon's serve loop. Signal handling (SIGINT/SIGTERM) is handled by asyncio's
+default behavior inside run_daemon.
+"""
+from agent_core.runtime import run_daemon
+
+from pal.agent import PALAgent
+from pal.config import PALConfig
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-    config = load_config()
-    daemon = Daemon(config)
-
-    loop = asyncio.new_event_loop()
-
-    def handle_signal() -> None:
-        daemon.shutdown()
-
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, handle_signal)
-
-    try:
-        loop.run_until_complete(daemon.serve())
-    finally:
-        loop.close()
+    run_daemon(PALAgent(), config_cls=PALConfig)
 
 
 if __name__ == "__main__":

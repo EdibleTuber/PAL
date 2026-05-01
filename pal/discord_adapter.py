@@ -9,7 +9,7 @@ from pathlib import Path
 
 import discord
 
-from pal.client import PalClient
+from agent_core.client import DaemonConnection as PalClient  # API-compatible alias
 from pal.commands import command_names
 from pal.discord_interactions import (
     DiscordStreamProcessor,

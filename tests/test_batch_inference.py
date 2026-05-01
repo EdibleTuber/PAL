@@ -4,8 +4,9 @@ import pytest
 from unittest.mock import AsyncMock
 
 from agent_core.inference import InferenceClient, BatchUnavailableError
-from pal.daemon import Daemon
 from pal.config import Config
+
+from tests.conftest import make_pal_agent
 
 
 @pytest.mark.asyncio
@@ -118,11 +119,10 @@ def test_daemon_categorizer_uses_main_when_batch_disabled(tmp_path):
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=False,
-        channels_dir=tmp_path / "channels",
     )
-    daemon = Daemon(cfg)
-    assert daemon.categorizer.inference is daemon.inference
-    assert daemon.batch_inference is None
+    agent = make_pal_agent(cfg)
+    assert agent.categorizer.inference is agent.inference
+    assert agent.batch_inference is None
 
 
 def test_daemon_categorizer_uses_batch_when_enabled(tmp_path):
@@ -130,8 +130,7 @@ def test_daemon_categorizer_uses_batch_when_enabled(tmp_path):
         socket_path=tmp_path / "pal.sock",
         vault_path=tmp_path / "vault",
         batch_enabled=True,
-        channels_dir=tmp_path / "channels",
     )
-    daemon = Daemon(cfg)
-    assert daemon.batch_inference is not None
-    assert daemon.categorizer.inference is daemon.batch_inference
+    agent = make_pal_agent(cfg)
+    assert agent.batch_inference is not None
+    assert agent.categorizer.inference is agent.batch_inference

@@ -1,5 +1,8 @@
-"""Drift check: every `msg.name == "foo"` branch in pal/daemon.py
+"""Drift check: every `msg.name == "foo"` branch in pal/agent.py
 must have a matching COMMANDS entry, and vice versa.
+
+Phase E: command dispatch was lifted from pal/daemon.py to PALAgent in
+pal/agent.py; the AST scan target moved with it.
 """
 import ast
 from pathlib import Path
@@ -7,46 +10,42 @@ from pathlib import Path
 from pal.commands import command_names
 
 
-DAEMON_PATH = Path(__file__).parent.parent / "pal" / "daemon.py"
+DAEMON_PATH = Path(__file__).parent.parent / "pal" / "agent.py"
 
 
 def _collect_daemon_command_names() -> set[str]:
-    """Parse daemon.py and collect every string compared against msg.name."""
+    """Parse agent.py and collect every command name in the dispatch map.
+
+    Phase E: dispatch is a `handler_map = { "name": self._handle_X, ... }`
+    inside ``PALAgent.handle_command``. We walk for any ``ast.Dict`` whose
+    string keys all map to attribute accesses starting with ``_handle_``;
+    those are command-handler dispatch dicts.
+    """
     tree = ast.parse(DAEMON_PATH.read_text())
     found: set[str] = set()
 
     for node in ast.walk(tree):
-        # msg.name == "foo"
-        if isinstance(node, ast.Compare):
-            if (
-                isinstance(node.left, ast.Attribute)
-                and node.left.attr == "name"
-                and len(node.ops) == 1
-                and isinstance(node.ops[0], ast.Eq)
-                and len(node.comparators) == 1
-                and isinstance(node.comparators[0], ast.Constant)
-                and isinstance(node.comparators[0].value, str)
-            ):
-                found.add(node.comparators[0].value)
-            # msg.name in ("foo", "bar")
-            if (
-                isinstance(node.left, ast.Attribute)
-                and node.left.attr == "name"
-                and len(node.ops) == 1
-                and isinstance(node.ops[0], ast.In)
-                and len(node.comparators) == 1
-                and isinstance(node.comparators[0], (ast.Tuple, ast.List))
-            ):
-                for elt in node.comparators[0].elts:
-                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                        found.add(elt.value)
+        if not isinstance(node, ast.Dict):
+            continue
+        if not node.keys or not node.values:
+            continue
+        # Heuristic: all values are attribute accesses to ``_handle_*`` methods.
+        all_handler_values = all(
+            isinstance(v, ast.Attribute) and v.attr.startswith("_handle_")
+            for v in node.values
+        )
+        if not all_handler_values:
+            continue
+        for k in node.keys:
+            if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                found.add(k.value)
     return found
 
 
 def test_no_command_drift():
     daemon_cmds = _collect_daemon_command_names()
     assert daemon_cmds, (
-        "drift check collected zero command names from pal/daemon.py - "
+        "drift check collected zero command names from pal/agent.py - "
         "the AST dispatch pattern is likely stale, review the matcher"
     )
     registry_cmds = command_names()

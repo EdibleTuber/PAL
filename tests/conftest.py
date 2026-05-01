@@ -12,8 +12,19 @@ from starlette.responses import StreamingResponse, JSONResponse, Response
 from starlette.routing import Route
 import uvicorn
 
-from pal.config import Config
-from pal.daemon import Daemon
+from agent_core.allowlist import AllowlistManager
+from agent_core.approval_registry import ApprovalRegistry
+from agent_core.channels import ChannelStore
+from agent_core.daemon import Daemon
+from agent_core.inference import InferenceClient
+from agent_core.learning import LearningManager
+from agent_core.profile import ProfileManager
+from agent_core.retrieval import RetrievalClient
+from agent_core.websearch import WebSearchClient
+from agent_core.wisdom import WisdomManager
+
+from pal.agent import PALAgent
+from pal.config import PALConfig as Config
 
 # Captures every /v1/chat/completions body the daemon sends to the mock server.
 # Tests that care about what model/payload hit the wire read from this list.
@@ -355,29 +366,85 @@ def socket_path(tmp_path) -> Path:
     return tmp_path / "pal-test.sock"
 
 
+def make_pal_agent(cfg: Config) -> PALAgent:
+    """Construct a fully-wired PALAgent for tests, mimicking run_daemon's setup.
+
+    Used by the ``running_daemon`` fixture and by per-file fixtures that need a
+    Daemon-shaped object exposing PAL infrastructure (wiki, inference, compiler,
+    tool_executor, etc.) post Phase E.
+    """
+    agent = PALAgent()
+    agent.config = cfg
+    agent.profile = ProfileManager(
+        cfg.vault_path, agent_name="pal", username=cfg.username,
+    )
+    agent.wisdom = WisdomManager(cfg.vault_path, agent_name="pal")
+    agent.learning = LearningManager(cfg.vault_path, agent_name="pal")
+    agent.allowlist = AllowlistManager(cfg.vault_path, agent_name="pal")
+    agent.approval_registry = ApprovalRegistry()
+    agent.channels = ChannelStore(
+        vault_path=cfg.vault_path,
+        agent_name="pal",
+        history_depth=cfg.history_depth,
+    )
+    agent.inference = InferenceClient(
+        base_url=cfg.inference_url, model=cfg.model,
+    )
+    agent.retrieval = RetrievalClient(
+        base_url=cfg.inference_url, collection_id=cfg.collection_id,
+    )
+    agent.websearch = WebSearchClient(base_url=cfg.searxng_url)
+    agent.setup()
+    # Old pal.daemon.Daemon.__init__ seeded the allowlist eagerly. Phase E
+    # runtime does not (yet); preserve the legacy behaviour for tests so
+    # the seeding-on-first-use coverage remains green.
+    agent.allowlist.seed()
+    return agent
+
+
+async def start_pal_daemon(agent: PALAgent) -> asyncio.Task:
+    """Start a Daemon serve loop for the given agent, return the task.
+
+    The caller is responsible for waiting for ``agent.config.socket_path`` to
+    appear and for cancelling the task on teardown.
+    """
+    daemon = Daemon(agent)
+    return asyncio.create_task(daemon.serve())
+
+
 @pytest.fixture()
 async def running_daemon(
     socket_path, mock_inference_server, tmp_path
-) -> AsyncGenerator[Daemon, None]:
-    """Start a daemon with a mock inference backend, yield it, then shut down."""
+) -> AsyncGenerator[PALAgent, None]:
+    """Start a daemon with a mock inference backend, yield the underlying agent.
+
+    Phase E migration: the daemon is now in agent_core and is transport-only;
+    PAL's chat/command/system-prompt logic lives on PALAgent. Tests that
+    previously reached into ``daemon.tools`` / ``daemon.config`` etc. need the
+    agent, so this fixture yields the agent. The serve task is cancelled on
+    teardown.
+    """
     cfg = Config(
         inference_url=mock_inference_server,
         model="test-model",
         socket_path=socket_path,
         history_depth=50,
         vault_path=tmp_path / "vault",
-        channels_dir=tmp_path / "channels",
     )
-    daemon = Daemon(cfg)
-    task = asyncio.create_task(daemon.serve())
+    agent = make_pal_agent(cfg)
+    task = await start_pal_daemon(agent)
     # Wait for socket to appear
     for _ in range(100):
         if socket_path.exists():
             break
         await asyncio.sleep(0.01)
-    yield daemon
-    daemon.shutdown()
-    await task
+    yield agent
+
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
 
 
 @pytest.fixture(autouse=True)
