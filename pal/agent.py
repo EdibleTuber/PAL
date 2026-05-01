@@ -262,6 +262,69 @@ class PALAgent(Agent):
             commit_callback=_commit_scratchpad,
         )
 
+    async def handle_other(self, msg, ctx: HandlerContext) -> None:
+        """Route PAL-specific approval / batch-fallback messages.
+
+        Lifted from the legacy Daemon._route_approval_response plus the inline
+        BatchFallbackApprovalMessage handling in _handle_connection. The
+        agent_core daemon dispatches non-Chat/non-Command messages here.
+        """
+        from pal.protocol import (
+            ResearchApprovalResponseMessage,
+            BatchFallbackApprovalMessage,
+        )
+
+        if isinstance(msg, ResearchApprovalResponseMessage):
+            # Dual-purpose: scanner candidates AND registry-backed proposals
+            # share the same response message type (the CLI uses the same
+            # interactive prompt for both).
+            candidate = self.scanner.take_pending(msg.proposal_id)
+            if candidate is not None:
+                if msg.decision == "approve":
+                    self.learning.add(
+                        title=candidate.title,
+                        body=candidate.body,
+                        source="scanner",
+                    )
+                    self.wiki.git_commit(
+                        f"learn: scanner-captured {candidate.title}",
+                    )
+                # decline/skip: candidate already cleared by take_pending
+                return
+
+            # Registry-backed routing for research/compile/reorg/consolidate/promote.
+            if msg.decision == "approve":
+                self.approval_registry.approve(msg.proposal_id)
+            elif msg.decision == "decline":
+                self.approval_registry.decline(msg.proposal_id)
+            elif msg.decision == "edit":
+                if msg.summary_paths is not None:
+                    self.approval_registry.edit(
+                        msg.proposal_id,
+                        summary_paths=msg.summary_paths,
+                    )
+                else:
+                    self.approval_registry.edit(
+                        msg.proposal_id,
+                        new_topic=msg.new_topic or None,
+                        new_depth=msg.new_depth or None,
+                    )
+            return
+
+        if isinstance(msg, BatchFallbackApprovalMessage):
+            if msg.choice in ("retry", "main"):
+                self.approval_registry.approve(
+                    msg.proposal_id, state=msg.choice,
+                )
+            else:
+                self.approval_registry.decline(msg.proposal_id)
+            return
+
+        logger.warning(
+            "PALAgent.handle_other received unrecognized message: %s",
+            type(msg).__name__,
+        )
+
     def system_prompt(self, ctx: HandlerContext) -> str:
         """Return PAL's system prompt for this turn, including channel scratchpad."""
         scratchpad = self._build_scratchpad(ctx.channel_id)
