@@ -305,7 +305,7 @@ Registration order is preserved. Unknown commands yield a `ResponseMessage` (not
 | `/think` | Set reasoning mode (on/off/auto/show/hide) | `channels` |
 | `/quit` | End the session | (none) |
 
-`/learn` (trigger learning extraction) is intentionally *not* in the builtin set for v0.6.0 — its implementation depends on `learning_scanner`, which is not currently wired by `run_daemon`. PAL keeps `/learn` as a domain command for now. See Risk 10.
+`/learn` (trigger learning extraction) is intentionally *not* in the builtin set for v0.6.0. It *could* be — only `inference` and `learning` are needed, both already wired. The blocker is design clarity: PAL's current `/learn` uses a custom one-shot extraction prompt and bypasses `agent_core.learning_scanner`'s vetted extraction logic entirely (the scanner runs proactively after each turn; `/learn` is a manual fallback with a different prompt). The right shape for a generic builtin — call into the scanner vs. roll its own prompt vs. let agents override — is exactly the kind of policy question the post-extraction PAL review is meant to answer. Committing to a shape now locks every future agent into whichever choice we pick. PAL keeps `/learn` as a domain command for v0.6.0; lift to builtin once the post-extraction review settles the shape. See Risk 10.
 
 `command_registry` and `config` are not wired by `run_daemon` in v0.5.x but become so in v0.6.0 as part of Phase F's `run_daemon` registration phase (step 2-4 in Architecture).
 
@@ -690,7 +690,9 @@ agent_core CI runs new tests. PAL CI runs PAL's tests against bumped dep. No new
 
 **9. `disabled_builtins` is a single namespace shared by tools and commands.** `frozenset[str]` of names; if a future builtin tool and builtin command end up with the same name (none collide today: tools are `grep`/`cat`/`ls`/etc., commands are `help`/`clear`/etc.), one entry would suppress both. Splitting into `disabled_tools` and `disabled_commands` is a straightforward future change if collision becomes real. Documented limitation, not blocking.
 
-**10. Some builtin commands depend on framework managers that may not be wired by `run_daemon` today.** v0.5.0's wiring covers: profile, wisdom, learning, allowlist, approval_registry, channels, inference, retrieval, websearch. The spec's builtin command list also names `command_registry`, `config`, `learning_scanner`. `command_registry` and `config` get wired by Phase F itself (the spec's `run_daemon` step 2-4 additions). `learning_scanner` is *not* wired by v0.5.0 — implementation must either add it to `run_daemon`'s wiring step (so `/learn` finds it), or drop `/learn` from the builtin command list and let agents that want it register their own `Learn` command in `commands = [...]`. Recommendation: drop from builtins for v0.6.0; revisit if multiple agents want it.
+**10. Some builtin commands depend on framework managers wired by Phase F itself.** v0.5.0's wiring covers: profile, wisdom, learning, allowlist, approval_registry, channels, inference, retrieval, websearch. The spec's builtin command list also names `command_registry` and `config`; both get wired by Phase F itself (the `run_daemon` registration phase in Architecture step 2-4). No external dependency to add.
+
+`/learn` is a separate consideration: it could ship as a builtin (its needs — `inference` and `learning` — are already wired), but PAL's current `/learn` implementation uses a custom extraction prompt that bypasses `agent_core.learning_scanner`'s vetted extraction logic. Committing to a generic builtin shape now means picking between "call into the scanner's extraction" vs "roll its own prompt" vs "let agents override," and that's exactly the policy question deferred to the post-extraction PAL review. PAL keeps `/learn` as a domain command for v0.6.0; lift to builtin once the post-extraction review settles the shape.
 
 ## Parked Open Questions
 
