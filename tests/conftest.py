@@ -403,8 +403,11 @@ def make_pal_agent(cfg: Config) -> PALAgent:
         max_bytes=cfg.fetch_max_bytes,
         timeout=cfg.fetch_timeout,
     )
-    _attach_registries(agent)
+    # Mirror run_daemon's order: setup() first (builds domain managers like
+    # researcher, compiler, etc.), then _attach_registries (validates
+    # tool `requires` against the fully-built agent).
     agent.setup()
+    _attach_registries(agent)
     # Old pal.daemon.Daemon.__init__ seeded the allowlist eagerly. Phase E
     # runtime does not (yet); preserve the legacy behaviour for tests so
     # the seeding-on-first-use coverage remains green.

@@ -34,7 +34,9 @@ from pal.tools import (
     EditFile,
     ListDirectory,
     MoveFile,
+    ProposeResearch,
     ReadFile,
+    ResearchTopic,
     SearchContent,
 )
 from agent_core.scratchpad import ScratchpadTooLarge
@@ -89,7 +91,8 @@ class PALAgent(Agent):
     # PR3-PR4 add research/compile/consolidate/reorg/wait. The framework's
     # BUILTIN_TOOLS and BUILTIN_COMMANDS are unioned in automatically by
     # run_daemon._attach_registries.
-    tools = [ReadFile, ListDirectory, SearchContent, EditFile, CreateFile, MoveFile]
+    tools = [ReadFile, ListDirectory, SearchContent, EditFile, CreateFile, MoveFile,
+             ProposeResearch, ResearchTopic]
     commands = []
     disabled_builtins = frozenset()
 
@@ -152,8 +155,12 @@ class PALAgent(Agent):
             self.batch_inference if self.batch_inference is not None else self.inference
         )
 
-        # System prompt builder: composes base prompt + profile + wisdom.
-        self.prompt_builder = SystemPromptBuilder(
+        # PAL-specific prompt builder: composes base prompt + profile + wisdom.
+        # Named _pal_prompt_builder to avoid colliding with the framework's
+        # agent.prompt_builder set by _attach_registries. PAL command handlers
+        # and handle_chat use this attribute directly (via .build()); the
+        # framework uses agent.prompt_builder for its own system_prompt logic.
+        self._pal_prompt_builder = SystemPromptBuilder(
             profile=self.profile,
             wisdom=self.wisdom,
         )
@@ -189,7 +196,7 @@ class PALAgent(Agent):
             wiki=self.wiki,
             inference=self.inference,
             categorizer=self.categorizer,
-            prompt_builder=self.prompt_builder,
+            prompt_builder=self._pal_prompt_builder,
             retrieval=self.retrieval,
             max_body_chars=config.max_inference_body_chars,
         )
@@ -207,7 +214,7 @@ class PALAgent(Agent):
             vault_path=config.vault_path,
             wiki=self.wiki,
             inference=self.inference,
-            prompt_builder=self.prompt_builder,
+            prompt_builder=self._pal_prompt_builder,
             retrieval=self.retrieval,
             max_body_chars=config.max_inference_body_chars,
         )
@@ -361,7 +368,7 @@ class PALAgent(Agent):
         """Return PAL's system prompt for this turn, including channel scratchpad."""
         scratchpad = self._build_scratchpad(ctx.channel_id)
         scratchpad_content = scratchpad.read()
-        return self.prompt_builder.build(channel_scratchpad=scratchpad_content)
+        return self._pal_prompt_builder.build(channel_scratchpad=scratchpad_content)
 
     def _build_tool_schemas(self) -> list[dict]:
         """Phase F dual-dispatch: union framework schemas with PAL's legacy
@@ -446,7 +453,7 @@ class PALAgent(Agent):
         self.legacy_tool_executor.scratchpad = scratchpad
 
         messages = conv.get_messages_for_api(
-            system_prompt=self.prompt_builder.build(channel_scratchpad=scratchpad_content),
+            system_prompt=self._pal_prompt_builder.build(channel_scratchpad=scratchpad_content),
         )
         # Phase F: send the union of framework builtin schemas + PAL legacy schemas.
         # self.tool_executor is the framework executor (12 builtins + any PAL-declared
@@ -541,7 +548,7 @@ class PALAgent(Agent):
                 # Re-read in case an update_scratch tool call modified the file.
                 scratchpad_content = scratchpad.read()
                 messages = conv.get_messages_for_api(
-                    system_prompt=self.prompt_builder.build(channel_scratchpad=scratchpad_content),
+                    system_prompt=self._pal_prompt_builder.build(channel_scratchpad=scratchpad_content),
                 )
                 completion = await self.inference.complete(
                     messages, tools=self._build_tool_schemas(), reasoning=mode,
@@ -786,7 +793,7 @@ class PALAgent(Agent):
         )
 
         messages = [
-            {"role": "system", "content": self.prompt_builder.build()},
+            {"role": "system", "content": self._pal_prompt_builder.build()},
             {"role": "user", "content": prompt},
         ]
 
@@ -1652,7 +1659,7 @@ class PALAgent(Agent):
         )
 
         api_messages = [
-            {"role": "system", "content": self.prompt_builder.build()},
+            {"role": "system", "content": self._pal_prompt_builder.build()},
             {"role": "user", "content": prompt},
         ]
 

@@ -4,14 +4,42 @@ These tests simulate what an indirect-prompt-injection attack would look
 like in code: the model (or injected content) tries to invoke
 research_topic with a proposal_id that has no valid approval. The tool
 must refuse without calling the Researcher.
+
+Phase F PR3: propose_research and research_topic are now pal.tools.research
+Tool subclasses. The consent gate tests use ResearchTopic.run() directly.
 """
+from dataclasses import dataclass
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from agent_core.approval_registry import ApprovalRegistry
-from pal.researcher import Researcher
 from pal._legacy_tools import ToolExecutor
+from pal.researcher import Researcher
+from pal.tools.research import ResearchTopic
+
+
+@dataclass
+class _Config:
+    vault_path: Path
+
+
+class _Agent:
+    def __init__(self, vault_path, approval_registry=None, researcher=None):
+        self.config = _Config(vault_path)
+        self.approval_registry = approval_registry
+        self.researcher = researcher
+
+
+def _ctx(agent):
+    class _C:
+        pass
+    c = _C()
+    c.agent = agent
+    c.channel_id = "default"
+    c.emit = AsyncMock()
+    return c
 
 
 @pytest.mark.asyncio
@@ -21,16 +49,11 @@ async def test_injected_research_topic_call_without_valid_proposal_is_refused(tm
     registry = ApprovalRegistry()
     researcher = MagicMock(spec=Researcher)
     researcher.research_topic = MagicMock()
-    executor = ToolExecutor(
-        vault_path=tmp_path,
-        retrieval=None,
-        approval_registry=registry,
-        researcher=researcher,
-    )
+    agent = _Agent(tmp_path, approval_registry=registry, researcher=researcher)
 
-    output = await executor.run_async(
-        "research_topic",
+    output = await ResearchTopic().run(
         {"proposal_id": "injected-by-malicious-webpage"},
+        _ctx(agent),
     )
     assert "unknown" in output.lower() or "not found" in output.lower()
     researcher.research_topic.assert_not_called()
@@ -55,19 +78,14 @@ async def test_consumed_proposal_cannot_be_reused(tmp_path):
         )
     researcher.research_topic = fake_research_topic
 
-    executor = ToolExecutor(
-        vault_path=tmp_path,
-        retrieval=None,
-        approval_registry=registry,
-        researcher=researcher,
-    )
+    agent = _Agent(tmp_path, approval_registry=registry, researcher=researcher)
 
     # First call succeeds — proposal is legitimately approved.
-    first = await executor.run_async("research_topic", {"proposal_id": pid})
+    first = await ResearchTopic().run({"proposal_id": pid}, _ctx(agent))
     assert not first.startswith("Error")
 
     # Second call with the same proposal_id is refused.
-    second = await executor.run_async("research_topic", {"proposal_id": pid})
+    second = await ResearchTopic().run({"proposal_id": pid}, _ctx(agent))
     assert "already" in second.lower() or "consumed" in second.lower()
 
 

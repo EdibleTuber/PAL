@@ -29,86 +29,9 @@ TOOL_DEFINITIONS = [
     # Note: read_file, list_directory, search_content, search_vault,
     # edit_file, create_file, move_file removed — migrated to
     # pal.tools.vault Tool subclasses (Phase F PR2).
-    {
-        "type": "function",
-        "function": {
-            "name": "search_web",
-            "description": (
-                "Query the public web via SearxNG and return titles, URLs, "
-                "and snippets. Read-only. No fetching, no file writes. Use "
-                "to triage whether a topic has material online before "
-                "proposing a full research run."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search terms.",
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "Maximum results to return (1-10, default 5).",
-                    },
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "propose_research",
-            "description": (
-                "Propose a web research run. Emits a proposal to the user "
-                "and blocks until they approve, decline, or edit it in the "
-                "CLI. Returns a JSON object with the final status and "
-                "proposal_id. Use research_topic to execute an approved "
-                "proposal."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "topic": {
-                        "type": "string",
-                        "description": "Topic string to research.",
-                    },
-                    "depth": {
-                        "type": "integer",
-                        "description": "Number of sources to fetch (1-10, default 3).",
-                    },
-                    "rationale": {
-                        "type": "string",
-                        "description": "One-line reason shown to the user.",
-                    },
-                },
-                "required": ["topic", "rationale"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "research_topic",
-            "description": (
-                "Execute a research run previously approved via "
-                "propose_research. Fetches URLs from SearxNG, summarizes "
-                "them, and saves summaries under raw/summaries/. Requires "
-                "a proposal_id from an approved (unused, unexpired) "
-                "proposal. Returns a structured report."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "proposal_id": {
-                        "type": "string",
-                        "description": "proposal_id returned by propose_research.",
-                    },
-                },
-                "required": ["proposal_id"],
-            },
-        },
-    },
+    # search_web, propose_research, research_topic removed — migrated to
+    # pal.tools.research Tool subclasses (Phase F PR3). search_web is also
+    # served by agent_core.tools.SearchWeb builtin.
     {
         "type": "function",
         "function": {
@@ -481,12 +404,8 @@ class ToolExecutor:
         migrated to pal.tools.vault Tool subclasses (Phase F PR2) and are
         no longer dispatched here.
         """
-        if name == "search_web":
-            return await self._search_web(arguments)
-        if name == "propose_research":
-            return await self._propose_research(arguments)
-        if name == "research_topic":
-            return await self._research_topic(arguments)
+        # search_web, propose_research, research_topic migrated to
+        # pal.tools.research Tool subclasses (Phase F PR3).
         if name == "compile_summary":
             return await self._compile_summary(arguments)
         if name == "propose_compile_batch":
@@ -523,141 +442,6 @@ class ToolExecutor:
         if self.wiki is not None:
             self.wiki.git_commit(f"learn: add {slug}")
         return json.dumps({"slug": slug, "title": title})
-
-    async def _search_web(self, arguments: dict) -> str:
-        query = arguments.get("query", "")
-        if not query:
-            return "Error: 'query' parameter is required."
-        if self.websearch is None:
-            return "Error: web search is not available (no websearch client)."
-        max_results = int(arguments.get("max_results", 5))
-        max_results = max(1, min(max_results, 10))
-        try:
-            results = await self.websearch.search(query)
-        except Exception as exc:
-            return f"Search error: {exc}"
-        results = results[:max_results]
-        if not results:
-            return f"No results for: {query}"
-        lines = [f"Found {len(results)} result(s) for '{query}':"]
-        for r in results:
-            lines.append(f"  {r.title}")
-            lines.append(f"    {r.url}")
-            snippet = (r.snippet or "").strip().replace("\n", " ")[:200]
-            if snippet:
-                lines.append(f"    {snippet}")
-        return "\n".join(lines)
-
-    async def _propose_research(self, arguments: dict) -> str:
-        import json as _json
-        from pal.protocol import ResearchProposalMessage
-
-        if self.approval_registry is None or self.proposal_emitter is None:
-            return "Error: research proposals are not available in this session."
-        topic = arguments.get("topic", "").strip()
-        rationale = arguments.get("rationale", "").strip()
-        if not topic:
-            return "Error: 'topic' parameter is required."
-        if not rationale:
-            return "Error: 'rationale' parameter is required."
-        depth = int(arguments.get("depth", 3))
-        depth = max(1, min(depth, 10))
-
-        proposal_id = self.approval_registry.create_proposal(
-            topic=topic, depth=depth, rationale=rationale
-        )
-        proposal = self.approval_registry.get(proposal_id)
-        self.proposal_emitter(
-            ResearchProposalMessage(
-                proposal_id=proposal_id,
-                topic=topic,
-                depth=depth,
-                rationale=rationale,
-            )
-        )
-        # Block until the CLI signals a terminal status (or expiry).
-        # Bound the wait by the proposal's own expiry so a disconnected
-        # CLI can't hang this tool coroutine forever.
-        remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
-        try:
-            await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
-        except asyncio.TimeoutError:
-            self.approval_registry.expire_stale()
-        final = self.approval_registry.get(proposal_id)
-        result = {"proposal_id": proposal_id, "status": final.status}
-        if final.status == "declined":
-            # If this proposal was edited, the registry links old -> new.
-            edited = self.approval_registry.get_successor(proposal_id)
-            if edited is not None:
-                result = {
-                    "proposal_id": edited.proposal_id,
-                    "status": "approved",
-                    "topic": edited.topic,
-                    "depth": edited.depth,
-                }
-        elif final.status == "approved":
-            result["topic"] = final.topic
-            result["depth"] = final.depth
-        return _json.dumps(result)
-
-    async def _research_topic(self, arguments: dict) -> str:
-        proposal_id = arguments.get("proposal_id", "").strip()
-        if not proposal_id:
-            return "Error: 'proposal_id' parameter is required."
-        if self.approval_registry is None or self.researcher is None:
-            return "Error: research execution is not available in this session."
-
-        proposal = self.approval_registry.get(proposal_id)
-        if proposal is None:
-            return f"Error: unknown proposal_id: {proposal_id}"
-        if proposal.status == "pending":
-            return "Error: proposal is not approved yet."
-        if proposal.status == "declined":
-            return "Error: proposal was declined."
-        if proposal.status == "expired":
-            return "Error: proposal expired; ask the user to propose again."
-        if proposal.status == "consumed":
-            return "Error: proposal was already used. Each proposal is single-use."
-        if proposal.status != "approved":
-            return f"Error: proposal in unexpected state: {proposal.status}"
-
-        # Consume first so even an exception during run() prevents reuse.
-        self.approval_registry.consume(proposal_id)
-
-        try:
-            report = await self.researcher.research_topic(
-                topic=proposal.topic,
-                depth=proposal.depth,
-            )
-        except Exception as exc:
-            return f"Research error: {exc}"
-
-        return self._format_research_report(report)
-
-    def _format_research_report(self, report) -> str:
-        lines = [
-            f"Research complete: {report.total_summarized} summarized, "
-            f"{report.total_fetched} fetched, {report.total_failed} failed."
-        ]
-        for result in report.results:
-            lines.append(f"\nTopic: {result.topic}")
-            if result.refined_query:
-                lines.append(f"  (refined query: {result.refined_query})")
-            if result.flagged:
-                lines.append("  ! no usable results")
-            for source in result.sources:
-                marker = "+" if source.status == "ok" else "x"
-                lines.append(f"  {marker} {source.title}")
-                lines.append(f"    {source.url}")
-                if source.summary_path:
-                    try:
-                        rel = source.summary_path.relative_to(self.vault_path)
-                        lines.append(f"    summary: {rel}")
-                    except ValueError:
-                        lines.append(f"    summary: {source.summary_path}")
-                if source.error:
-                    lines.append(f"    error: {source.error}")
-        return "\n".join(lines)
 
     async def _compile_summary(self, arguments: dict) -> str:
         import json as _json
