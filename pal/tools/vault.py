@@ -2,12 +2,9 @@
 
 Six Tool subclasses migrated from pal._legacy_tools.ToolExecutor:
   ReadFile, ListDirectory, SearchContent — read-only, require only config.
-  EditFile, CreateFile, MoveFile — write tools, require config + retrieval
-    (retrieval may be None; reindex is skipped when absent).
-
-EditFile uses old_str/new_str in-place string replacement (more surgical
-than the legacy full-body rewrite). CreateFile writes raw file content
-directly, scoped to raw/. MoveFile delegates to ctx.agent.reorganizer.
+  EditFile, CreateFile, MoveFile — write tools, require config + wiki
+    (and reorganizer for MoveFile; retrieval may be None, reindex skipped
+    when absent).
 
 All path operations use _resolve_safe to prevent vault escapes. System
 directories (_-prefixed) are blocked on write operations.
@@ -254,12 +251,12 @@ class SearchContent(Tool):
 # ---------------------------------------------------------------------------
 
 class EditFile(Tool):
-    """Edit a vault file by replacing old_str with new_str. Triggers reindex on success."""
+    """Rewrite the body of an existing vault file. Preserves frontmatter."""
 
     name = "edit_file"
     description = (
-        "Edit an existing vault file by replacing a specific string. "
-        "Preserves the rest of the file content. Triggers reindex."
+        "Rewrite the body of an existing vault file. Preserves frontmatter "
+        "(title, tags). Use for restructuring, reformatting, or updating content."
     )
     parameters = {
         "type": "object",
@@ -271,29 +268,23 @@ class EditFile(Tool):
                     "Must already exist."
                 ),
             },
-            "old_str": {
+            "content": {
                 "type": "string",
-                "description": "Exact string to replace (must appear in the file).",
-            },
-            "new_str": {
-                "type": "string",
-                "description": "Replacement string.",
+                "description": "New body content for the file (markdown, without frontmatter).",
             },
         },
-        "required": ["path", "old_str", "new_str"],
+        "required": ["path", "content"],
     }
     requires = ("config",)
 
     async def run(self, args: dict, ctx: "HandlerContext") -> str:
-        path = (args.get("path") or "").strip()
-        old_str = args.get("old_str", "")
-        new_str = args.get("new_str", "")
+        path = args.get("path", "")
+        content = args.get("content", "")
 
         if not path:
             return "Error: 'path' parameter is required."
-        if not old_str and old_str is not None:
-            # Allow empty new_str (deletion), but old_str must be non-empty
-            return "Error: 'old_str' parameter is required."
+        if not content:
+            return "Error: 'content' parameter is required."
 
         if _is_system_path(path):
             return f"Error: writing to system directories is not allowed: {path}"
@@ -303,22 +294,23 @@ class EditFile(Tool):
         if resolved is None:
             return f"Error: path escapes outside vault: {path}"
         if not resolved.exists():
-            return f"File not found: {path}"
-        if not resolved.is_file():
-            return f"Not a file: {path}"
+            return f"Error: file does not exist: {path} (use create_file for new files)"
 
-        content = resolved.read_text(errors="replace")
-        if old_str not in content:
-            return f"Error: old_str not found in {path}"
+        wiki = getattr(ctx.agent, "wiki", None)
+        if wiki is None:
+            return "Error: write operations are not available (no wiki manager)."
 
-        new_content = content.replace(old_str, new_str, 1)
-        resolved.write_text(new_content)
+        meta, _ = wiki.read_article(path)
+        title = meta.get("title", Path(path).stem)
+        tags = meta.get("tags")
+        wiki.write_article(path, title, content, tags=tags)
+        wiki.git_commit(f"Edit {path} via chat")
 
-        # Trigger reindex if retrieval client is available.
         retrieval = getattr(ctx.agent, "retrieval", None)
         if retrieval is not None:
+            absolute = str((ctx.agent.config.vault_path / path).resolve())
             try:
-                await retrieval.trigger_reindex(paths=[str(resolved)])
+                await retrieval.trigger_reindex(paths=[absolute])
             except Exception as exc:
                 logger.warning("reindex trigger failed after edit_file: %s", exc)
 
@@ -330,7 +322,7 @@ class EditFile(Tool):
 # ---------------------------------------------------------------------------
 
 class CreateFile(Tool):
-    """Create a new file under raw/. Refuses to overwrite. Triggers reindex on success."""
+    """Create a new scratch note under raw/. Refuses to overwrite. Triggers reindex on success."""
 
     name = "create_file"
     description = (
@@ -352,22 +344,35 @@ class CreateFile(Tool):
                     "(e.g. 'raw/notes/my-note.md'). Must not already exist."
                 ),
             },
+            "title": {
+                "type": "string",
+                "description": "Article title for frontmatter.",
+            },
             "content": {
                 "type": "string",
-                "description": "File content (markdown).",
+                "description": "Body content for the file (markdown, without frontmatter).",
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional tags for frontmatter.",
             },
         },
-        "required": ["path", "content"],
+        "required": ["path", "title", "content"],
     }
     requires = ("config",)
 
     async def run(self, args: dict, ctx: "HandlerContext") -> str:
-        path = (args.get("path") or "").strip()
+        path = args.get("path", "")
+        title = args.get("title", "")
         content = args.get("content", "")
+        tags = args.get("tags")
 
         if not path:
             return "Error: 'path' parameter is required."
-        if not content and content is not None:
+        if not title:
+            return "Error: 'title' parameter is required."
+        if not content:
             return "Error: 'content' parameter is required."
 
         if _is_system_path(path):
@@ -380,6 +385,10 @@ class CreateFile(Tool):
         if resolved.exists():
             return f"Error: file already exists: {path} (use edit_file to modify)"
 
+        wiki = getattr(ctx.agent, "wiki", None)
+        if wiki is None:
+            return "Error: write operations are not available (no wiki manager)."
+
         if not path.startswith("raw/"):
             return (
                 f"Error: create_file is scoped to raw/ (got: {path}). "
@@ -389,14 +398,14 @@ class CreateFile(Tool):
                 "this and propose the correct workflow."
             )
 
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_text(content)
+        wiki.write_article(path, title, content, tags=tags)
+        wiki.git_commit(f"Create {path} via chat")
 
-        # Trigger reindex if retrieval client is available.
         retrieval = getattr(ctx.agent, "retrieval", None)
         if retrieval is not None:
+            absolute = str((ctx.agent.config.vault_path / path).resolve())
             try:
-                await retrieval.trigger_reindex(paths=[str(resolved)])
+                await retrieval.trigger_reindex(paths=[absolute])
             except Exception as exc:
                 logger.warning("reindex trigger failed after create_file: %s", exc)
 
@@ -408,7 +417,7 @@ class CreateFile(Tool):
 # ---------------------------------------------------------------------------
 
 class MoveFile(Tool):
-    """Move a single vault article from src to dst. Triggers reindex on success."""
+    """Move a single vault article from src to dst via Reorganizer. Triggers reindex on success."""
 
     name = "move_file"
     description = (
@@ -437,40 +446,29 @@ class MoveFile(Tool):
     requires = ("config",)
 
     async def run(self, args: dict, ctx: "HandlerContext") -> str:
+        reorganizer = getattr(ctx.agent, "reorganizer", None)
+        if reorganizer is None:
+            return json.dumps({"error": "reorganizer not available"})
+
         src = (args.get("src") or "").strip()
         dst = (args.get("dst") or "").strip()
-
         if not src or not dst:
             return json.dumps({"error": "src and dst are required"})
 
-        if _is_system_path(src) or _is_system_path(dst):
-            return json.dumps({
-                "error": f"move_file rejects system directories (_-prefixed): {src} -> {dst}"
-            })
+        try:
+            reorganizer.move_single(src, dst)
+        except (FileNotFoundError, FileExistsError, ValueError) as exc:
+            return json.dumps({"error": str(exc)})
 
-        vault = ctx.agent.config.vault_path.resolve()
+        wiki = getattr(ctx.agent, "wiki", None)
+        if wiki is not None:
+            wiki.git_commit(f"move: {src} -> {dst}")
 
-        src_resolved = _resolve_safe(vault, src)
-        if src_resolved is None:
-            return json.dumps({"error": f"path escapes outside vault: {src}"})
-
-        dst_resolved = _resolve_safe(vault, dst)
-        if dst_resolved is None:
-            return json.dumps({"error": f"path escapes outside vault: {dst}"})
-
-        if not src_resolved.exists():
-            return json.dumps({"error": f"source not found: {src}"})
-        if dst_resolved.exists():
-            return json.dumps({"error": f"destination already exists: {dst}"})
-
-        dst_resolved.parent.mkdir(parents=True, exist_ok=True)
-        src_resolved.rename(dst_resolved)
-
-        # Trigger reindex if retrieval client is available.
         retrieval = getattr(ctx.agent, "retrieval", None)
         if retrieval is not None:
             try:
-                await retrieval.trigger_reindex(paths=[str(dst_resolved)])
+                absolute_dst = str((ctx.agent.config.vault_path / dst).resolve())
+                await retrieval.trigger_reindex(paths=[absolute_dst])
             except Exception as exc:
                 logger.warning("reindex trigger failed after move_file: %s", exc)
 
