@@ -11,7 +11,7 @@ import pytest
 
 from agent_core.approval_registry import ApprovalRegistry
 from pal.researcher import Researcher
-from pal.tools import ToolExecutor
+from pal._legacy_tools import ToolExecutor
 
 
 @pytest.mark.asyncio

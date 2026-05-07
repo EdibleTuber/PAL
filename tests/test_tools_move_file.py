@@ -1,10 +1,43 @@
-import asyncio
+"""Tests for MoveFile Tool subclass (Phase F PR2).
+
+Previously tested via pal._legacy_tools.ToolExecutor.run_async("move_file").
+Now tests the pal.tools.vault.MoveFile Tool subclass directly.
+
+MoveFile delegates to Reorganizer.move_single, which handles system-path
+guards, parent-mkdir, and the actual rename.
+"""
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from pal.reorg import Reorganizer
-from pal.tools import ToolExecutor
+import pytest
+
+from pal.tools.vault import MoveFile
+
+
+@dataclass
+class _Config:
+    vault_path: Path
+
+
+_UNSET = object()
+
+
+class _Agent:
+    def __init__(self, vault_path, retrieval=None, reorganizer=_UNSET, wiki=_UNSET):
+        self.config = _Config(vault_path)
+        self.retrieval = retrieval
+        self.reorganizer = MagicMock() if reorganizer is _UNSET else reorganizer
+        self.wiki = MagicMock() if wiki is _UNSET else wiki
+
+
+def _ctx(agent):
+    class _C:
+        pass
+    c = _C()
+    c.agent = agent
+    return c
 
 
 def _make_vault(tmp_path: Path) -> Path:
@@ -14,26 +47,31 @@ def _make_vault(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _make_executor(vault: Path, wiki=None, retrieval=None) -> ToolExecutor:
-    reorg = Reorganizer(vault_path=vault, wiki=None, compiler=None, retrieval=None)
-    return ToolExecutor(
-        vault_path=vault,
-        retrieval=retrieval,
-        wiki=wiki,
-        reorganizer=reorg,
-    )
+def _make_reorganizer_that_renames(vault: Path):
+    """Return a MagicMock reorganizer whose move_single performs the actual rename."""
+    reorganizer = MagicMock()
+
+    def _do_move(src, dst):
+        src_path = vault / src
+        dst_path = vault / dst
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        src_path.rename(dst_path)
+
+    reorganizer.move_single.side_effect = _do_move
+    return reorganizer
 
 
-def test_move_file_moves_and_triggers_reindex(tmp_path: Path):
+@pytest.mark.asyncio
+async def test_move_file_moves_and_triggers_reindex(tmp_path: Path):
     vault = _make_vault(tmp_path)
     retrieval = MagicMock()
     retrieval.trigger_reindex = AsyncMock()
-    executor = _make_executor(vault, retrieval=retrieval)
+    reorganizer = _make_reorganizer_that_renames(vault)
 
-    result = asyncio.run(executor.run_async("move_file", {
-        "src": "Security/methodology.md",
-        "dst": "IoT/methodology.md",
-    }))
+    result = await MoveFile().run(
+        {"src": "Security/methodology.md", "dst": "IoT/methodology.md"},
+        _ctx(_Agent(vault, retrieval=retrieval, reorganizer=reorganizer)),
+    )
     parsed = json.loads(result)
 
     assert parsed["moved"] == "Security/methodology.md -> IoT/methodology.md"
@@ -43,56 +81,58 @@ def test_move_file_moves_and_triggers_reindex(tmp_path: Path):
     retrieval.trigger_reindex.assert_awaited_once()
 
 
-def test_move_file_rejects_system_dirs(tmp_path: Path):
-    vault = tmp_path
-    (vault / "_wisdom").mkdir()
-    (vault / "_wisdom" / "x.md").write_text("x")
-    (vault / "IoT").mkdir()
-    executor = _make_executor(vault)
-    result = asyncio.run(executor.run_async("move_file", {
-        "src": "_wisdom/x.md",
-        "dst": "IoT/x.md",
-    }))
-    parsed = json.loads(result)
-    assert "error" in parsed
-    assert "system" in parsed["error"].lower()
-
-
-def test_move_file_rejects_missing_src(tmp_path: Path):
+@pytest.mark.asyncio
+async def test_move_file_rejects_missing_src(tmp_path: Path):
     vault = _make_vault(tmp_path)
-    executor = _make_executor(vault)
-    result = asyncio.run(executor.run_async("move_file", {
-        "src": "Security/ghost.md",
-        "dst": "IoT/ghost.md",
-    }))
+    reorganizer = MagicMock()
+    reorganizer.move_single.side_effect = FileNotFoundError("Security/ghost.md not found")
+    result = await MoveFile().run(
+        {"src": "Security/ghost.md", "dst": "IoT/ghost.md"},
+        _ctx(_Agent(vault, reorganizer=reorganizer)),
+    )
     parsed = json.loads(result)
     assert "error" in parsed
 
 
-def test_move_file_rejects_existing_dst(tmp_path: Path):
+@pytest.mark.asyncio
+async def test_move_file_rejects_existing_dst(tmp_path: Path):
     vault = _make_vault(tmp_path)
     (vault / "IoT" / "methodology.md").write_text("existing")
-    executor = _make_executor(vault)
-    result = asyncio.run(executor.run_async("move_file", {
-        "src": "Security/methodology.md",
-        "dst": "IoT/methodology.md",
-    }))
+    reorganizer = MagicMock()
+    reorganizer.move_single.side_effect = FileExistsError("destination already exists")
+    result = await MoveFile().run(
+        {"src": "Security/methodology.md", "dst": "IoT/methodology.md"},
+        _ctx(_Agent(vault, reorganizer=reorganizer)),
+    )
     parsed = json.loads(result)
     assert "error" in parsed
     assert "exist" in parsed["error"].lower()
 
 
-def test_move_file_rejects_empty_args(tmp_path: Path):
-    executor = _make_executor(tmp_path)
-    result = asyncio.run(executor.run_async("move_file", {"src": "", "dst": ""}))
+@pytest.mark.asyncio
+async def test_move_file_rejects_empty_args(tmp_path: Path):
+    result = await MoveFile().run(
+        {"src": "", "dst": ""},
+        _ctx(_Agent(tmp_path)),
+    )
     parsed = json.loads(result)
     assert "error" in parsed
 
 
-def test_move_file_errors_without_reorganizer(tmp_path: Path):
-    executor = ToolExecutor(vault_path=tmp_path, retrieval=None, wiki=None)
-    result = asyncio.run(executor.run_async("move_file", {
-        "src": "a/b.md", "dst": "c/d.md",
-    }))
+@pytest.mark.asyncio
+async def test_move_file_rejects_system_dirs(tmp_path: Path):
+    """Reorganizer rejects system-path moves by raising ValueError."""
+    vault = tmp_path
+    (vault / "_wisdom").mkdir()
+    (vault / "_wisdom" / "x.md").write_text("x")
+    (vault / "IoT").mkdir()
+    reorganizer = MagicMock()
+    reorganizer.move_single.side_effect = ValueError("moves into system directories are not allowed")
+    result = await MoveFile().run(
+        {"src": "_wisdom/x.md", "dst": "IoT/x.md"},
+        _ctx(_Agent(vault, reorganizer=reorganizer)),
+    )
     parsed = json.loads(result)
     assert "error" in parsed
+    # The error text comes from the reorganizer's ValueError message.
+    assert "system" in parsed["error"].lower() or "not allowed" in parsed["error"].lower()

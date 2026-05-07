@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent_core.approval_registry import ApprovalRegistry
-from pal.tools import ToolExecutor
+from pal._legacy_tools import ToolExecutor
 from agent_core.websearch import SearchResult
 
 

@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 
 from agent_core.approval_registry import ApprovalRegistry
-from pal.tools import ToolExecutor
+from pal._legacy_tools import ToolExecutor
 
 
 class _StubConsolidator:
