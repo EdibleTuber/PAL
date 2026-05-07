@@ -354,6 +354,26 @@ class PALAgent(Agent):
         scratchpad_content = scratchpad.read()
         return self.prompt_builder.build(channel_scratchpad=scratchpad_content)
 
+    def _build_tool_schemas(self) -> list[dict]:
+        """Phase F dual-dispatch: union framework schemas with PAL's legacy
+        TOOL_DEFINITIONS, dropping any legacy entry whose name is already in
+        the framework executor.
+
+        Names that overlap (search_vault, search_web, update_scratch,
+        add_learning) route through the framework path in _run_tool, so the
+        legacy schemas would be dead-weight duplicates in the inference
+        request. PR7 deletes this helper when legacy_tool_executor is gone.
+        """
+        from pal.tools import TOOL_DEFINITIONS
+
+        framework_schemas = self.tool_executor.schemas()
+        framework_names = {s["function"]["name"] for s in framework_schemas}
+        legacy_filtered = [
+            s for s in TOOL_DEFINITIONS
+            if s["function"]["name"] not in framework_names
+        ]
+        return framework_schemas + legacy_filtered
+
     async def handle_chat(
         self, msg: ChatMessage, ctx: HandlerContext,
     ) -> AsyncIterator[object]:
@@ -371,8 +391,6 @@ class PALAgent(Agent):
         _run_handler emission loop can also flush them.
         """
         from agent_core.inference import StreamEnd, ToolCall
-
-        from pal.tools import TOOL_DEFINITIONS
 
         conv = ctx.conversation
         channel_id = ctx.channel_id
@@ -425,7 +443,7 @@ class PALAgent(Agent):
         # self.tool_executor is the framework executor (12 builtins + any PAL-declared
         # tools, currently empty until PR2-PR4). TOOL_DEFINITIONS contains PAL's
         # domain tools (compile, research, vault ops, etc.) still in legacy_tool_executor.
-        all_tool_schemas = self.tool_executor.schemas() + TOOL_DEFINITIONS
+        # _build_tool_schemas deduplicates overlapping names; framework wins.
         max_tool_rounds = 50
 
         try:
@@ -434,7 +452,7 @@ class PALAgent(Agent):
 
             if mode == "on":
                 completion = await self.inference.complete(
-                    messages, tools=all_tool_schemas, reasoning=mode,
+                    messages, tools=self._build_tool_schemas(), reasoning=mode,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 )
                 if completion.type == "text":
@@ -458,7 +476,7 @@ class PALAgent(Agent):
                 tool_calls = completion.tool_calls
             else:
                 async for item in self.inference.stream(
-                    messages, tools=all_tool_schemas, reasoning=mode,
+                    messages, tools=self._build_tool_schemas(), reasoning=mode,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 ):
                     if isinstance(item, list):
@@ -517,7 +535,7 @@ class PALAgent(Agent):
                     system_prompt=self.prompt_builder.build(channel_scratchpad=scratchpad_content),
                 )
                 completion = await self.inference.complete(
-                    messages, tools=all_tool_schemas, reasoning=mode,
+                    messages, tools=self._build_tool_schemas(), reasoning=mode,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 )
 
