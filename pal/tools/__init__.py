@@ -14,6 +14,7 @@ from pal.tools.vault import (
     ReadFile,
     SearchContent,
 )
+from pal.tools.research import ProposeResearch, ResearchTopic
 
 __all__ = [
     "CreateFile",
@@ -22,4 +23,6 @@ __all__ = [
     "MoveFile",
     "ReadFile",
     "SearchContent",
+    "ProposeResearch",
+    "ResearchTopic",
 ]
