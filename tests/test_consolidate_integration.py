@@ -5,7 +5,7 @@ from pathlib import Path
 
 from agent_core.approval_registry import ApprovalRegistry
 from pal.consolidator import Consolidator
-from pal.tools import ToolExecutor
+from pal._legacy_tools import ToolExecutor
 from pal.wiki import WikiManager
 
 

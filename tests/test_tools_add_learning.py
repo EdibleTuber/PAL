@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from agent_core.learning import LearningManager
-from pal.tools import ToolExecutor
+from pal._legacy_tools import ToolExecutor
 
 
 def _make_executor(vault: Path) -> ToolExecutor:

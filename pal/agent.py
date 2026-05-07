@@ -29,6 +29,14 @@ from agent_core.protocol import (
 
 from pal.config import PALConfig
 from pal.commands import COMMANDS
+from pal.tools import (
+    CreateFile,
+    EditFile,
+    ListDirectory,
+    MoveFile,
+    ReadFile,
+    SearchContent,
+)
 from agent_core.scratchpad import ScratchpadTooLarge
 
 logger = logging.getLogger(__name__)
@@ -77,10 +85,11 @@ class PALAgent(Agent):
     name = "pal"
     config: PALConfig  # type-narrows the framework attr
 
-    # Phase F: declarative registration. Empty for now; PR2-PR4 populate tools,
-    # PR5 populates commands. The framework's BUILTIN_TOOLS and BUILTIN_COMMANDS
-    # are unioned in automatically by run_daemon._attach_registries.
-    tools = []
+    # Phase F: declarative registration. PR2 populates vault tools;
+    # PR3-PR4 add research/compile/consolidate/reorg/wait. The framework's
+    # BUILTIN_TOOLS and BUILTIN_COMMANDS are unioned in automatically by
+    # run_daemon._attach_registries.
+    tools = [ReadFile, ListDirectory, SearchContent, EditFile, CreateFile, MoveFile]
     commands = []
     disabled_builtins = frozenset()
 
@@ -111,7 +120,7 @@ class PALAgent(Agent):
         from pal.prompt_builder import SystemPromptBuilder
         from pal.reorg import Reorganizer
         from pal.researcher import Researcher
-        from pal.tools import ToolExecutor
+        from pal._legacy_tools import ToolExecutor
         from pal.wiki import WikiManager
 
         config = self.config
@@ -277,7 +286,7 @@ class PALAgent(Agent):
         declares in `tools = [...]` (currently empty in PR1; PR2-PR4 populate).
 
         Names not in the framework executor fall through to the legacy
-        pal.tools.ToolExecutor which still owns PAL's domain tools (compile,
+        pal._legacy_tools.ToolExecutor which still owns PAL's domain tools (compile,
         research, consolidate, reorg, wiki ops, etc.) until those migrate in
         PR2-PR4. PR7 deletes legacy_tool_executor entirely.
         """
@@ -364,7 +373,7 @@ class PALAgent(Agent):
         legacy schemas would be dead-weight duplicates in the inference
         request. PR7 deletes this helper when legacy_tool_executor is gone.
         """
-        from pal.tools import TOOL_DEFINITIONS
+        from pal._legacy_tools import TOOL_DEFINITIONS
 
         framework_schemas = self.tool_executor.schemas()
         framework_names = {s["function"]["name"] for s in framework_schemas}

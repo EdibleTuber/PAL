@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agent_core.approval_registry import ApprovalRegistry
-from pal.tools import ToolExecutor
+from pal._legacy_tools import ToolExecutor
 
 
 def test_tool_executor_accepts_reorganizer(tmp_path: Path):

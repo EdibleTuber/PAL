@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 from agent_core.approval_registry import ApprovalRegistry
 from agent_core.learning import LearningManager
-from pal.tools import ToolExecutor
+from pal._legacy_tools import ToolExecutor
 from agent_core.wisdom import WisdomManager
 
 
