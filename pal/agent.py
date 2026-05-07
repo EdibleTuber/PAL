@@ -77,6 +77,13 @@ class PALAgent(Agent):
     name = "pal"
     config: PALConfig  # type-narrows the framework attr
 
+    # Phase F: declarative registration. Empty for now; PR2-PR4 populate tools,
+    # PR5 populates commands. The framework's BUILTIN_TOOLS and BUILTIN_COMMANDS
+    # are unioned in automatically by run_daemon._attach_registries.
+    tools = []
+    commands = []
+    disabled_builtins = frozenset()
+
     def setup(self) -> None:
         """Construct PAL-specific infrastructure.
 
@@ -203,7 +210,7 @@ class PALAgent(Agent):
         def _noop_proposal_emitter(_msg) -> None:  # pragma: no cover
             return None
 
-        self.tool_executor = ToolExecutor(
+        self.legacy_tool_executor = ToolExecutor(
             vault_path=config.vault_path,
             retrieval=self.retrieval,
             wiki=self.wiki,
@@ -261,6 +268,22 @@ class PALAgent(Agent):
             max_bytes=self.config.scratchpad_max_bytes,
             commit_callback=_commit_scratchpad,
         )
+
+    async def _run_tool(self, name: str, arguments: dict, ctx: HandlerContext) -> str:
+        """Phase F dual-dispatch: framework executor first, legacy fallback.
+
+        The framework's tool_executor is set by run_daemon._attach_registries
+        before setup() runs. It contains the 12 builtins plus anything PAL
+        declares in `tools = [...]` (currently empty in PR1; PR2-PR4 populate).
+
+        Names not in the framework executor fall through to the legacy
+        pal.tools.ToolExecutor which still owns PAL's domain tools (compile,
+        research, consolidate, reorg, wiki ops, etc.) until those migrate in
+        PR2-PR4. PR7 deletes legacy_tool_executor entirely.
+        """
+        if name in self.tool_executor.names():
+            return await self.tool_executor.run(name, arguments, ctx)
+        return await self.legacy_tool_executor.run_async(name, arguments)
 
     async def handle_other(self, msg, ctx: HandlerContext) -> None:
         """Route PAL-specific approval / batch-fallback messages.
@@ -384,7 +407,7 @@ class PALAgent(Agent):
                     logger.warning("progress drain failed: %s", exc)
             drain_task.add_done_callback(_log_drain_failure)
 
-        self.tool_executor.proposal_emitter = _emit_proposal
+        self.legacy_tool_executor.proposal_emitter = _emit_proposal
         self.researcher.on_progress = _emit_progress
         self.scanner.emit = _emit_proposal
 
@@ -393,11 +416,16 @@ class PALAgent(Agent):
 
         scratchpad = self._build_scratchpad(channel_id)
         scratchpad_content = scratchpad.read()
-        self.tool_executor.scratchpad = scratchpad
+        self.legacy_tool_executor.scratchpad = scratchpad
 
         messages = conv.get_messages_for_api(
             system_prompt=self.prompt_builder.build(channel_scratchpad=scratchpad_content),
         )
+        # Phase F: send the union of framework builtin schemas + PAL legacy schemas.
+        # self.tool_executor is the framework executor (12 builtins + any PAL-declared
+        # tools, currently empty until PR2-PR4). TOOL_DEFINITIONS contains PAL's
+        # domain tools (compile, research, vault ops, etc.) still in legacy_tool_executor.
+        all_tool_schemas = self.tool_executor.schemas() + TOOL_DEFINITIONS
         max_tool_rounds = 50
 
         try:
@@ -406,7 +434,7 @@ class PALAgent(Agent):
 
             if mode == "on":
                 completion = await self.inference.complete(
-                    messages, tools=TOOL_DEFINITIONS, reasoning=mode,
+                    messages, tools=all_tool_schemas, reasoning=mode,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 )
                 if completion.type == "text":
@@ -430,7 +458,7 @@ class PALAgent(Agent):
                 tool_calls = completion.tool_calls
             else:
                 async for item in self.inference.stream(
-                    messages, tools=TOOL_DEFINITIONS, reasoning=mode,
+                    messages, tools=all_tool_schemas, reasoning=mode,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 ):
                     if isinstance(item, list):
@@ -480,7 +508,7 @@ class PALAgent(Agent):
                     writer.write(encode_message(progress))
                     await writer.drain()
 
-                    result = await self.tool_executor.run_async(tc.name, tc.arguments)
+                    result = await self._run_tool(tc.name, tc.arguments, ctx)
                     conv.add_tool_result(tc.id, result)
 
                 # Re-read in case an update_scratch tool call modified the file.
@@ -489,7 +517,7 @@ class PALAgent(Agent):
                     system_prompt=self.prompt_builder.build(channel_scratchpad=scratchpad_content),
                 )
                 completion = await self.inference.complete(
-                    messages, tools=TOOL_DEFINITIONS, reasoning=mode,
+                    messages, tools=all_tool_schemas, reasoning=mode,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 )
 
@@ -541,6 +569,15 @@ class PALAgent(Agent):
         handler is an async generator and uses ctx.writer to emit progress
         and ctx.conversation / ctx.channel_id for per-turn state.
         """
+        # Phase F: framework builtins serve any name PAL doesn't define.
+        # Once PR5 migrates commands, the if/elif tree disappears and this
+        # becomes the only dispatch path.
+        pal_command_names = self._pal_command_names()
+        if msg.name not in pal_command_names and msg.name in self.command_registry.names():
+            async for out in self.command_registry.dispatch(msg.name, msg.args, ctx):
+                yield out
+            return
+
         handler_map = {
             "help": self._handle_help,
             "quit": self._handle_quit,
@@ -574,6 +611,18 @@ class PALAgent(Agent):
             return
         async for response in handler(msg, ctx):
             yield response
+
+    def _pal_command_names(self) -> set[str]:
+        """Names PAL's legacy handle_command if/elif tree handles. Used during
+        Phase F dual-dispatch to identify which commands fall through to the
+        framework registry. Removed in PR5 when commands fully migrate."""
+        return {
+            "help", "quit", "exit", "status", "read", "lint", "note",
+            "search", "get", "profile", "wisdom", "search-web", "fetch",
+            "summarize", "compile", "compile-batch", "import", "learn",
+            "learnings", "promote", "rate", "model", "think", "research",
+            "scratch",
+        }
 
     # ----- Command handlers (lifted from pal.daemon.Daemon) -----
     #

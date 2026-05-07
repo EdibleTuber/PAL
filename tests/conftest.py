@@ -20,6 +20,8 @@ from agent_core.inference import InferenceClient
 from agent_core.learning import LearningManager
 from agent_core.profile import ProfileManager
 from agent_core.retrieval import RetrievalClient
+from agent_core.runtime import _attach_registries
+from agent_core.utils.fetcher import URLFetcher
 from agent_core.websearch import WebSearchClient
 from agent_core.wisdom import WisdomManager
 
@@ -394,6 +396,14 @@ def make_pal_agent(cfg: Config) -> PALAgent:
         base_url=cfg.inference_url, collection_id=cfg.collection_id,
     )
     agent.websearch = WebSearchClient(base_url=cfg.searxng_url)
+    # Phase F: _attach_registries requires fetcher to be present (FetchUrl.requires).
+    # Mirror run_daemon's order: set fetcher, call _attach_registries, then setup().
+    # PAL's setup() overwrites fetcher with its own instance; that's fine.
+    agent.fetcher = URLFetcher(
+        max_bytes=cfg.fetch_max_bytes,
+        timeout=cfg.fetch_timeout,
+    )
+    _attach_registries(agent)
     agent.setup()
     # Old pal.daemon.Daemon.__init__ seeded the allowlist eagerly. Phase E
     # runtime does not (yet); preserve the legacy behaviour for tests so
