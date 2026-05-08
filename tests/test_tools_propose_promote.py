@@ -1,43 +1,39 @@
+"""Tests for propose_promote Tool subclass (Phase F PR4).
+
+Migrated from ToolExecutor.run_async calls to direct ProposePromote.run calls.
+"""
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 from agent_core.approval_registry import ApprovalRegistry
 from agent_core.learning import LearningManager
-from pal._legacy_tools import ToolExecutor
 from agent_core.wisdom import WisdomManager
+from pal.tools.reorg import ProposePromote
 
 
-def _make_executor(
-    vault: Path,
-    emitter,
-    wiki=None,
-    learning=None,
-    wisdom=None,
-    registry=None,
-):
-    return ToolExecutor(
-        vault_path=vault,
-        retrieval=None,
-        wiki=wiki,
-        approval_registry=registry or ApprovalRegistry(),
-        proposal_emitter=emitter,
-        learning=learning or LearningManager(vault, "pal"),
-        wisdom=wisdom or WisdomManager(vault, "test-agent"),
-    )
+class _Config:
+    def __init__(self, vault_path):
+        self.vault_path = vault_path
 
 
-def _auto_approve_emitter(registry: ApprovalRegistry):
-    def emit(msg):
-        registry.approve(msg.proposal_id)
-    return emit
+class _Agent:
+    def __init__(self, vault_path, approval_registry, learning, wisdom, wiki=None):
+        self.config = _Config(vault_path)
+        self.approval_registry = approval_registry
+        self.learning = learning
+        self.wisdom = wisdom
+        self.wiki = wiki
 
 
-def _auto_decline_emitter(registry: ApprovalRegistry):
-    def emit(msg):
-        registry.decline(msg.proposal_id)
-    return emit
+def _ctx(agent, emit=None):
+    class _C:
+        pass
+    c = _C()
+    c.agent = agent
+    c.emit = emit or AsyncMock()
+    return c
 
 
 def test_propose_promote_emits_and_promotes_on_approve(tmp_path: Path):
@@ -46,18 +42,19 @@ def test_propose_promote_emits_and_promotes_on_approve(tmp_path: Path):
 
     registry = ApprovalRegistry()
     wm = WisdomManager(tmp_path, "test-agent")
-    executor = _make_executor(
-        tmp_path,
-        emitter=_auto_approve_emitter(registry),
-        learning=lm,
-        wisdom=wm,
-        registry=registry,
-    )
 
-    result = asyncio.run(executor.run_async("propose_promote", {
-        "slug": slug,
-        "rationale": "User reiterated.",
-    }))
+    emit = AsyncMock()
+
+    async def _emit_and_approve(msg):
+        registry.approve(msg.proposal_id)
+
+    emit.side_effect = _emit_and_approve
+
+    agent = _Agent(tmp_path, approval_registry=registry, learning=lm, wisdom=wm)
+    result = asyncio.run(ProposePromote().run(
+        {"slug": slug, "rationale": "User reiterated."},
+        _ctx(agent, emit=emit),
+    ))
     parsed = json.loads(result)
 
     assert parsed["status"] == "promoted"
@@ -73,18 +70,18 @@ def test_propose_promote_returns_declined_on_decline(tmp_path: Path):
     registry = ApprovalRegistry()
     wm = WisdomManager(tmp_path, "test-agent")
 
-    executor = _make_executor(
-        tmp_path,
-        emitter=_auto_decline_emitter(registry),
-        learning=lm,
-        wisdom=wm,
-        registry=registry,
-    )
+    emit = AsyncMock()
 
-    result = asyncio.run(executor.run_async("propose_promote", {
-        "slug": slug,
-        "rationale": "no.",
-    }))
+    async def _emit_and_decline(msg):
+        registry.decline(msg.proposal_id)
+
+    emit.side_effect = _emit_and_decline
+
+    agent = _Agent(tmp_path, approval_registry=registry, learning=lm, wisdom=wm)
+    result = asyncio.run(ProposePromote().run(
+        {"slug": slug, "rationale": "no."},
+        _ctx(agent, emit=emit),
+    ))
     parsed = json.loads(result)
 
     assert parsed["status"] == "declined"
@@ -93,15 +90,16 @@ def test_propose_promote_returns_declined_on_decline(tmp_path: Path):
 
 def test_propose_promote_errors_on_missing_slug(tmp_path: Path):
     registry = ApprovalRegistry()
-    executor = _make_executor(
+    agent = _Agent(
         tmp_path,
-        emitter=_auto_approve_emitter(registry),
-        registry=registry,
+        approval_registry=registry,
+        learning=LearningManager(tmp_path, "pal"),
+        wisdom=WisdomManager(tmp_path, "test-agent"),
     )
-    result = asyncio.run(executor.run_async("propose_promote", {
-        "slug": "no-such",
-        "rationale": "r",
-    }))
+    result = asyncio.run(ProposePromote().run(
+        {"slug": "no-such", "rationale": "r"},
+        _ctx(agent),
+    ))
     parsed = json.loads(result)
     assert "error" in parsed
     assert "no such" in parsed["error"].lower()
@@ -113,16 +111,16 @@ def test_propose_promote_errors_on_already_promoted(tmp_path: Path):
     lm.mark_promoted(slug)
 
     registry = ApprovalRegistry()
-    executor = _make_executor(
+    agent = _Agent(
         tmp_path,
-        emitter=_auto_approve_emitter(registry),
+        approval_registry=registry,
         learning=lm,
-        registry=registry,
+        wisdom=WisdomManager(tmp_path, "test-agent"),
     )
-    result = asyncio.run(executor.run_async("propose_promote", {
-        "slug": slug,
-        "rationale": "r",
-    }))
+    result = asyncio.run(ProposePromote().run(
+        {"slug": slug, "rationale": "r"},
+        _ctx(agent),
+    ))
     parsed = json.loads(result)
     assert "error" in parsed
     assert "already promoted" in parsed["error"].lower()

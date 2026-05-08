@@ -1,6 +1,6 @@
 """PAL tool implementations (Tool subclasses).
 
-Phase F migration in progress. Tool subclasses are added per-category
+Phase F migration complete through PR4. Tool subclasses are added per-category
 across PRs 2-4 and re-exported here. Tasks owning each migration:
     PR2: vault.py (read/list/search/edit/create/move)
     PR3: research.py (propose_research, research_topic)
@@ -15,6 +15,10 @@ from pal.tools.vault import (
     SearchContent,
 )
 from pal.tools.research import ProposeResearch, ResearchTopic
+from pal.tools.compile import CompileSummary, ProposeCompileBatch, CompileBatch
+from pal.tools.consolidate import ProposeConsolidate, Consolidate
+from pal.tools.reorg import ProposeReorg, ProposePromote, Reorg
+from pal.tools.wait import WaitForReindex
 
 __all__ = [
     "CreateFile",
@@ -25,4 +29,13 @@ __all__ = [
     "SearchContent",
     "ProposeResearch",
     "ResearchTopic",
+    "CompileSummary",
+    "ProposeCompileBatch",
+    "CompileBatch",
+    "ProposeConsolidate",
+    "Consolidate",
+    "ProposeReorg",
+    "ProposePromote",
+    "Reorg",
+    "WaitForReindex",
 ]

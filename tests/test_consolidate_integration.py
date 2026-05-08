@@ -1,11 +1,18 @@
-"""End-to-end: propose_consolidate -> approval -> consolidate -> article exists."""
+"""End-to-end: propose_consolidate -> approval -> consolidate -> article exists.
+
+Migrated from ToolExecutor.run_async calls to direct Tool subclass calls
+(Phase F PR4). The integration tests use real Consolidator and WikiManager
+to verify the full pipeline; the new Tool subclasses accept a HandlerContext
+with agent attrs rather than a ToolExecutor instance.
+"""
 import json
 import pytest
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from agent_core.approval_registry import ApprovalRegistry
 from pal.consolidator import Consolidator
-from pal._legacy_tools import ToolExecutor
+from pal.tools.consolidate import Consolidate, ProposeConsolidate
 from pal.wiki import WikiManager
 
 
@@ -21,6 +28,27 @@ class _FakeInference:
 class _StubPromptBuilder:
     def build(self) -> str:
         return "BASE"
+
+
+class _Config:
+    def __init__(self, vault_path):
+        self.vault_path = vault_path
+
+
+class _Agent:
+    def __init__(self, vault_path, approval_registry, consolidator):
+        self.config = _Config(vault_path)
+        self.approval_registry = approval_registry
+        self.consolidator = consolidator
+
+
+def _ctx(agent, emit=None):
+    class _C:
+        pass
+    c = _C()
+    c.agent = agent
+    c.emit = emit or AsyncMock()
+    return c
 
 
 @pytest.mark.asyncio
@@ -39,33 +67,28 @@ async def test_consolidate_end_to_end(tmp_path):
         prompt_builder=_StubPromptBuilder(),
     )
 
-    emitted = []
+    agent = _Agent(tmp_path, approval_registry=registry, consolidator=consolidator)
 
-    def emit(msg):
-        emitted.append(msg)
-        # Simulate immediate user approval.
+    emit = AsyncMock()
+
+    async def _emit_and_approve(msg):
         registry.approve(msg.proposal_id)
 
-    executor = ToolExecutor(
-        vault_path=tmp_path,
-        retrieval=None,
-        wiki=wiki,
-        approval_registry=registry,
-        proposal_emitter=emit,
-        consolidator=consolidator,
-    )
+    emit.side_effect = _emit_and_approve
 
-    propose_result = await executor.run_async("propose_consolidate", {
+    ctx = _ctx(agent, emit=emit)
+
+    propose_result = await ProposeConsolidate().run({
         "source_paths": ["Security/a.md", "Security/b.md"],
         "target_path": "Security/Combined.md",
         "target_title": "Combined",
         "rationale": "merge overlapping notes",
-    })
+    }, ctx)
     propose_payload = json.loads(propose_result)
     assert propose_payload["status"] == "approved"
     pid = propose_payload["proposal_id"]
 
-    exec_result = await executor.run_async("consolidate", {"proposal_id": pid})
+    exec_result = await Consolidate().run({"proposal_id": pid}, ctx)
     exec_payload = json.loads(exec_result)
     assert exec_payload["status"] == "ok"
     assert exec_payload["vault_exists"] is True
