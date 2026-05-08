@@ -30,14 +30,23 @@ from agent_core.protocol import (
 from pal.config import PALConfig
 from pal.commands import COMMANDS
 from pal.tools import (
+    CompileBatch,
+    CompileSummary,
+    Consolidate,
     CreateFile,
     EditFile,
     ListDirectory,
     MoveFile,
+    ProposeCompileBatch,
+    ProposeConsolidate,
+    ProposePromote,
+    ProposeReorg,
     ProposeResearch,
     ReadFile,
+    Reorg,
     ResearchTopic,
     SearchContent,
+    WaitForReindex,
 )
 from agent_core.scratchpad import ScratchpadTooLarge
 
@@ -92,7 +101,11 @@ class PALAgent(Agent):
     # BUILTIN_TOOLS and BUILTIN_COMMANDS are unioned in automatically by
     # run_daemon._attach_registries.
     tools = [ReadFile, ListDirectory, SearchContent, EditFile, CreateFile, MoveFile,
-             ProposeResearch, ResearchTopic]
+             ProposeResearch, ResearchTopic,
+             CompileSummary, ProposeCompileBatch, CompileBatch,
+             ProposeConsolidate, Consolidate,
+             ProposeReorg, ProposePromote, Reorg,
+             WaitForReindex]
     commands = []
     disabled_builtins = frozenset()
 
@@ -219,13 +232,10 @@ class PALAgent(Agent):
             max_body_chars=config.max_inference_body_chars,
         )
 
-        # Tool executor: dispatches LLM tool calls. The proposal emitter
-        # is wired per-turn in handle_chat (Task 16); a no-op placeholder
-        # is installed here so the attribute exists for code paths that
-        # introspect it.
-        def _noop_proposal_emitter(_msg) -> None:  # pragma: no cover
-            return None
-
+        # Tool executor: dispatches LLM tool calls. After Phase F PR4 the
+        # only remaining legacy tools are add_learning and update_scratch;
+        # all propose_* tools have migrated to Tool subclasses so the
+        # proposal_emitter wiring is no longer needed here.
         self.legacy_tool_executor = ToolExecutor(
             vault_path=config.vault_path,
             retrieval=self.retrieval,
@@ -233,7 +243,6 @@ class PALAgent(Agent):
             approval_registry=self.approval_registry,
             websearch=self.websearch,
             researcher=self.researcher,
-            proposal_emitter=_noop_proposal_emitter,
             compiler=self.compiler,
             reorganizer=self.reorganizer,
             consolidator=self.consolidator,
@@ -441,7 +450,6 @@ class PALAgent(Agent):
                     logger.warning("progress drain failed: %s", exc)
             drain_task.add_done_callback(_log_drain_failure)
 
-        self.legacy_tool_executor.proposal_emitter = _emit_proposal
         self.researcher.on_progress = _emit_progress
         self.scanner.emit = _emit_proposal
 

@@ -3,8 +3,10 @@
 Note: read_file, list_directory, search_content, edit_file, create_file,
 move_file, and search_vault have been migrated to pal.tools.vault Tool
 subclasses (Phase F PR2). Their tests now live in tests/test_tools_vault.py.
-This file retains tests for tools still in the legacy executor: add_learning,
-wait_for_reindex, update_scratch, and the executor's unknown-tool fallback.
+wait_for_reindex has been migrated to pal.tools.wait (Phase F PR4); its tests
+now live in tests/test_tools_wait.py. This file retains tests for tools still
+in the legacy executor: add_learning, update_scratch, and the executor's
+unknown-tool fallback.
 """
 import subprocess
 import os
@@ -59,63 +61,6 @@ def test_unknown_tool(vault):
     executor = ToolExecutor(vault_path=vault, retrieval=None)
     result = executor.run("delete_everything", {})
     assert "unknown tool" in result.lower()
-
-
-@pytest.mark.asyncio
-async def test_wait_for_reindex_returns_done_when_finished(vault):
-    """Polls until the job reports done; returns the final status."""
-    from unittest.mock import AsyncMock
-    import json as _json
-
-    retrieval = AsyncMock()
-    retrieval.get_reindex_job = AsyncMock(side_effect=[
-        {"job_id": "j", "status": "running"},
-        {"job_id": "j", "status": "running"},
-        {"job_id": "j", "status": "done", "stats": {"new": 1}},
-    ])
-    executor = ToolExecutor(vault_path=vault, retrieval=retrieval)
-
-    result = await executor.run_async("wait_for_reindex", {
-        "job_id": "j",
-        "timeout_seconds": 5,
-    })
-    payload = _json.loads(result)
-    assert payload["status"] == "done"
-    assert payload["job_id"] == "j"
-    assert retrieval.get_reindex_job.await_count == 3
-
-
-@pytest.mark.asyncio
-async def test_wait_for_reindex_times_out(vault):
-    from unittest.mock import AsyncMock
-    import json as _json
-
-    retrieval = AsyncMock()
-    retrieval.get_reindex_job = AsyncMock(return_value={"job_id": "j", "status": "running"})
-    executor = ToolExecutor(vault_path=vault, retrieval=retrieval)
-
-    result = await executor.run_async("wait_for_reindex", {
-        "job_id": "j",
-        "timeout_seconds": 1,
-    })
-    payload = _json.loads(result)
-    assert payload["status"] == "timeout"
-    assert payload["last_seen_status"] == "running"
-
-
-@pytest.mark.asyncio
-async def test_wait_for_reindex_unknown_job(vault):
-    from unittest.mock import AsyncMock
-
-    retrieval = AsyncMock()
-    retrieval.get_reindex_job = AsyncMock(return_value=None)
-    executor = ToolExecutor(vault_path=vault, retrieval=retrieval)
-
-    result = await executor.run_async("wait_for_reindex", {
-        "job_id": "missing",
-        "timeout_seconds": 1,
-    })
-    assert "not found" in result.lower() or "unknown" in result.lower()
 
 
 @pytest.mark.asyncio

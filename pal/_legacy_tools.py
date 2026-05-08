@@ -2,10 +2,19 @@
 
 Defines tool schemas (OpenAI function-calling format) and a ToolExecutor
 that runs tool calls against the vault.
+
+Phase F migration status:
+  PR2: read_file, list_directory, search_content, edit_file, create_file,
+       move_file — migrated to pal.tools.vault Tool subclasses.
+  PR3: search_web, propose_research, research_topic — migrated to
+       pal.tools.research Tool subclasses.
+  PR4: compile_summary, propose_compile_batch, compile_batch,
+       propose_reorg, propose_promote, reorg, propose_consolidate,
+       consolidate, wait_for_reindex — migrated to pal.tools.compile,
+       pal.tools.consolidate, pal.tools.reorg, pal.tools.wait.
+  Remaining: add_learning, update_scratch (PR5/PR7).
 """
-import asyncio
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,235 +41,10 @@ TOOL_DEFINITIONS = [
     # search_web, propose_research, research_topic removed — migrated to
     # pal.tools.research Tool subclasses (Phase F PR3). search_web is also
     # served by agent_core.tools.SearchWeb builtin.
-    {
-        "type": "function",
-        "function": {
-            "name": "compile_summary",
-            "description": (
-                "Promote a single raw summary into a grounded wiki "
-                "article. Categorizes, merges with any existing article "
-                "on the same topic, and archives the raw+summary on "
-                "success. Use when the user wants one specific summary "
-                "ingested. For batches, use propose_compile_batch."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "summary_path": {
-                        "type": "string",
-                        "description": "Relative path under raw/summaries/ (e.g. 'raw/summaries/foo.md').",
-                    },
-                },
-                "required": ["summary_path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "propose_compile_batch",
-            "description": (
-                "Propose compiling multiple raw summaries into wiki "
-                "articles. Blocks until the user approves, declines, "
-                "or edits in the CLI. Use for multi-summary promotion. "
-                "After approval, immediately call compile_batch with "
-                "the returned proposal_id."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "summary_paths": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Relative paths under raw/summaries/ (non-empty).",
-                    },
-                    "rationale": {
-                        "type": "string",
-                        "description": "One-line reason shown to the user in the approval prompt.",
-                    },
-                },
-                "required": ["summary_paths", "rationale"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "compile_batch",
-            "description": (
-                "Execute a compile batch previously approved via "
-                "propose_compile_batch. Iterates the approved summary "
-                "paths and compiles each. Partial failures do not "
-                "abort the batch. Returns a structured report."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "proposal_id": {
-                        "type": "string",
-                        "description": "proposal_id returned by propose_compile_batch.",
-                    },
-                },
-                "required": ["proposal_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "reorg",
-            "description": (
-                "Execute a reorg batch previously approved via "
-                "propose_reorg. Pre-validates the operations against "
-                "current vault state before any mutation. Partial "
-                "failures don't abort the batch. Returns a structured "
-                "report."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "proposal_id": {
-                        "type": "string",
-                        "description": "proposal_id returned by propose_reorg.",
-                    },
-                },
-                "required": ["proposal_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "propose_reorg",
-            "description": (
-                "Propose a batch of vault reorganization operations. "
-                "Supported op types: 'move' renames src to dst (dst must "
-                "not exist); 'merge' combines src into an existing dst and "
-                "removes src after success. Use 'merge' to consolidate "
-                "duplicate articles and for cleanup after content has been "
-                "folded into a canonical article. There is no separate "
-                "delete op; merge into the target article is the only way "
-                "to remove a source file. Prefer batches of 3-5 operations "
-                "so the approval prompt stays scannable. Use exact filenames "
-                "from list_directory output, including any unicode characters. "
-                "Do not paraphrase or approximate filename text. Blocks until "
-                "the user approves, declines, or edits. After approval, call "
-                "reorg(proposal_id) to execute."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "operations": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "type": {
-                                    "type": "string",
-                                    "enum": ["move", "merge"],
-                                },
-                                "src": {"type": "string"},
-                                "dst": {"type": "string"},
-                            },
-                            "required": ["type", "src", "dst"],
-                        },
-                        "description": "List of reorg operations (non-empty).",
-                    },
-                    "rationale": {
-                        "type": "string",
-                        "description": "One-line reason shown to the user.",
-                    },
-                },
-                "required": ["operations", "rationale"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "propose_consolidate",
-            "description": (
-                "Propose synthesizing 2+ existing wiki articles into a new article. "
-                "Use when the user wants to merge or combine already-promoted articles "
-                "(not raw summaries — use compile_batch for raw/summaries/). Blocks until "
-                "the user approves, declines, or edits. After approval, immediately call "
-                "consolidate(proposal_id). Source articles are NOT deleted by this tool; "
-                "after consolidation completes, propose_reorg can archive them."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "source_paths": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Existing article paths to fuse (at least two). Must not be in raw/ or system dirs.",
-                    },
-                    "target_path": {
-                        "type": "string",
-                        "description": "New article path (must not exist, must not start with raw/ or _).",
-                    },
-                    "target_title": {
-                        "type": "string",
-                        "description": "Frontmatter title for the new article.",
-                    },
-                    "rationale": {
-                        "type": "string",
-                        "description": "One-line reason shown to the user in the approval prompt.",
-                    },
-                },
-                "required": ["source_paths", "target_path", "target_title", "rationale"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "consolidate",
-            "description": (
-                "Execute a consolidate previously approved via propose_consolidate. "
-                "Takes a proposal_id. Fails if not approved, already used, or expired. "
-                "Returns a structured report including vault_exists for the target."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "proposal_id": {
-                        "type": "string",
-                        "description": "proposal_id returned by propose_consolidate.",
-                    },
-                },
-                "required": ["proposal_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "wait_for_reindex",
-            "description": (
-                "Poll a reindex job until it finishes or times out. Use after "
-                "compile/consolidate/reorg/edit/create when you need to be sure "
-                "the new content is searchable via search_vault before answering. "
-                "Most of the time you do NOT need this -- the reindex runs "
-                "automatically and finishes within a second or two. Call this "
-                "only when latency to-searchable matters for the next answer."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "job_id": {
-                        "type": "string",
-                        "description": "job_id from a prior tool result's reindex field.",
-                    },
-                    "timeout_seconds": {
-                        "type": "integer",
-                        "description": "Max seconds to wait. Default 30.",
-                    },
-                },
-                "required": ["job_id"],
-            },
-        },
-    },
+    # compile_summary, propose_compile_batch, compile_batch, propose_reorg,
+    # propose_promote, reorg, propose_consolidate, consolidate,
+    # wait_for_reindex removed — migrated to pal.tools.compile,
+    # pal.tools.consolidate, pal.tools.reorg, pal.tools.wait (Phase F PR4).
     {
         "type": "function",
         "function": {
@@ -285,33 +69,6 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["title", "body"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "propose_promote",
-            "description": (
-                "Propose promoting an existing learning (in _learning/) to "
-                "wisdom (_wisdom/). Wisdom is injected into every future system "
-                "prompt and should be treated as durable guidance. Requires "
-                "user approval. Call with the learning slug (from list_learnings "
-                "or the return of add_learning) and a brief rationale."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "slug": {
-                        "type": "string",
-                        "description": "Slug of the learning to promote.",
-                    },
-                    "rationale": {
-                        "type": "string",
-                        "description": "One-line reason shown in the approval prompt.",
-                    },
-                },
-                "required": ["slug", "rationale"],
             },
         },
     },
@@ -347,7 +104,16 @@ TOOL_DEFINITIONS = [
 
 
 class ToolExecutor:
-    """Executes tool calls against the vault."""
+    """Executes tool calls against the vault.
+
+    After Phase F PR4, this class only handles add_learning and update_scratch.
+    The 9 wiki-shaping tools (compile, consolidate, reorg, promote, wait) have
+    been migrated to Tool subclasses in pal.tools. The vault tools (PR2) and
+    research tools (PR3) were migrated in prior PRs.
+
+    PR5/PR7 will migrate add_learning and update_scratch, after which this
+    class can be deleted.
+    """
 
     def __init__(
         self,
@@ -371,6 +137,9 @@ class ToolExecutor:
         self.approval_registry = approval_registry
         self.websearch = websearch
         self.researcher = researcher
+        # proposal_emitter kept in constructor signature for backward compat
+        # during transition; no longer used now that all propose_* tools are
+        # migrated to Tool subclasses.
         self.proposal_emitter = proposal_emitter
         self.compiler = compiler
         self.reorganizer = reorganizer
@@ -385,10 +154,9 @@ class ToolExecutor:
         Always returns a string — errors are returned as descriptive messages,
         never raised, so the LLM can see what went wrong and adjust.
 
-        Note: read_file, list_directory, search_content, edit_file,
-        create_file, move_file, search_vault have been migrated to
-        pal.tools.vault Tool subclasses (Phase F PR2) and are no longer
-        dispatched here.
+        Note: all vault, research, compile, consolidate, reorg, and wait tools
+        have been migrated to pal.tools Tool subclasses (Phase F PR2-PR4) and
+        are no longer dispatched here.
         """
         handler = {
             "add_learning": self._add_learning,
@@ -400,30 +168,10 @@ class ToolExecutor:
     async def run_async(self, name: str, arguments: dict) -> str:
         """Dispatch a tool call, supporting async tools.
 
-        Note: search_vault, move_file, edit_file, create_file have been
-        migrated to pal.tools.vault Tool subclasses (Phase F PR2) and are
-        no longer dispatched here.
+        Note: all vault, research, compile, consolidate, reorg, and wait tools
+        have been migrated to pal.tools Tool subclasses (Phase F PR2-PR4) and
+        are no longer dispatched here.
         """
-        # search_web, propose_research, research_topic migrated to
-        # pal.tools.research Tool subclasses (Phase F PR3).
-        if name == "compile_summary":
-            return await self._compile_summary(arguments)
-        if name == "propose_compile_batch":
-            return await self._propose_compile_batch(arguments)
-        if name == "compile_batch":
-            return await self._compile_batch(arguments)
-        if name == "propose_reorg":
-            return await self._propose_reorg(arguments)
-        if name == "propose_promote":
-            return await self._propose_promote(arguments)
-        if name == "reorg":
-            return await self._reorg(arguments)
-        if name == "propose_consolidate":
-            return await self._propose_consolidate(arguments)
-        if name == "consolidate":
-            return await self._consolidate(arguments)
-        if name == "wait_for_reindex":
-            return await self._wait_for_reindex(arguments)
         if name == "update_scratch":
             return await self._update_scratch(arguments)
         return self.run(name, arguments)
@@ -442,485 +190,6 @@ class ToolExecutor:
         if self.wiki is not None:
             self.wiki.git_commit(f"learn: add {slug}")
         return json.dumps({"slug": slug, "title": title})
-
-    async def _compile_summary(self, arguments: dict) -> str:
-        import json as _json
-        summary_path = arguments.get("summary_path", "").strip()
-        if not summary_path:
-            return "Error: 'summary_path' parameter is required."
-        if self.compiler is None:
-            return "Error: compile is not available in this session."
-        result = await self.compiler.compile_one(summary_path)
-        return _json.dumps(result)
-
-    async def _propose_compile_batch(self, arguments: dict) -> str:
-        import json as _json
-        from pal.protocol import CompileProposalMessage
-
-        if self.approval_registry is None or self.proposal_emitter is None:
-            return "Error: compile proposals are not available in this session."
-        paths = arguments.get("summary_paths")
-        if not isinstance(paths, list) or not paths:
-            return "Error: 'summary_paths' must be a non-empty list."
-        rationale = (arguments.get("rationale") or "").strip()
-        if not rationale:
-            return "Error: 'rationale' parameter is required."
-
-        proposal_id = self.approval_registry.create_proposal(
-            kind="compile",
-            summary_paths=paths,
-            rationale=rationale,
-        )
-        proposal = self.approval_registry.get(proposal_id)
-        self.proposal_emitter(
-            CompileProposalMessage(
-                proposal_id=proposal_id,
-                summary_paths=list(paths),
-                rationale=rationale,
-            )
-        )
-
-        remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
-        try:
-            await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
-        except asyncio.TimeoutError:
-            self.approval_registry.expire_stale()
-
-        final = self.approval_registry.get(proposal_id)
-        result = {"proposal_id": proposal_id, "status": final.status}
-        if final.status == "declined":
-            edited = self.approval_registry.get_successor(proposal_id)
-            if edited is not None:
-                result = {
-                    "proposal_id": edited.proposal_id,
-                    "status": "approved",
-                    "summary_paths": list(edited.summary_paths or []),
-                }
-        elif final.status == "approved":
-            result["summary_paths"] = list(final.summary_paths or [])
-        return _json.dumps(result)
-
-    async def _compile_batch(self, arguments: dict) -> str:
-        import json as _json
-        proposal_id = (arguments.get("proposal_id") or "").strip()
-        if not proposal_id:
-            return "Error: 'proposal_id' parameter is required."
-        if self.approval_registry is None or self.compiler is None:
-            return "Error: compile execution is not available in this session."
-
-        proposal = self.approval_registry.get(proposal_id)
-        if proposal is None:
-            return f"Error: unknown proposal_id: {proposal_id}"
-        if proposal.kind != "compile":
-            return f"Error: proposal_id {proposal_id} is not a compile proposal."
-        if proposal.status == "pending":
-            return "Error: proposal is not approved yet."
-        if proposal.status == "declined":
-            return "Error: proposal was declined."
-        if proposal.status == "expired":
-            return "Error: proposal expired; propose again."
-        if proposal.status == "consumed":
-            return "Error: proposal was already used. Each proposal is single-use."
-        if proposal.status != "approved":
-            return f"Error: proposal in unexpected state: {proposal.status}"
-
-        # Consume first — single-use even on failure.
-        self.approval_registry.consume(proposal_id)
-
-        per_file = []
-        ok = merged = insufficient = error_count = 0
-        for path in (proposal.summary_paths or []):
-            try:
-                outcome = await self.compiler.compile_one(path)
-            except Exception as exc:
-                outcome = {"status": "error", "reason": f"{type(exc).__name__}: {exc}"}
-            entry = {"path": path, "status": outcome.get("status")}
-            if "title" in outcome:
-                entry["title"] = outcome["title"]
-            if "article_path_rel" in outcome:
-                entry["article_path"] = outcome["article_path_rel"]
-            if "reason" in outcome:
-                entry["reason"] = outcome["reason"]
-            # Ground-truth echo: confirm the file actually exists on disk.
-            article_rel = outcome.get("article_path_rel")
-            if article_rel:
-                entry["vault_exists"] = (self.vault_path / article_rel).exists()
-            per_file.append(entry)
-            s = outcome.get("status")
-            if s == "ok":
-                ok += 1
-            elif s == "merged":
-                merged += 1
-            elif s == "insufficient":
-                insufficient += 1
-            else:
-                error_count += 1
-
-        report = {
-            "total": len(per_file),
-            "ok": ok,
-            "merged": merged,
-            "insufficient": insufficient,
-            "error_count": error_count,
-            "per_file": per_file,
-            "_note": (
-                "Trust vault_exists for each entry. If vault_exists is false, "
-                "the file is not on disk regardless of status."
-            ),
-        }
-        return _json.dumps(report)
-
-    async def _propose_reorg(self, arguments: dict) -> str:
-        import json as _json
-        from pal.protocol import ReorgProposalMessage
-
-        if (self.approval_registry is None or self.proposal_emitter is None
-                or self.reorganizer is None):
-            return "Error: reorg proposals are not available in this session."
-        operations = arguments.get("operations")
-        if not isinstance(operations, list) or not operations:
-            return "Error: 'operations' must be a non-empty list."
-        rationale = (arguments.get("rationale") or "").strip()
-        if not rationale:
-            return "Error: 'rationale' parameter is required."
-
-        # Pre-validate to surface errors before prompting the user
-        try:
-            validation_errors = self.reorganizer.validate_operations(operations)
-        except Exception as exc:
-            return f"Error: operation validation failed: {exc}"
-        if validation_errors:
-            return "Error: invalid operations:\n" + "\n".join(validation_errors)
-
-        # Reference-count preview
-        src_paths = [op["src"] for op in operations if "src" in op]
-        try:
-            references_preview = self.reorganizer.count_references(src_paths)
-        except Exception:
-            references_preview = 0
-
-        try:
-            proposal_id = self.approval_registry.create_proposal(
-                kind="reorg",
-                operations=operations,
-                rationale=rationale,
-            )
-        except ValueError as exc:
-            return f"Error: {exc}"
-
-        proposal = self.approval_registry.get(proposal_id)
-        self.proposal_emitter(
-            ReorgProposalMessage(
-                proposal_id=proposal_id,
-                operations=[dict(op) for op in operations],
-                rationale=rationale,
-                references_preview=references_preview,
-            )
-        )
-
-        remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
-        try:
-            await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
-        except asyncio.TimeoutError:
-            self.approval_registry.expire_stale()
-
-        final = self.approval_registry.get(proposal_id)
-        result = {"proposal_id": proposal_id, "status": final.status}
-        if final.status == "declined":
-            edited = self.approval_registry.get_successor(proposal_id)
-            if edited is not None:
-                result = {
-                    "proposal_id": edited.proposal_id,
-                    "status": "approved",
-                    "operations": list(edited.operations or []),
-                }
-        elif final.status == "approved":
-            result["operations"] = list(final.operations or [])
-        return _json.dumps(result)
-
-    async def _propose_promote(self, arguments: dict) -> str:
-        import json as _json
-        from pal.protocol import PromoteProposalMessage
-
-        if (self.approval_registry is None or self.proposal_emitter is None
-                or self.learning is None or self.wisdom is None):
-            return "Error: promote proposals are not available in this session."
-
-        slug = (arguments.get("slug") or "").strip()
-        rationale = (arguments.get("rationale") or "").strip()
-        if not slug:
-            return "Error: 'slug' parameter is required."
-        if not rationale:
-            return "Error: 'rationale' parameter is required."
-
-        if not self.learning.exists(slug):
-            return _json.dumps({"error": f"no such learning: {slug}"})
-        meta = self.learning.get_meta(slug)
-        if meta.get("status") == "promoted":
-            return _json.dumps({
-                "error": f"already promoted at {meta.get('promoted_at', 'unknown')}"
-            })
-
-        title = meta.get("title", slug)
-        body = self.learning.get(slug)
-
-        try:
-            proposal_id = self.approval_registry.create_proposal(
-                kind="promote",
-                rationale=rationale,
-                slug=slug,
-                target_title=title,
-                body=body,
-            )
-        except ValueError as exc:
-            return f"Error: {exc}"
-
-        proposal = self.approval_registry.get(proposal_id)
-        self.proposal_emitter(
-            PromoteProposalMessage(
-                proposal_id=proposal_id,
-                slug=slug,
-                title=title,
-                body=body,
-                rationale=rationale,
-            )
-        )
-
-        remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
-        try:
-            await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
-        except asyncio.TimeoutError:
-            self.approval_registry.expire_stale()
-
-        final = self.approval_registry.get(proposal_id)
-
-        if final.status != "approved":
-            return _json.dumps({"status": final.status, "slug": slug})
-
-        # Execute promotion.
-        self.approval_registry.consume(proposal_id)
-        self.learning.mark_promoted(slug)
-        self.wisdom.add(title=title, body=body)
-        if self.wiki is not None:
-            self.wiki.git_commit(f"promote: {slug} -> wisdom")
-        return _json.dumps({"status": "promoted", "slug": slug, "title": title})
-
-    async def _reorg(self, arguments: dict) -> str:
-        import json as _json
-        proposal_id = (arguments.get("proposal_id") or "").strip()
-        if not proposal_id:
-            return "Error: 'proposal_id' parameter is required."
-        if self.approval_registry is None or self.reorganizer is None:
-            return "Error: reorg execution is not available in this session."
-
-        proposal = self.approval_registry.get(proposal_id)
-        if proposal is None:
-            return f"Error: unknown proposal_id: {proposal_id}"
-        if proposal.kind != "reorg":
-            return f"Error: proposal_id {proposal_id} is not a reorg proposal."
-        if proposal.status == "pending":
-            return "Error: proposal is not approved yet."
-        if proposal.status == "declined":
-            return "Error: proposal was declined."
-        if proposal.status == "expired":
-            return "Error: proposal expired; propose again."
-        if proposal.status == "consumed":
-            return "Error: proposal was already used. Each proposal is single-use."
-        if proposal.status != "approved":
-            return f"Error: proposal in unexpected state: {proposal.status}"
-
-        # Consume first - single-use invariant
-        self.approval_registry.consume(proposal_id)
-
-        ops = list(proposal.operations or [])
-
-        # Re-validate against current vault state. State may have changed
-        # between proposal and execute.
-        validation_errors = self.reorganizer.validate_operations(ops)
-        if validation_errors:
-            return "Error: invalid operations:\n" + "\n".join(validation_errors)
-
-        try:
-            per_op = await self.reorganizer.execute_operations_async(ops)
-        except Exception as exc:
-            return f"Error: reorg execution failed: {exc}"
-
-        # Ground-truth echo: check on-disk state for every op.
-        for r in per_op:
-            src = r.get("src", "")
-            dst = r.get("dst", "")
-            if src:
-                r["src_exists_after"] = (self.vault_path / src).exists()
-            if dst:
-                r["dst_exists_after"] = (self.vault_path / dst).exists()
-
-        ok = sum(1 for r in per_op if r.get("status") == "ok")
-        failed = sum(1 for r in per_op if r.get("status") not in ("ok",))
-        refs = sum(int(r.get("references_rewritten", 0)) for r in per_op)
-
-        report = {
-            "total": len(per_op),
-            "ok": ok,
-            "failed": failed,
-            "references_rewritten": refs,
-            "per_op": per_op,
-            "_note": (
-                "Trust src_exists_after and dst_exists_after for each op. "
-                "A successful move or merge must show src_exists_after=false "
-                "and dst_exists_after=true."
-            ),
-        }
-        # Promote per-op _reindex (if any) to top-level
-        for r in per_op:
-            if "_reindex" in r:
-                report["reindex"] = r.pop("_reindex")
-                break
-        return _json.dumps(report)
-
-    async def _propose_consolidate(self, arguments: dict) -> str:
-        import json as _json
-        from pal.protocol import ConsolidateProposalMessage
-
-        if self.approval_registry is None or self.proposal_emitter is None:
-            return "Error: consolidate proposals are not available in this session."
-        source_paths = arguments.get("source_paths")
-        if not isinstance(source_paths, list) or len(source_paths) < 2:
-            return "Error: 'source_paths' must be a list with at least two entries."
-        target_path = (arguments.get("target_path") or "").strip()
-        if not target_path:
-            return "Error: 'target_path' parameter is required."
-        target_title = (arguments.get("target_title") or "").strip()
-        if not target_title:
-            return "Error: 'target_title' parameter is required."
-        rationale = (arguments.get("rationale") or "").strip()
-        if not rationale:
-            return "Error: 'rationale' parameter is required."
-
-        try:
-            proposal_id = self.approval_registry.create_proposal(
-                kind="consolidate",
-                summary_paths=source_paths,
-                target_path=target_path,
-                target_title=target_title,
-                rationale=rationale,
-            )
-        except ValueError as exc:
-            return f"Error: {exc}"
-
-        proposal = self.approval_registry.get(proposal_id)
-        self.proposal_emitter(
-            ConsolidateProposalMessage(
-                proposal_id=proposal_id,
-                source_paths=list(source_paths),
-                target_path=target_path,
-                target_title=target_title,
-                rationale=rationale,
-            )
-        )
-
-        remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
-        try:
-            await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
-        except asyncio.TimeoutError:
-            self.approval_registry.expire_stale()
-
-        final = self.approval_registry.get(proposal_id)
-        result = {"proposal_id": proposal_id, "status": final.status}
-        if final.status == "declined":
-            edited = self.approval_registry.get_successor(proposal_id)
-            if edited is not None:
-                result = {
-                    "proposal_id": edited.proposal_id,
-                    "status": "approved",
-                    "source_paths": list(edited.summary_paths or []),
-                    "target_path": edited.target_path or "",
-                    "target_title": edited.target_title or "",
-                }
-        elif final.status == "approved":
-            result["source_paths"] = list(final.summary_paths or [])
-            result["target_path"] = final.target_path or ""
-            result["target_title"] = final.target_title or ""
-        return _json.dumps(result)
-
-    async def _consolidate(self, arguments: dict) -> str:
-        import json as _json
-        proposal_id = (arguments.get("proposal_id") or "").strip()
-        if not proposal_id:
-            return "Error: 'proposal_id' parameter is required."
-        if self.approval_registry is None or self.consolidator is None:
-            return "Error: consolidate execution is not available in this session."
-
-        proposal = self.approval_registry.get(proposal_id)
-        if proposal is None:
-            return f"Error: unknown proposal_id: {proposal_id}"
-        if proposal.kind != "consolidate":
-            return f"Error: proposal_id {proposal_id} is not a consolidate proposal."
-        if proposal.status == "pending":
-            return "Error: proposal is not approved yet."
-        if proposal.status == "declined":
-            return "Error: proposal was declined."
-        if proposal.status == "expired":
-            return "Error: proposal expired; propose again."
-        if proposal.status == "consumed":
-            return "Error: proposal was already used. Each proposal is single-use."
-        if proposal.status != "approved":
-            return f"Error: proposal in unexpected state: {proposal.status}"
-
-        # Consume first — single-use even on failure.
-        self.approval_registry.consume(proposal_id)
-
-        try:
-            outcome = await self.consolidator.consolidate(
-                source_paths=list(proposal.summary_paths or []),
-                target_path=proposal.target_path or "",
-                target_title=proposal.target_title or "",
-            )
-        except Exception as exc:
-            outcome = {
-                "status": "error",
-                "target_path": proposal.target_path or "",
-                "reason": f"{type(exc).__name__}: {exc}",
-                "vault_exists": False,
-            }
-
-        outcome["_note"] = (
-            "Trust vault_exists: if false, the target file was not written to disk."
-        )
-        return _json.dumps(outcome)
-
-    async def _wait_for_reindex(self, arguments: dict) -> str:
-        import asyncio
-        import json as _json
-
-        job_id = (arguments.get("job_id") or "").strip()
-        if not job_id:
-            return "Error: 'job_id' parameter is required."
-        if self.retrieval is None:
-            return "Error: retrieval client is not configured."
-
-        timeout_seconds = int(arguments.get("timeout_seconds") or 30)
-        timeout_seconds = max(1, min(timeout_seconds, 120))
-
-        deadline = asyncio.get_event_loop().time() + timeout_seconds
-        last_status = "unknown"
-        while True:
-            job = await self.retrieval.get_reindex_job(job_id)
-            if job is None:
-                return f"Error: unknown job_id (not found): {job_id}"
-            last_status = job.get("status", "unknown")
-            if last_status in ("done", "error"):
-                return _json.dumps(job)
-            if asyncio.get_event_loop().time() >= deadline:
-                return _json.dumps({
-                    "job_id": job_id,
-                    "status": "timeout",
-                    "last_seen_status": last_status,
-                    "_note": (
-                        "Job did not finish within timeout. The job may still complete; "
-                        "poll again with a longer timeout if needed."
-                    ),
-                })
-            await asyncio.sleep(0.25)
 
     async def _update_scratch(self, arguments: dict) -> str:
         content = arguments.get("content", "")

@@ -197,20 +197,31 @@ async def test_daemon_handle_connection_does_not_deadlock(tmp_path):
 async def test_injected_compile_batch_call_without_valid_proposal_is_refused(tmp_path):
     """Indirect-injection attack: content tells the model to call
     compile_batch with a made-up proposal_id. The tool must refuse
-    without invoking the Compiler."""
+    without invoking the Compiler.
+
+    Migrated from ToolExecutor.run_async to CompileBatch.run (Phase F PR4).
+    """
+    from pal.tools.compile import CompileBatch
+
     registry = ApprovalRegistry()
     compiler = MagicMock()
     compiler.compile_one = AsyncMock()
-    executor = ToolExecutor(
-        vault_path=tmp_path,
-        retrieval=None,
-        approval_registry=registry,
-        compiler=compiler,
-    )
 
-    output = await executor.run_async(
-        "compile_batch",
+    class _Config:
+        def __init__(self, vp):
+            self.vault_path = vp
+    class _Agent:
+        def __init__(self, vp, ar, comp):
+            self.config = _Config(vp); self.approval_registry = ar; self.compiler = comp
+    class _Ctx:
+        def __init__(self, a):
+            self.agent = a; self.emit = AsyncMock()
+
+    agent = _Agent(tmp_path, registry, compiler)
+    ctx = _Ctx(agent)
+    output = await CompileBatch().run(
         {"proposal_id": "injected-by-fetched-content"},
+        ctx,
     )
     assert "unknown" in output.lower() or "not found" in output.lower()
     compiler.compile_one.assert_not_called()
@@ -218,6 +229,9 @@ async def test_injected_compile_batch_call_without_valid_proposal_is_refused(tmp
 
 @pytest.mark.asyncio
 async def test_consumed_compile_proposal_cannot_be_reused(tmp_path):
+    """Migrated from ToolExecutor.run_async to CompileBatch.run (Phase F PR4)."""
+    from pal.tools.compile import CompileBatch
+
     registry = ApprovalRegistry()
     pid = registry.create_proposal(
         kind="compile",
@@ -232,17 +246,23 @@ async def test_consumed_compile_proposal_cannot_be_reused(tmp_path):
     compiler = MagicMock()
     compiler.compile_one = fake_compile_one
 
-    executor = ToolExecutor(
-        vault_path=tmp_path,
-        retrieval=None,
-        approval_registry=registry,
-        compiler=compiler,
-    )
+    class _Config:
+        def __init__(self, vp):
+            self.vault_path = vp
+    class _Agent:
+        def __init__(self, vp, ar, comp):
+            self.config = _Config(vp); self.approval_registry = ar; self.compiler = comp
+    class _Ctx:
+        def __init__(self, a):
+            self.agent = a; self.emit = AsyncMock()
 
-    first = await executor.run_async("compile_batch", {"proposal_id": pid})
+    agent = _Agent(tmp_path, registry, compiler)
+    ctx = _Ctx(agent)
+
+    first = await CompileBatch().run({"proposal_id": pid}, ctx)
     assert '"total": 1' in first
     # Second call with same id must refuse.
-    second = await executor.run_async("compile_batch", {"proposal_id": pid})
+    second = await CompileBatch().run({"proposal_id": pid}, ctx)
     assert "already" in second.lower() or "consumed" in second.lower()
 
 
