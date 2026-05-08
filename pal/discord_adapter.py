@@ -10,7 +10,6 @@ from pathlib import Path
 import discord
 
 from agent_core.client import DaemonConnection as PalClient  # API-compatible alias
-from pal.commands import command_names
 from pal.discord_interactions import (
     DiscordStreamProcessor,
     ProposalContext,
@@ -66,13 +65,32 @@ _FENCED_CODE = re.compile(r"```[\s\S]*?```")
 _INLINE_CODE = re.compile(r"`[^`\n]+`")
 
 
-def rewrite_slash_prefixes(text: str) -> str:
-    """Translate `/cmd` to `!cmd` for commands registered in COMMANDS.
+def _discord_command_names() -> set[str]:
+    """Return the set of registered command names for Discord prefix rewriting.
+
+    Derives names from PALAgent.commands (PAL-specific) plus the framework's
+    BUILTIN_COMMANDS. This replaces the old static pal.commands.COMMANDS import.
+    """
+    from agent_core.commands.builtin import BUILTIN_COMMANDS
+    from pal.agent import PALAgent
+
+    builtin_names = {cls.name for cls in BUILTIN_COMMANDS}
+    pal_names = {cls.name for cls in PALAgent.commands}
+    return builtin_names | pal_names
+
+
+def rewrite_slash_prefixes(text: str, names: "set[str] | None" = None) -> str:
+    """Translate `/cmd` to `!cmd` for commands registered in the PAL registry.
 
     Skips content inside fenced and inline code. Only rewrites tokens at
     line start or immediately following whitespace/punctuation.
+
+    `names` defaults to the full command name set derived from PALAgent and
+    framework builtins. Pass an explicit set in tests or when the caller
+    already holds the names.
     """
-    names = command_names()
+    if names is None:
+        names = _discord_command_names()
     if not names:
         return text
     # Build an alternation regex for known command names, longest first

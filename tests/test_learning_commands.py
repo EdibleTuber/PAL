@@ -135,12 +135,17 @@ async def test_promote_moves_to_wisdom(learn_daemon, socket_path):
 
 @pytest.mark.asyncio
 async def test_promote_nonexistent(learn_daemon, socket_path):
+    """Promoting a non-existent learning returns a 'not found' text response.
+
+    Phase F PR5: framework Promote yields ResponseMessage (not ErrorMessage)
+    for not-found; the response text still communicates the error.
+    """
     daemon, vault = learn_daemon
     client = PalClient(socket_path)
     await client.connect()
 
-    with pytest.raises(RuntimeError, match="not found"):
-        await client.command("promote", "nonexistent")
+    resp = await client.command("promote", "nonexistent")
+    assert "not found" in resp.text.lower()
 
     await client.close()
 
@@ -163,11 +168,15 @@ async def test_rate_good(learn_daemon, socket_path):
 
 @pytest.mark.asyncio
 async def test_rate_empty(learn_daemon, socket_path):
+    """Calling /rate with no args returns a usage message.
+
+    Phase F PR5: framework Rate yields ResponseMessage for empty args.
+    """
     daemon, vault = learn_daemon
     client = PalClient(socket_path)
     await client.connect()
 
-    with pytest.raises(RuntimeError, match="Usage"):
-        await client.command("rate", "")
+    resp = await client.command("rate", "")
+    assert "usage" in resp.text.lower()
 
     await client.close()
