@@ -15,7 +15,6 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCo
 from rich.text import Text
 
 from agent_core.client import DaemonConnection as PalClient  # API-compatible alias
-from pal.commands import COMMANDS
 from pal.config import load_config
 from agent_core.protocol import (
     StreamChunkMessage,
@@ -38,9 +37,20 @@ CLI_CHANNEL_ID = "cli-default"
 _reasoning_display: str = "show"
 
 
+def _all_command_classes() -> list:
+    """Return the union of PALAgent commands and framework builtins."""
+    from agent_core.commands.builtin import BUILTIN_COMMANDS
+    from pal.agent import PALAgent
+    pal_names = {cls.name for cls in PALAgent.commands}
+    # PAL commands override builtins of the same name; include both, deduped.
+    all_cls = [cls for cls in BUILTIN_COMMANDS if cls.name not in pal_names]
+    all_cls.extend(PALAgent.commands)
+    return sorted(all_cls, key=lambda cls: cls.name)
+
+
 def render_splash_commands() -> str:
     """Render the compact command list shown on CLI startup."""
-    names = [f"/{c.name}" for c in COMMANDS]
+    names = [f"/{cls.name}" for cls in _all_command_classes()]
     # Pack names into lines under ~90 chars.
     lines: list[list[str]] = [[]]
     current_len = 0

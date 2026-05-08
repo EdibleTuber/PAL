@@ -5,6 +5,7 @@ dynamically so PAL has fresh user context on every chat turn.
 """
 from agent_core.profile import ProfileManager
 from agent_core.wisdom import WisdomManager
+from agent_core.commands.builtin import BUILTIN_COMMANDS
 
 
 BASE_PROMPT = """You are PAL, a personal AI librarian. You help the user think, answer questions, and manage knowledge in their vault.
@@ -105,8 +106,18 @@ class SystemPromptBuilder:
         self.profile = profile
         self.wisdom = wisdom
 
-    def build(self, channel_scratchpad: str | None = None) -> str:
-        """Compose the current system prompt from base + profile + wisdom + scratchpad."""
+    def build(
+        self,
+        channel_scratchpad: str | None = None,
+        command_metadata: "list[tuple[str, str, str]] | None" = None,
+    ) -> str:
+        """Compose the current system prompt from base + profile + wisdom + scratchpad.
+
+        `command_metadata` is a list of (name, args, description) tuples.
+        When provided (by PALAgent.system_prompt via command_registry.metadata()),
+        the Available Commands section lists the live registry. When None, falls
+        back to deriving names from PALAgent.commands + BUILTIN_COMMANDS.
+        """
         sections = [BASE_PROMPT]
 
         profile_body = self.profile.read()
@@ -121,9 +132,25 @@ class SystemPromptBuilder:
         if channel_scratchpad:
             sections.append(f"## Channel Scratchpad\n\n{channel_scratchpad}")
 
-        from pal.commands import COMMANDS
-        cmd_lines = [f"- `/{c.name} {c.args}`".rstrip() + f" - {c.description}"
-                     for c in COMMANDS]
+        if command_metadata is None:
+            # Fallback: derive from class-level declarations (used in tests and
+            # contexts where the agent's command_registry is not available).
+            from pal.agent import PALAgent
+            pal_entries = [(cls.name, cls.args, cls.description) for cls in PALAgent.commands]
+            builtin_entries = [
+                (cls.name, cls.args, cls.description) for cls in BUILTIN_COMMANDS
+            ]
+            # PAL commands override builtins with same name; start with builtins,
+            # then overlay PAL commands.
+            seen = {name for name, _, _ in pal_entries}
+            merged = [(n, a, d) for n, a, d in builtin_entries if n not in seen]
+            merged.extend(pal_entries)
+            command_metadata = sorted(merged, key=lambda x: x[0])
+
+        cmd_lines = [
+            f"- `/{name} {args}`".rstrip() + f" - {desc}"
+            for name, args, desc in command_metadata
+        ]
         sections.append(
             "## Available Commands\n\n"
             "The user can invoke these slash commands (they appear as `!cmd` "

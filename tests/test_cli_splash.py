@@ -1,8 +1,15 @@
-from pal.cli import render_splash_commands
-from pal.commands import COMMANDS
+from pal.cli import render_splash_commands, _all_command_classes
 
 
 def test_splash_contains_every_command_name():
     text = render_splash_commands()
-    for cmd in COMMANDS:
-        assert f"/{cmd.name}" in text
+    for cls in _all_command_classes():
+        assert f"/{cls.name}" in text, f"/{cls.name} missing from splash"
+
+
+def test_splash_includes_pal_specific_commands():
+    text = render_splash_commands()
+    # PAL-specific commands that must appear
+    for name in ("read", "search", "note", "compile", "research", "learn",
+                 "fetch", "lint", "import", "summarize"):
+        assert f"/{name}" in text, f"/{name} missing from splash"
