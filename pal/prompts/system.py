@@ -1,14 +1,14 @@
-"""SystemPromptBuilder — compose system prompt from base + profile + wisdom.
+"""PAL's identity, policy, tool catalog, and style prose.
 
-The base prompt establishes PAL's identity. Profile and wisdom are appended
-dynamically so PAL has fresh user context on every chat turn.
+The agent-specific portion of the system prompt. Framework SystemPromptBuilder
+render helpers append the standard sections (profile / wisdom / scratchpad /
+commands catalog) in PALAgent.system_prompt().
+
+PAL keeps its hand-curated tool catalog here (grouped by purpose) rather than
+using framework's render_tools_catalog (alphabetical/registration-order).
 """
-from agent_core.profile import ProfileManager
-from agent_core.wisdom import WisdomManager
-from agent_core.commands.builtin import BUILTIN_COMMANDS
 
-
-BASE_PROMPT = """You are PAL, a personal AI librarian. You help the user think, answer questions, and manage knowledge in their vault.
+PAL_BASE_PROMPT = """You are PAL, a personal AI librarian. You help the user think, answer questions, and manage knowledge in their vault.
 
 ## Your tools
 
@@ -99,64 +99,3 @@ The full list of things you cannot do:
 ## Style
 
 Concise, direct. No em dashes. Show progress when working."""
-
-
-class SystemPromptBuilder:
-    def __init__(self, profile: ProfileManager, wisdom: WisdomManager) -> None:
-        self.profile = profile
-        self.wisdom = wisdom
-
-    def build(
-        self,
-        channel_scratchpad: str | None = None,
-        command_metadata: "list[tuple[str, str, str]] | None" = None,
-    ) -> str:
-        """Compose the current system prompt from base + profile + wisdom + scratchpad.
-
-        `command_metadata` is a list of (name, args, description) tuples.
-        When provided (by PALAgent.system_prompt via command_registry.metadata()),
-        the Available Commands section lists the live registry. When None, falls
-        back to deriving names from PALAgent.commands + BUILTIN_COMMANDS.
-        """
-        sections = [BASE_PROMPT]
-
-        profile_body = self.profile.read()
-        if profile_body:
-            sections.append(f"## About the User\n\n{profile_body}")
-
-        wisdom_bodies = self.wisdom.bodies()
-        if wisdom_bodies:
-            wisdom_text = "\n".join(f"- {body}" for body in wisdom_bodies)
-            sections.append(f"## Active Wisdom\n\n{wisdom_text}")
-
-        if channel_scratchpad:
-            sections.append(f"## Channel Scratchpad\n\n{channel_scratchpad}")
-
-        if command_metadata is None:
-            # Fallback: derive from class-level declarations (used in tests and
-            # contexts where the agent's command_registry is not available).
-            from pal.agent import PALAgent
-            pal_entries = [(cls.name, cls.args, cls.description) for cls in PALAgent.commands]
-            builtin_entries = [
-                (cls.name, cls.args, cls.description) for cls in BUILTIN_COMMANDS
-            ]
-            # PAL commands override builtins with same name; start with builtins,
-            # then overlay PAL commands.
-            seen = {name for name, _, _ in pal_entries}
-            merged = [(n, a, d) for n, a, d in builtin_entries if n not in seen]
-            merged.extend(pal_entries)
-            command_metadata = sorted(merged, key=lambda x: x[0])
-
-        cmd_lines = [
-            f"- `/{name} {args}`".rstrip() + f" - {desc}"
-            for name, args, desc in command_metadata
-        ]
-        sections.append(
-            "## Available Commands\n\n"
-            "The user can invoke these slash commands (they appear as `!cmd` "
-            "in Discord). When the user asks what commands exist, cite from "
-            "this list verbatim.\n\n"
-            + "\n".join(cmd_lines)
-        )
-
-        return "\n\n".join(sections)

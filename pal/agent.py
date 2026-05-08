@@ -54,6 +54,7 @@ from pal.tools import (
     WaitForReindex,
 )
 from agent_core.scratchpad import ScratchpadTooLarge
+from pal.prompts.system import PAL_BASE_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,36 @@ async def handle_scratch(scratchpad, text: str) -> str:
             "Prune the scratchpad (edit in Obsidian or call update_scratch) and retry."
         )
     return f"Note added ({len(appended)} bytes)."
+
+
+class _BasePALPromptAdapter:
+    """Thin adapter passed to Compiler and Consolidator.
+
+    Those classes call `prompt_builder.build()` (no channel context) to get a
+    base system prompt for their own inference calls. After PR6 there is no
+    longer a PAL-owned SystemPromptBuilder; this adapter assembles the same
+    content from PAL_BASE_PROMPT + profile + wisdom, mirroring what the old
+    PAL SystemPromptBuilder.build() produced when called with no args.
+
+    Constructed during setup() — before _attach_registries — so it holds
+    profile/wisdom directly (both are populated before setup() runs) rather
+    than depending on the framework prompt_builder attr.
+    """
+
+    def __init__(self, profile, wisdom) -> None:
+        self._profile = profile
+        self._wisdom = wisdom
+
+    def build(self) -> str:
+        sections = [PAL_BASE_PROMPT]
+        profile_body = self._profile.read()
+        if profile_body:
+            sections.append(f"## About the User\n\n{profile_body}")
+        wisdom_bodies = self._wisdom.bodies()
+        if wisdom_bodies:
+            wisdom_text = "\n".join(f"- {b}" for b in wisdom_bodies)
+            sections.append(f"## Active Wisdom\n\n{wisdom_text}")
+        return "\n\n".join(sections)
 
 
 class PALAgent(Agent):
@@ -138,7 +169,6 @@ class PALAgent(Agent):
         from pal.categorizer import Categorizer
         from pal.compiler import Compiler
         from pal.consolidator import Consolidator
-        from pal.prompt_builder import SystemPromptBuilder
         from pal.reorg import Reorganizer
         from pal.researcher import Researcher
         from pal._legacy_tools import ToolExecutor
@@ -173,16 +203,6 @@ class PALAgent(Agent):
             self.batch_inference if self.batch_inference is not None else self.inference
         )
 
-        # PAL-specific prompt builder: composes base prompt + profile + wisdom.
-        # Named _pal_prompt_builder to avoid colliding with the framework's
-        # agent.prompt_builder set by _attach_registries. PAL command handlers
-        # and handle_chat use this attribute directly (via .build()); the
-        # framework uses agent.prompt_builder for its own system_prompt logic.
-        self._pal_prompt_builder = SystemPromptBuilder(
-            profile=self.profile,
-            wisdom=self.wisdom,
-        )
-
         # Categorizer: routes raw summaries to vault categories. Uses
         # the batch client when available.
         self.categorizer = Categorizer(effective_batch)
@@ -208,13 +228,20 @@ class PALAgent(Agent):
             max_body_chars=config.max_inference_body_chars,
         )
 
+        # Adapter used by Compiler and Consolidator for their own inference
+        # calls (no channel context needed — just base prose + profile/wisdom).
+        _prompt_adapter = _BasePALPromptAdapter(
+            profile=self.profile,
+            wisdom=self.wisdom,
+        )
+
         # Compiler: promotes raw summaries into vault articles.
         self.compiler = Compiler(
             vault_path=config.vault_path,
             wiki=self.wiki,
             inference=self.inference,
             categorizer=self.categorizer,
-            prompt_builder=self._pal_prompt_builder,
+            prompt_builder=_prompt_adapter,
             retrieval=self.retrieval,
             max_body_chars=config.max_inference_body_chars,
         )
@@ -232,7 +259,7 @@ class PALAgent(Agent):
             vault_path=config.vault_path,
             wiki=self.wiki,
             inference=self.inference,
-            prompt_builder=self._pal_prompt_builder,
+            prompt_builder=_prompt_adapter,
             retrieval=self.retrieval,
             max_body_chars=config.max_inference_body_chars,
         )
@@ -379,13 +406,22 @@ class PALAgent(Agent):
         )
 
     def system_prompt(self, ctx: HandlerContext) -> str:
-        """Return PAL's system prompt for this turn, including channel scratchpad."""
-        scratchpad = self._build_scratchpad(ctx.channel_id)
-        scratchpad_content = scratchpad.read()
-        return self._pal_prompt_builder.build(
-            channel_scratchpad=scratchpad_content,
-            command_metadata=self.command_registry.metadata(),
-        )
+        """Return PAL's system prompt for this turn.
+
+        Assembles: PAL identity prose + profile + wisdom + channel scratchpad
+        + commands catalog. Framework render helpers (attached by
+        _attach_registries as self.prompt_builder) supply every section except
+        the hand-curated PAL_BASE_PROMPT, which PAL keeps inline because its
+        by-purpose tool grouping performs better than alphabetical rendering.
+        """
+        pb = self.prompt_builder
+        return "\n\n".join(filter(None, [
+            PAL_BASE_PROMPT,
+            pb.render_profile(),
+            pb.render_wisdom(),
+            pb.render_scratchpad(ctx.channel_id),
+            pb.render_commands_catalog(),
+        ]))
 
     def _build_tool_schemas(self) -> list[dict]:
         """Phase F dual-dispatch: union framework schemas with PAL's legacy
@@ -465,11 +501,10 @@ class PALAgent(Agent):
         mode = self.decide_mode(conv)
 
         scratchpad = self._build_scratchpad(channel_id)
-        scratchpad_content = scratchpad.read()
         self.legacy_tool_executor.scratchpad = scratchpad
 
         messages = conv.get_messages_for_api(
-            system_prompt=self._pal_prompt_builder.build(channel_scratchpad=scratchpad_content),
+            system_prompt=self.system_prompt(ctx),
         )
         # Phase F: send the union of framework builtin schemas + PAL legacy schemas.
         # self.tool_executor is the framework executor (12 builtins + any PAL-declared
@@ -562,9 +597,10 @@ class PALAgent(Agent):
                     conv.add_tool_result(tc.id, result)
 
                 # Re-read in case an update_scratch tool call modified the file.
-                scratchpad_content = scratchpad.read()
+                # system_prompt(ctx) calls render_scratchpad(ctx.channel_id) which
+                # reads fresh from disk, so no need to pass scratchpad_content explicitly.
                 messages = conv.get_messages_for_api(
-                    system_prompt=self._pal_prompt_builder.build(channel_scratchpad=scratchpad_content),
+                    system_prompt=self.system_prompt(ctx),
                 )
                 completion = await self.inference.complete(
                     messages, tools=self._build_tool_schemas(), reasoning=mode,
