@@ -35,6 +35,7 @@ from pal.commands import (
     Profile, Read, Research, Scratch, Search, SearchWeb, Status, Summarize, Wisdom,
 )
 from pal.tools import (
+    AddLearning,
     CompileBatch as ToolCompileBatch,
     CompileSummary,
     Consolidate,
@@ -51,6 +52,7 @@ from pal.tools import (
     Reorg,
     ResearchTopic,
     SearchContent,
+    UpdateScratch,
     WaitForReindex,
 )
 from agent_core.scratchpad import ScratchpadTooLarge
@@ -125,15 +127,18 @@ class PALAgent(Agent):
     config: PALConfig  # type-narrows the framework attr
 
     # Phase F: declarative registration. PR2 populates vault tools;
-    # PR3-PR4 add research/compile/consolidate/reorg/wait. The framework's
-    # BUILTIN_TOOLS and BUILTIN_COMMANDS are unioned in automatically by
-    # run_daemon._attach_registries.
+    # PR3-PR4 add research/compile/consolidate/reorg/wait; PR7 adds
+    # PAL-specific overrides for update_scratch and add_learning (shadow
+    # the framework builtins to preserve PAL's parameter names and
+    # git-commit behaviour). The framework's BUILTIN_TOOLS and
+    # BUILTIN_COMMANDS are unioned in automatically by run_daemon._attach_registries.
     tools = [ReadFile, ListDirectory, SearchContent, EditFile, CreateFile, MoveFile,
              ProposeResearch, ResearchTopic,
              CompileSummary, ProposeCompileBatch, ToolCompileBatch,
              ProposeConsolidate, Consolidate,
              ProposeReorg, ProposePromote, Reorg,
-             WaitForReindex]
+             WaitForReindex,
+             UpdateScratch, AddLearning]
     # Phase F PR5: PAL-specific command subclasses. The framework's
     # BUILTIN_COMMANDS are unioned in automatically by _attach_registries;
     # PAL-specific commands registered here override any builtin of the same
@@ -171,7 +176,6 @@ class PALAgent(Agent):
         from pal.consolidator import Consolidator
         from pal.reorg import Reorganizer
         from pal.researcher import Researcher
-        from pal._legacy_tools import ToolExecutor
         from pal.wiki import WikiManager
 
         config = self.config
@@ -264,24 +268,6 @@ class PALAgent(Agent):
             max_body_chars=config.max_inference_body_chars,
         )
 
-        # Tool executor: dispatches LLM tool calls. After Phase F PR4 the
-        # only remaining legacy tools are add_learning and update_scratch;
-        # all propose_* tools have migrated to Tool subclasses so the
-        # proposal_emitter wiring is no longer needed here.
-        self.legacy_tool_executor = ToolExecutor(
-            vault_path=config.vault_path,
-            retrieval=self.retrieval,
-            wiki=self.wiki,
-            approval_registry=self.approval_registry,
-            websearch=self.websearch,
-            researcher=self.researcher,
-            compiler=self.compiler,
-            reorganizer=self.reorganizer,
-            consolidator=self.consolidator,
-            learning=self.learning,
-            wisdom=self.wisdom,
-        )
-
         # Learning scanner: surfaces durable-lesson candidates after each
         # turn. The extractor calls back into inference; the emit callback
         # is a no-op placeholder and is replaced per-turn in handle_chat
@@ -325,22 +311,6 @@ class PALAgent(Agent):
             max_bytes=self.config.scratchpad_max_bytes,
             commit_callback=_commit_scratchpad,
         )
-
-    async def _run_tool(self, name: str, arguments: dict, ctx: HandlerContext) -> str:
-        """Phase F dual-dispatch: framework executor first, legacy fallback.
-
-        The framework's tool_executor is set by run_daemon._attach_registries
-        before setup() runs. It contains the 12 builtins plus anything PAL
-        declares in `tools = [...]` (currently empty in PR1; PR2-PR4 populate).
-
-        Names not in the framework executor fall through to the legacy
-        pal._legacy_tools.ToolExecutor which still owns PAL's domain tools (compile,
-        research, consolidate, reorg, wiki ops, etc.) until those migrate in
-        PR2-PR4. PR7 deletes legacy_tool_executor entirely.
-        """
-        if name in self.tool_executor.names():
-            return await self.tool_executor.run(name, arguments, ctx)
-        return await self.legacy_tool_executor.run_async(name, arguments)
 
     async def handle_other(self, msg, ctx: HandlerContext) -> None:
         """Route PAL-specific approval / batch-fallback messages.
@@ -423,26 +393,6 @@ class PALAgent(Agent):
             pb.render_commands_catalog(),
         ]))
 
-    def _build_tool_schemas(self) -> list[dict]:
-        """Phase F dual-dispatch: union framework schemas with PAL's legacy
-        TOOL_DEFINITIONS, dropping any legacy entry whose name is already in
-        the framework executor.
-
-        Names that overlap (search_vault, search_web, update_scratch,
-        add_learning) route through the framework path in _run_tool, so the
-        legacy schemas would be dead-weight duplicates in the inference
-        request. PR7 deletes this helper when legacy_tool_executor is gone.
-        """
-        from pal._legacy_tools import TOOL_DEFINITIONS
-
-        framework_schemas = self.tool_executor.schemas()
-        framework_names = {s["function"]["name"] for s in framework_schemas}
-        legacy_filtered = [
-            s for s in TOOL_DEFINITIONS
-            if s["function"]["name"] not in framework_names
-        ]
-        return framework_schemas + legacy_filtered
-
     async def handle_chat(
         self, msg: ChatMessage, ctx: HandlerContext,
     ) -> AsyncIterator[object]:
@@ -500,17 +450,9 @@ class PALAgent(Agent):
         conv.add_user(msg.text)
         mode = self.decide_mode(conv)
 
-        scratchpad = self._build_scratchpad(channel_id)
-        self.legacy_tool_executor.scratchpad = scratchpad
-
         messages = conv.get_messages_for_api(
             system_prompt=self.system_prompt(ctx),
         )
-        # Phase F: send the union of framework builtin schemas + PAL legacy schemas.
-        # self.tool_executor is the framework executor (12 builtins + any PAL-declared
-        # tools, currently empty until PR2-PR4). TOOL_DEFINITIONS contains PAL's
-        # domain tools (compile, research, vault ops, etc.) still in legacy_tool_executor.
-        # _build_tool_schemas deduplicates overlapping names; framework wins.
         max_tool_rounds = 50
 
         try:
@@ -519,7 +461,7 @@ class PALAgent(Agent):
 
             if mode == "on":
                 completion = await self.inference.complete(
-                    messages, tools=self._build_tool_schemas(), reasoning=mode,
+                    messages, tools=self.tool_executor.schemas(), reasoning=mode,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 )
                 if completion.type == "text":
@@ -543,7 +485,7 @@ class PALAgent(Agent):
                 tool_calls = completion.tool_calls
             else:
                 async for item in self.inference.stream(
-                    messages, tools=self._build_tool_schemas(), reasoning=mode,
+                    messages, tools=self.tool_executor.schemas(), reasoning=mode,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 ):
                     if isinstance(item, list):
@@ -593,7 +535,7 @@ class PALAgent(Agent):
                     writer.write(encode_message(progress))
                     await writer.drain()
 
-                    result = await self._run_tool(tc.name, tc.arguments, ctx)
+                    result = await self.tool_executor.run(tc.name, tc.arguments, ctx)
                     conv.add_tool_result(tc.id, result)
 
                 # Re-read in case an update_scratch tool call modified the file.
@@ -603,7 +545,7 @@ class PALAgent(Agent):
                     system_prompt=self.system_prompt(ctx),
                 )
                 completion = await self.inference.complete(
-                    messages, tools=self._build_tool_schemas(), reasoning=mode,
+                    messages, tools=self.tool_executor.schemas(), reasoning=mode,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 )
 
