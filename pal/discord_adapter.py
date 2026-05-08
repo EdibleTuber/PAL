@@ -1,15 +1,31 @@
 """Discord adapter for PAL.
 
-Bridges Discord messages to the PAL daemon via unix socket.
-Each allowed Discord user gets their own daemon connection.
+Bridges Discord messages to the PAL daemon via unix socket. Generic
+helpers (UserConnectionManager, message parsing, splitting, slash-prefix
+rewriting, tool-progress formatting) live in agent_core.adapters.discord_gateway.
+PAL keeps PalDiscordBot here because of its approval UX (button/modal
+handlers, proposal threads) which are too domain-specific to lift.
 """
 import logging
-import re
 from pathlib import Path
+from typing import Callable
 
 import discord
 
+from agent_core.adapters.discord_gateway import (
+    UserConnectionManager,
+    parse_discord_message,
+    rewrite_slash_prefixes,
+    split_message,
+    format_tool_progress as _format_tool_progress_generic,
+)
 from agent_core.client import DaemonConnection as PalClient  # API-compatible alias
+from agent_core.protocol import (
+    StreamChunkMessage,
+    ResponseMessage,
+    ErrorMessage,
+    ToolProgressMessage,
+)
 from pal.discord_interactions import (
     DiscordStreamProcessor,
     ProposalContext,
@@ -19,50 +35,9 @@ from pal.discord_interactions import (
     parse_modal_custom_id,
     extract_modal_field_values,
 )
-from agent_core.protocol import (
-    StreamChunkMessage,
-    ResponseMessage,
-    ErrorMessage,
-    ToolProgressMessage,
-)
 from pal.protocol import ResearchApprovalResponseMessage
 
 logger = logging.getLogger(__name__)
-
-
-class UserConnectionManager:
-    """Manages per-user PalClient connections to the daemon."""
-
-    def __init__(self, allowed_users: set[str], socket_path: str | Path) -> None:
-        self.allowed_users = allowed_users
-        self.socket_path = Path(socket_path)
-        self._clients: dict[str, PalClient] = {}
-
-    def is_allowed(self, user_id: str) -> bool:
-        return user_id in self.allowed_users
-
-    async def get_client(self, user_id: str) -> PalClient:
-        """Get or create a PalClient for a Discord user."""
-        if user_id in self._clients:
-            client = self._clients[user_id]
-            if client.is_connected:
-                return client
-            del self._clients[user_id]
-
-        client = PalClient(self.socket_path)
-        await client.connect()
-        self._clients[user_id] = client
-        return client
-
-    async def close_all(self) -> None:
-        """Close all daemon connections."""
-        for client in self._clients.values():
-            await client.close()
-        self._clients.clear()
-
-
-_FENCED_CODE = re.compile(r"```[\s\S]*?```")
-_INLINE_CODE = re.compile(r"`[^`\n]+`")
 
 
 def _discord_command_names() -> set[str]:
@@ -79,134 +54,24 @@ def _discord_command_names() -> set[str]:
     return builtin_names | pal_names
 
 
-def rewrite_slash_prefixes(text: str, names: "set[str] | None" = None) -> str:
-    """Translate `/cmd` to `!cmd` for commands registered in the PAL registry.
-
-    Skips content inside fenced and inline code. Only rewrites tokens at
-    line start or immediately following whitespace/punctuation.
-
-    `names` defaults to the full command name set derived from PALAgent and
-    framework builtins. Pass an explicit set in tests or when the caller
-    already holds the names.
-    """
-    if names is None:
-        names = _discord_command_names()
-    if not names:
-        return text
-    # Build an alternation regex for known command names, longest first
-    # so `compile-batch` wins over `compile`.
-    sorted_names = sorted(names, key=len, reverse=True)
-    pattern = re.compile(
-        r"(?P<lead>^|[\s,.;:!?\(])/(?P<name>"
-        + "|".join(re.escape(n) for n in sorted_names)
-        + r")\b"
-    )
-
-    # Protect fenced code blocks and inline code by temporarily substituting.
-    placeholders: dict[str, str] = {}
-
-    def _stash(m: re.Match) -> str:
-        key = f"\x00PLACEHOLDER{len(placeholders)}\x00"
-        placeholders[key] = m.group(0)
-        return key
-
-    safe = _FENCED_CODE.sub(_stash, text)
-    safe = _INLINE_CODE.sub(_stash, safe)
-
-    rewritten = pattern.sub(lambda m: f"{m.group('lead')}!{m.group('name')}", safe)
-
-    for key, original in placeholders.items():
-        rewritten = rewritten.replace(key, original)
-    return rewritten
-
-
-_DISCORD_MSG_LIMIT = 2000
-
-
-def parse_discord_message(text: str) -> tuple | None:
-    """Parse a Discord message into a PAL intent.
-
-    Returns:
-        ("chat", text) for regular messages
-        ("command", name, args) for ! commands
-        None for empty/invalid messages
-    """
-    text = text.strip()
-    if not text:
-        return None
-    if text.startswith("!"):
-        rest = text[1:].strip()
-        if not rest:
-            return None
-        parts = rest.split(None, 1)
-        name = parts[0]
-        args = parts[1] if len(parts) > 1 else ""
-        return ("command", name, args)
-    return ("chat", text)
+# PAL-specific tool progress labels. format_tool_progress falls through
+# to the generic "tool..." label for any tool not in this dict.
+_PAL_TOOL_FORMATTERS: dict[str, Callable[[dict], str]] = {
+    "read_file":         lambda a: f"reading {a.get('path', '?')}...",
+    "list_directory":    lambda a: f"listing {a.get('path', '') or 'vault'}...",
+    "search_content":    lambda a: f"searching for \"{a.get('query', '?')}\"...",
+    "search_vault":      lambda a: f"searching vault for \"{a.get('query', '?')}\"...",
+    "edit_file":         lambda a: f"editing {a.get('path', '?')}...",
+    "create_file":       lambda a: f"creating {a.get('path', '?')}...",
+    "research_topic":    lambda a: a.get("status") or "running research...",
+    "propose_research":  lambda a: f"proposing research on \"{a['topic']}\"..." if a.get("topic") else "proposing research...",
+    "search_web":        lambda a: f"searching web for \"{a['query']}\"..." if a.get("query") else "searching web...",
+}
 
 
 def format_tool_progress(tool: str, arguments: dict) -> str:
-    """Format a tool progress message for Discord (italic text)."""
-    if tool == "read_file":
-        label = f"reading {arguments.get('path', '?')}..."
-    elif tool == "list_directory":
-        path = arguments.get("path", "")
-        label = f"listing {path or 'vault'}..."
-    elif tool == "search_content":
-        label = f"searching for \"{arguments.get('query', '?')}\"..."
-    elif tool == "search_vault":
-        label = f"searching vault for \"{arguments.get('query', '?')}\"..."
-    elif tool == "edit_file":
-        label = f"editing {arguments.get('path', '?')}..."
-    elif tool == "create_file":
-        label = f"creating {arguments.get('path', '?')}..."
-    elif tool == "research_topic":
-        status = arguments.get("status")
-        label = status if status else "running research..."
-    elif tool == "propose_research":
-        topic = arguments.get("topic", "")
-        label = f"proposing research on \"{topic}\"..." if topic else "proposing research..."
-    elif tool == "search_web":
-        query = arguments.get("query", "")
-        label = f"searching web for \"{query}\"..." if query else "searching web..."
-    else:
-        label = f"{tool}..."
-    return f"*[{label}]*"
-
-
-def split_message(text: str, limit: int = _DISCORD_MSG_LIMIT) -> list[str]:
-    """Split a message into chunks that fit within Discord's character limit.
-
-    Prefers splitting at paragraph boundaries (double newline).
-    Falls back to splitting at the last space before the limit.
-    """
-    if len(text) <= limit:
-        return [text]
-
-    chunks = []
-    remaining = text
-
-    while remaining:
-        if len(remaining) <= limit:
-            chunks.append(remaining)
-            break
-
-        split_at = remaining.rfind("\n\n", 0, limit)
-        if split_at > 0:
-            chunks.append(remaining[:split_at])
-            remaining = remaining[split_at + 2:]
-            continue
-
-        split_at = remaining.rfind(" ", 0, limit)
-        if split_at > 0:
-            chunks.append(remaining[:split_at])
-            remaining = remaining[split_at + 1:]
-            continue
-
-        chunks.append(remaining[:limit])
-        remaining = remaining[limit:]
-
-    return chunks
+    """PAL wrapper: applies PAL-specific tool labels via the generic helper."""
+    return _format_tool_progress_generic(tool, arguments, custom_formatters=_PAL_TOOL_FORMATTERS)
 
 
 class PalDiscordBot(discord.Client):
@@ -289,7 +154,7 @@ class PalDiscordBot(discord.Client):
                 reply_text = f"Something went wrong: {exc}"
 
         # Send response, splitting if needed
-        for chunk in split_message(rewrite_slash_prefixes(reply_text)):
+        for chunk in split_message(rewrite_slash_prefixes(reply_text, _discord_command_names())):
             await message.channel.send(chunk)
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
