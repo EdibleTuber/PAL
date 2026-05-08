@@ -58,7 +58,7 @@ class Note(Command):
     name = "note"
     args = "<text>"
     description = "Save a quick note"
-    requires = ("wiki", "inference", "categorizer", "config", "retrieval", "_pal_prompt_builder")
+    requires = ("wiki", "inference", "categorizer", "config", "retrieval")
 
     async def run(self, raw_args: str, ctx) -> AsyncIterator:
         topic = raw_args.strip()
@@ -78,8 +78,15 @@ class Note(Command):
             "Be informative and concise."
         )
 
+        pb = ctx.agent.prompt_builder
+        from pal.prompts.system import PAL_BASE_PROMPT
+        base_prompt = "\n\n".join(filter(None, [
+            PAL_BASE_PROMPT,
+            pb.render_profile(),
+            pb.render_wisdom(),
+        ]))
         messages = [
-            {"role": "system", "content": ctx.agent._pal_prompt_builder.build()},
+            {"role": "system", "content": base_prompt},
             {"role": "user", "content": prompt},
         ]
 
@@ -659,7 +666,7 @@ class Learn(Command):
     name = "learn"
     args = ""
     description = "Extract learnings from conversation"
-    requires = ("inference", "learning", "wiki", "_pal_prompt_builder")
+    requires = ("inference", "learning", "wiki")
 
     async def run(self, raw_args: str, ctx) -> AsyncIterator:
         conv = ctx.conversation
@@ -682,8 +689,15 @@ class Learn(Command):
             f"Conversation:\n{conv_text}"
         )
 
+        pb = ctx.agent.prompt_builder
+        from pal.prompts.system import PAL_BASE_PROMPT
+        base_prompt = "\n\n".join(filter(None, [
+            PAL_BASE_PROMPT,
+            pb.render_profile(),
+            pb.render_wisdom(),
+        ]))
         api_messages = [
-            {"role": "system", "content": ctx.agent._pal_prompt_builder.build()},
+            {"role": "system", "content": base_prompt},
             {"role": "user", "content": prompt},
         ]
 
