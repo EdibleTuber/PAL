@@ -117,18 +117,28 @@ class UrlFix(Tool):
     )
     requires = ("approval_registry",)
 
-    @property
-    def schema(self) -> dict:
-        return {
-            "type": "object",
-            "properties": {
-                "proposal_id": {"type": "string"},
-                "article_path": {"type": "string"},
-                "proposed_url": {"type": "string"},
-                "proposed_source_file": {"type": "string"},
+    parameters = {
+        "type": "object",
+        "properties": {
+            "proposal_id": {
+                "type": "string",
+                "description": "The proposal_id returned by propose_url_fix when the proposal was approved.",
             },
-            "required": ["proposal_id", "article_path"],
-        }
+            "article_path": {
+                "type": "string",
+                "description": "Path of the article to fix, relative to the vault.",
+            },
+            "proposed_url": {
+                "type": "string",
+                "description": "Approved URL to write into the first sources entry. Empty if not setting a URL.",
+            },
+            "proposed_source_file": {
+                "type": "string",
+                "description": "Approved source_file path to write into the first sources entry. Empty if not setting a path.",
+            },
+        },
+        "required": ["proposal_id", "article_path"],
+    }
 
     async def run(self, args: dict, ctx: "HandlerContext") -> str:
         proposal_id = args["proposal_id"]
