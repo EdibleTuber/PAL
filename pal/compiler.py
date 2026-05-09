@@ -115,6 +115,7 @@ class Compiler:
         title = summary_meta.get("title", full_path.stem)
         source_url = summary_meta.get("source_url", "")
         source_hash = summary_meta.get("source_hash", "")
+        source_file = summary_meta.get("source_file", "")
 
         # Step 1: Categorize
         category = await self.categorizer.categorize(
@@ -143,6 +144,7 @@ class Compiler:
                 existing_article_path=existing_match["path"],
                 source_url=source_url,
                 source_hash=source_hash,
+                source_file=source_file,
             )
             if result.get("status") == "merged":
                 source_raw = summary_meta.get("source_raw", "")
@@ -221,6 +223,7 @@ class Compiler:
             article=article,
             source_url=source_url,
             source_hash=source_hash,
+            source_file=source_file,
             summary=summary_body.strip(),
         )
 
@@ -272,6 +275,7 @@ class Compiler:
         existing_article_path: str,
         source_url: str = "",
         source_hash: str = "",
+        source_file: str = "",
     ) -> dict[str, Any]:
         """Merge new content into an existing wiki article via LLM synthesis.
 
@@ -359,6 +363,7 @@ class Compiler:
             article=article,
             source_url=source_url,
             source_hash=source_hash,
+            source_file=source_file,
             summary=new_content.strip(),
         )
 
