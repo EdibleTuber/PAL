@@ -41,7 +41,7 @@ class ProposeUrlFix(Tool):
                 "description": "One-line reason shown to the user in the approval prompt.",
             },
         },
-        "required": ["article_path", "proposed_url", "proposed_source_file", "rationale"],
+        "required": ["article_path", "rationale"],
     }
     requires = ("approval_registry",)
 
@@ -75,16 +75,10 @@ class ProposeUrlFix(Tool):
             })
 
         ar = ctx.agent.approval_registry
-        try:
-            proposal_id = ar.create_proposal(
-                kind="url_fix",
-                article_path=article_path,
-                proposed_url=proposed_url,
-                proposed_source_file=proposed_source_file,
-                rationale=rationale,
-            )
-        except ValueError as exc:
-            return json.dumps({"status": "error", "message": str(exc)})
+        proposal_id = ar.create_proposal(
+            kind="url_fix",
+            rationale=rationale,
+        )
 
         proposal = ar.get(proposal_id)
         await ctx.emit(
@@ -97,18 +91,16 @@ class ProposeUrlFix(Tool):
             )
         )
 
-        expires_at = getattr(proposal, "expires_at", None)
-        if expires_at is not None:
-            remaining = (expires_at - datetime.now(timezone.utc)).total_seconds()
-            try:
-                await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
-            except asyncio.TimeoutError:
-                ar.expire_stale()
-        else:
-            await proposal.event.wait()
+        remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
+        try:
+            await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
+        except asyncio.TimeoutError:
+            ar.expire_stale()
 
         final = ar.get(proposal_id)
         result: dict = {"proposal_id": proposal_id, "status": final.status}
         if final.status == "approved":
-            result["status"] = "proposed"
+            result["article_path"] = article_path
+            result["proposed_url"] = proposed_url
+            result["proposed_source_file"] = proposed_source_file
         return json.dumps(result)
