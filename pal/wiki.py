@@ -242,3 +242,36 @@ class WikiManager:
                     })
 
         return issues
+
+
+def find_articles_missing_source(vault_path: Path) -> list[Path]:
+    """Return paths of articles where every sources entry has empty url and no source_file.
+
+    Skips underscore-prefixed system directories (_wisdom, _learning, etc.) and raw/.
+    Articles with no sources array are not returned (predate the convention).
+    """
+    results = []
+    for path in vault_path.rglob("*.md"):
+        rel = path.relative_to(vault_path)
+        first = rel.parts[0] if rel.parts else ""
+        if first.startswith("_") or first == "raw":
+            continue
+
+        try:
+            meta, _ = parse_frontmatter(path.read_text())
+        except Exception:
+            continue
+
+        sources = meta.get("sources")
+        if not sources:
+            continue
+
+        all_empty = all(
+            not entry.get("url", "").strip()
+            and not entry.get("source_file", "").strip()
+            for entry in sources
+        )
+        if all_empty:
+            results.append(path)
+
+    return results
