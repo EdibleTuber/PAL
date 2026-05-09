@@ -113,7 +113,8 @@ class UrlFix(Tool):
     description = (
         "Execute an approved propose_url_fix proposal. Pass the proposal_id (from "
         "propose_url_fix's return) plus the approved article_path and proposed url/source_file. "
-        "Rewrites the first sources entry in the target article to include the approved values."
+        "Rewrites the FIRST sources entry only. Articles with multiple all-empty sources "
+        "entries require multiple propose_url_fix invocations, one per entry."
     )
     requires = ("approval_registry",)
 

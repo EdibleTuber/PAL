@@ -26,9 +26,10 @@ from pal.protocol import (
     ResearchApprovalResponseMessage,
     ResearchProposalMessage,
     ReorgProposalMessage,
+    UrlFixProposalMessage,
 )
 
-ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote", "learning_candidate"]
+ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote", "learning_candidate", "url_fix"]
 
 _DISCORD_FIELD_VALUE_LIMIT = 1024
 _FIELD_BUDGET_HEADROOM = 40  # "+NNN more" plus newlines
@@ -254,6 +255,43 @@ def build_consolidate_proposal_embed(
         label="Edit",
         emoji="✏️",
         custom_id=f"consolidate:edit:{msg.proposal_id}",
+    ))
+    return embed, view
+
+
+def build_url_fix_proposal_embed(
+    msg: UrlFixProposalMessage,
+) -> tuple[discord.Embed, discord.ui.View]:
+    """Pure builder: returns the embed and a View with three buttons."""
+    embed = discord.Embed(
+        title="PAL proposes URL fix",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(name="Article", value=msg.article_path, inline=False)
+    if msg.proposed_url:
+        embed.add_field(name="Proposed URL", value=msg.proposed_url, inline=False)
+    if msg.proposed_source_file:
+        embed.add_field(name="Proposed source_file", value=msg.proposed_source_file, inline=False)
+    embed.add_field(name="Rationale", value=msg.rationale, inline=False)
+
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.success,
+        label="Approve",
+        emoji="✅",
+        custom_id=f"url_fix:approve:{msg.proposal_id}",
+    ))
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.danger,
+        label="Decline",
+        emoji="❌",
+        custom_id=f"url_fix:decline:{msg.proposal_id}",
+    ))
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.secondary,
+        label="Edit",
+        emoji="✏️",
+        custom_id=f"url_fix:edit:{msg.proposal_id}",
     ))
     return embed, view
 
@@ -553,6 +591,8 @@ class DiscordStreamProcessor:
                 await self._handle_reorg_proposal(msg)
             elif isinstance(msg, ConsolidateProposalMessage):
                 await self._handle_consolidate_proposal(msg)
+            elif isinstance(msg, UrlFixProposalMessage):
+                await self._handle_url_fix_proposal(msg)
             elif isinstance(msg, PromoteProposalMessage):
                 await self._handle_promote_proposal(msg)
             elif isinstance(msg, LearningCandidateProposalMessage):
@@ -600,6 +640,16 @@ class DiscordStreamProcessor:
                                   ctx_kwargs={"summary_paths": list(msg.source_paths)},
                                   ctx_extras={"target_path": msg.target_path,
                                               "target_title": msg.target_title})
+
+    async def _handle_url_fix_proposal(self, msg: UrlFixProposalMessage) -> None:
+        embed, view = build_url_fix_proposal_embed(msg)
+        await self._post_proposal(embed, view, msg.proposal_id, "url_fix",
+                                  rationale=msg.rationale,
+                                  ctx_extras={
+                                      "article_path": msg.article_path,
+                                      "proposed_url": msg.proposed_url,
+                                      "proposed_source_file": msg.proposed_source_file,
+                                  })
 
     async def _handle_promote_proposal(self, msg: PromoteProposalMessage) -> None:
         embed, view = build_promote_proposal_embed(msg)
@@ -713,7 +763,7 @@ def parse_button_custom_id(
     if len(parts) != 3:
         return None
     kind, action, proposal_id = parts
-    if kind not in ("research", "compile", "reorg", "consolidate", "promote", "learning_candidate"):
+    if kind not in ("research", "compile", "reorg", "consolidate", "promote", "learning_candidate", "url_fix"):
         return None
     if action not in ("approve", "decline", "edit"):
         return None
@@ -728,7 +778,7 @@ def parse_modal_custom_id(cid: str) -> Optional[tuple[ProposalKind, str]]:
     if len(parts) != 2:
         return None
     kind, proposal_id = parts
-    if kind not in ("research", "compile", "reorg", "consolidate", "promote", "learning_candidate"):
+    if kind not in ("research", "compile", "reorg", "consolidate", "promote", "learning_candidate", "url_fix"):
         return None
     if not proposal_id:
         return None
