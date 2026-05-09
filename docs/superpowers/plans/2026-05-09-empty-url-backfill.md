@@ -1261,7 +1261,233 @@ Expected: number close to the audit's reported 43. Names should overlap with the
 
 - [ ] **Step 3: No code changes, no commit**
 
-This is a verification step. The plan is implementation-complete after this step. The actual backfill of the 43 articles is operational work driven by the user invoking `propose_url_fix` and `url_fix` over a session, not part of this plan.
+This is a verification step. The actual backfill of the 43 articles is operational work driven by the user invoking `propose_url_fix` and `url_fix` over a session, not part of this plan.
+
+---
+
+## Task 11: Wire UrlFixProposalMessage through the Discord and CLI surfaces
+
+**Added 2026-05-09 after final review.** Tasks 7-9 made the tools functional at the library/agent layer, but the Discord bridge silently drops `UrlFixProposalMessage` because `discord_interactions.py` has no isinstance branch for it. Without this task, `propose_url_fix` will time out at 15 minutes when invoked via Discord. Mirrors the existing `ConsolidateProposalMessage` wiring exactly.
+
+**Files:**
+- Modify: `pal/discord_interactions.py` (ProposalKind literal, embed builder, handler, dispatcher branch, parser allowlists)
+- Modify: `pal/discord_adapter.py` (edit-as-decline branch for url_fix)
+- Modify: `pal/cli.py` (CLI formatter, dispatcher branch, input handler)
+- Optional: tighten `UrlFix.description` to make "first sources entry" more prominent
+
+- [ ] **Step 1: Add `"url_fix"` to the local `ProposalKind` literal**
+
+In `pal/discord_interactions.py:31`, change:
+
+```python
+ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote", "learning_candidate"]
+```
+
+to:
+
+```python
+ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote", "learning_candidate", "url_fix"]
+```
+
+- [ ] **Step 2: Import `UrlFixProposalMessage`**
+
+In `pal/discord_interactions.py:23` (the multi-name import from `pal.protocol`), add `UrlFixProposalMessage` to the imported names. Alphabetical order if the existing block is alphabetical.
+
+- [ ] **Step 3: Build the embed for `UrlFixProposalMessage`**
+
+Add a function modeled on `build_consolidate_proposal_embed` (lines 208-258 of `pal/discord_interactions.py`). Use the consolidate function as the structural template:
+
+```python
+def build_url_fix_proposal_embed(
+    msg: UrlFixProposalMessage,
+) -> tuple[discord.Embed, discord.ui.View]:
+    """Pure builder: returns the embed and a View with three buttons."""
+    embed = discord.Embed(
+        title="PAL proposes URL fix",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(name="Article", value=msg.article_path, inline=False)
+    if msg.proposed_url:
+        embed.add_field(name="Proposed URL", value=msg.proposed_url, inline=False)
+    if msg.proposed_source_file:
+        embed.add_field(name="Proposed source_file", value=msg.proposed_source_file, inline=False)
+    embed.add_field(name="Rationale", value=msg.rationale, inline=False)
+
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.success,
+        label="Approve",
+        emoji="✅",
+        custom_id=f"url_fix:approve:{msg.proposal_id}",
+    ))
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.danger,
+        label="Decline",
+        emoji="❌",
+        custom_id=f"url_fix:decline:{msg.proposal_id}",
+    ))
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.secondary,
+        label="Edit",
+        emoji="✏️",
+        custom_id=f"url_fix:edit:{msg.proposal_id}",
+    ))
+    return embed, view
+```
+
+Place it adjacent to `build_consolidate_proposal_embed` for grouping.
+
+- [ ] **Step 4: Add the handler**
+
+Add the handler method modeled on `_handle_consolidate_proposal` (around line 596). Mirror the call shape exactly; the `ctx_kwargs` and `ctx_extras` carry whatever fields are needed for the edit-modal path (none for url_fix beyond what `_post_proposal` already needs).
+
+```python
+async def _handle_url_fix_proposal(self, msg: UrlFixProposalMessage) -> None:
+    embed, view = build_url_fix_proposal_embed(msg)
+    await self._post_proposal(
+        embed,
+        view,
+        msg.proposal_id,
+        "url_fix",
+        rationale=msg.rationale,
+        ctx_extras={
+            "article_path": msg.article_path,
+            "proposed_url": msg.proposed_url,
+            "proposed_source_file": msg.proposed_source_file,
+        },
+    )
+```
+
+(If `_post_proposal` requires `ctx_kwargs` to be present even when empty, pass `ctx_kwargs={}`. Mirror the consolidate call's exact kwargs.)
+
+- [ ] **Step 5: Add the dispatcher branch in `run()`**
+
+In `pal/discord_interactions.py` around lines 539-576, add an `elif isinstance(msg, UrlFixProposalMessage):` branch immediately after the `ConsolidateProposalMessage` branch. The body calls `await self._handle_url_fix_proposal(msg)`.
+
+- [ ] **Step 6: Update parser allowlists**
+
+In `parse_button_custom_id` (lines 707-722 of `pal/discord_interactions.py`), add `"url_fix"` to the kind allowlist:
+
+```python
+if kind not in ("research", "compile", "reorg", "consolidate", "promote", "learning_candidate", "url_fix"):
+    return None
+```
+
+Same change in `parse_modal_custom_id` (lines 725-735).
+
+- [ ] **Step 7: Update Discord button click handler in `pal/discord_adapter.py`**
+
+In `_handle_button_interaction()` (around lines 184-260), the consolidate branch (around line 217) treats "edit" as decline-then-repropose. Mirror that for url_fix: add `"url_fix"` to the same set of kinds that take the "edit-as-decline" path.
+
+Find the existing list/set/tuple of kinds that get edit-as-decline (likely a tuple like `("reorg", "consolidate")` or similar). Add `"url_fix"` to it.
+
+- [ ] **Step 8: Update CLI formatter in `pal/cli.py`**
+
+In `pal/cli.py`, around line 132 (the `format_consolidate_proposal` function) and around line 396 (the isinstance dispatch), mirror the consolidate pattern:
+
+```python
+def format_url_fix_proposal(msg: UrlFixProposalMessage) -> str:
+    lines = [
+        "PAL proposes URL fix",
+        f"Article: {msg.article_path}",
+    ]
+    if msg.proposed_url:
+        lines.append(f"Proposed URL: {msg.proposed_url}")
+    if msg.proposed_source_file:
+        lines.append(f"Proposed source_file: {msg.proposed_source_file}")
+    lines.append(f"Rationale: {msg.rationale}")
+    lines.append("Approve [a] / Decline [d, default] / Edit [e]:")
+    return "\n".join(lines)
+```
+
+In the dispatcher (around line 396), add an isinstance branch for `UrlFixProposalMessage` that prints the format and reads the user's input the same way consolidate does. Edit maps to decline (consistent with the v1 pattern).
+
+Add `UrlFixProposalMessage` to the imports at the top of `cli.py` if not already present.
+
+- [ ] **Step 9: Tighten `UrlFix.description`**
+
+In `pal/tools/url_fix.py`, find the `UrlFix` class's `description` string. Currently says "Rewrites the first sources entry in the target article." Tighten to make the per-call scope explicit:
+
+```python
+description = (
+    "Execute an approved propose_url_fix proposal. Pass the proposal_id (from "
+    "propose_url_fix's return) plus the approved article_path and proposed url/source_file. "
+    "Rewrites the FIRST sources entry only. Articles with multiple all-empty sources "
+    "entries require multiple propose_url_fix invocations, one per entry."
+)
+```
+
+This is a one-string-edit change, not architectural.
+
+- [ ] **Step 10: Run the existing test suite to confirm no regressions**
+
+Run:
+```bash
+cd /home/edible/Projects/PAL && .venv/bin/pytest tests/ \
+    --ignore=tests/test_chat_research_integration.py \
+    --ignore=tests/test_client.py \
+    --ignore=tests/test_daemon.py \
+    --ignore=tests/test_integration.py \
+    --ignore=tests/test_prompt_injection.py \
+    -q 2>&1 | tail -10
+```
+
+Expected: all green (around 578 tests). The Discord wiring is integration-shaped and is not directly unit-tested here; the existing tests verify the wiring doesn't break anything else.
+
+- [ ] **Step 11: Smoke-check the embed builder in isolation**
+
+A small inline test to verify the embed builder works without runtime errors. Append to `tests/test_protocol_url_fix.py` (already exists from Task 6):
+
+```python
+def test_build_url_fix_proposal_embed_renders():
+    """Smoke test: the embed builder runs without error for a typical message."""
+    from pal.discord_interactions import build_url_fix_proposal_embed
+    from pal.protocol import UrlFixProposalMessage
+
+    msg = UrlFixProposalMessage(
+        proposal_id="abc",
+        article_path="Hardware/arm-architecture.md",
+        proposed_url="",
+        proposed_source_file="raw/archived/arm-arm.pdf",
+        rationale="ARM ARM PDF found",
+    )
+    embed, view = build_url_fix_proposal_embed(msg)
+    assert embed.title == "PAL proposes URL fix"
+    # Article path should appear in one of the field values.
+    field_values = [f.value for f in embed.fields]
+    assert any("arm-architecture.md" in v for v in field_values)
+    # Three buttons: approve, decline, edit.
+    assert len(view.children) == 3
+```
+
+Run:
+```bash
+cd /home/edible/Projects/PAL && .venv/bin/pytest tests/test_protocol_url_fix.py -v
+```
+
+Expected: all PASS, including the new embed-builder smoke test.
+
+- [ ] **Step 12: Commit**
+
+```bash
+git add pal/discord_interactions.py pal/discord_adapter.py pal/cli.py pal/tools/url_fix.py tests/test_protocol_url_fix.py
+git commit -m "feat(discord+cli): wire UrlFixProposalMessage through Discord and CLI surfaces"
+```
+
+(Adjust the staged paths if any of the listed files weren't actually modified.)
+
+## Context
+
+Task 11 closes the runtime gap discovered during the final review. After this task, `propose_url_fix` invoked via Discord or CLI will produce an interactive embed/prompt, the user's button click or keystroke routes through the normal proposal-approval path, and `url_fix` executes the approved fix.
+
+The task does NOT add `"url_fix"` to `agent_core.approval_registry.ProposalKind`. That is a separate workstream (agent_core API change, requires a version bump). Today the kind passes at runtime because Python's `Literal` is not enforced at runtime. Mark as a known follow-up.
+
+## Important constraints
+
+- Don't grep via bash; use the Grep tool.
+- Don't introduce em dashes anywhere.
+- Match `ConsolidateProposalMessage`'s wiring shape exactly. Where url_fix differs (e.g., no `summary_paths`, no `target_title`), the difference must be justified by a real semantic difference, not a divergence in style.
+- Don't touch `ProposeUrlFix` or `UrlFix` other than the description tweak in Step 9.
 
 ---
 
