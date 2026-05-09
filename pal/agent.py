@@ -464,6 +464,7 @@ class PALAgent(Agent):
                     messages, tools=self.tool_executor.schemas(), reasoning=mode,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 )
+                self.record_usage(ctx.channel_id, completion.usage)
                 if completion.type == "text":
                     response_text = completion.content or ""
                     if completion.reasoning:
@@ -495,6 +496,7 @@ class PALAgent(Agent):
                         # End-of-stream sentinel from agent_core 0.3.1+. Full
                         # finish_reason handling lands in the deferred safety
                         # fix; for now, treat as normal end-of-text.
+                        self.record_usage(ctx.channel_id, item.usage)
                         break
                     chunk = StreamChunkMessage(token=item)
                     writer.write(encode_message(chunk))
@@ -548,6 +550,7 @@ class PALAgent(Agent):
                     messages, tools=self.tool_executor.schemas(), reasoning=mode,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 )
+                self.record_usage(ctx.channel_id, completion.usage)
 
                 if completion.type == "text":
                     response_text = completion.content or ""
