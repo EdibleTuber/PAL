@@ -201,6 +201,7 @@ async def test_merge_into_existing_updates_article_body(tmp_path):
         new_content="New content to fold in.",
         new_title="MCP Additional Notes",
         existing_article_path=article_path_rel,
+        source_url="https://example.com/test",
     )
     assert result["status"] == "merged"
     assert result["article_path_rel"] == article_path_rel
