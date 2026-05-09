@@ -79,6 +79,17 @@ class ConsolidateProposalMessage:
 
 @register_message
 @dataclass
+class UrlFixProposalMessage:
+    proposal_id: str
+    article_path: str
+    proposed_url: str
+    proposed_source_file: str
+    rationale: str
+    type: str = "url_fix_proposal"
+
+
+@register_message
+@dataclass
 class PromoteProposalMessage:
     proposal_id: str
     slug: str
@@ -136,6 +147,7 @@ Message = (
     | CompileProposalMessage
     | ReorgProposalMessage
     | ConsolidateProposalMessage
+    | UrlFixProposalMessage
     | PromoteProposalMessage
     | LearningCandidateProposalMessage
     | BatchFallbackProposal
