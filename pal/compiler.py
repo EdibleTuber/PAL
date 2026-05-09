@@ -99,8 +99,8 @@ class Compiler:
 
         # Size guard: refuse bodies that would blow past the inference server's
         # context window. Gives a clean tool-result back to the LLM so it can
-        # pick a different tactic (search_content, split the source, etc.)
-        # rather than surfacing a raw 400 Bad Request.
+        # pick a different tactic (grep, split the source, etc.) rather than
+        # surfacing a raw 400 Bad Request.
         if len(summary_body) > self.max_body_chars:
             return {
                 "status": "too_large",
@@ -108,7 +108,7 @@ class Compiler:
                 "reason": (
                     f"Source body is {len(summary_body)} characters; "
                     f"exceeds compile limit of {self.max_body_chars}. "
-                    f"Use search_content to work on parts, or split the source."
+                    f"Use grep to work on parts, or split the source."
                 ),
             }
 

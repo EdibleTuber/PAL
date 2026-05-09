@@ -38,13 +38,13 @@ def test_parse_bang_only():
 
 
 def test_format_tool_progress_read():
-    result = format_tool_progress("read_file", {"path": "Research/quantum.md"})
+    result = format_tool_progress("cat", {"path": "Research/quantum.md"})
     assert "reading" in result.lower()
     assert "Research/quantum.md" in result
 
 
 def test_format_tool_progress_list():
-    result = format_tool_progress("list_directory", {"path": ""})
+    result = format_tool_progress("ls", {"path": ""})
     assert "listing" in result.lower()
 
 

@@ -9,10 +9,7 @@ import pytest
 from pal.tools.vault import (
     CreateFile,
     EditFile,
-    ListDirectory,
     MoveFile,
-    ReadFile,
-    SearchContent,
 )
 
 
@@ -38,75 +35,6 @@ def _ctx(agent):
     c = _C()
     c.agent = agent
     return c
-
-
-# --- ReadFile ---
-
-async def test_read_file_returns_content(tmp_path):
-    (tmp_path / "x.md").write_text("---\ntitle: X\n---\n\nbody")
-    result = await ReadFile().run({"path": "x.md"}, _ctx(_Agent(tmp_path)))
-    assert "body" in result
-
-
-async def test_read_file_rejects_escape(tmp_path):
-    result = await ReadFile().run({"path": "../../etc/passwd"}, _ctx(_Agent(tmp_path)))
-    assert "outside vault" in result.lower() or "escape" in result.lower()
-
-
-async def test_read_file_missing(tmp_path):
-    result = await ReadFile().run({"path": "nope.md"}, _ctx(_Agent(tmp_path)))
-    assert "not found" in result.lower()
-
-
-async def test_read_file_truncates_large(tmp_path):
-    (tmp_path / "big.md").write_text("x" * 40_000)
-    result = await ReadFile().run({"path": "big.md"}, _ctx(_Agent(tmp_path)))
-    # PAL's _READ_LIMIT = 32_000; the lift retains the same limit and footer text.
-    assert "truncated" in result.lower()
-
-
-# --- ListDirectory ---
-
-async def test_list_directory_root(tmp_path):
-    (tmp_path / "a.md").write_text("a")
-    (tmp_path / "b.md").write_text("b")
-    (tmp_path / "Notes").mkdir()
-    result = await ListDirectory().run({}, _ctx(_Agent(tmp_path)))
-    assert "a.md" in result
-    assert "b.md" in result
-
-
-async def test_list_directory_prefix(tmp_path):
-    (tmp_path / "agent-1.md").write_text(".")
-    (tmp_path / "agent-2.md").write_text(".")
-    (tmp_path / "other.md").write_text(".")
-    result = await ListDirectory().run({"prefix": "agent-"}, _ctx(_Agent(tmp_path)))
-    assert "agent-1.md" in result
-    assert "agent-2.md" in result
-    assert "other.md" not in result
-
-
-async def test_list_directory_pagination(tmp_path):
-    for i in range(10):
-        (tmp_path / f"f{i:02}.md").write_text(".")
-    result = await ListDirectory().run({"offset": 5, "limit": 3}, _ctx(_Agent(tmp_path)))
-    # Should include at least one file from index 5 onward.
-    assert "f05.md" in result or "f06.md" in result or "f07.md" in result
-
-
-# --- SearchContent ---
-
-async def test_search_content_finds(tmp_path):
-    (tmp_path / "x.md").write_text("apple\nbanana")
-    result = await SearchContent().run({"query": "banana"}, _ctx(_Agent(tmp_path)))
-    assert "x.md" in result
-    assert "banana" in result
-
-
-async def test_search_content_no_match(tmp_path):
-    (tmp_path / "x.md").write_text("apple")
-    result = await SearchContent().run({"query": "zzz"}, _ctx(_Agent(tmp_path)))
-    assert "no match" in result.lower() or result.strip() == "" or "no results" in result.lower()
 
 
 # --- EditFile (must trigger reindex on success) ---
@@ -286,70 +214,6 @@ async def test_move_file_move_single_raises_value_error(tmp_path):
     )
     parsed = json.loads(result)
     assert "error" in parsed
-
-
-# --- Extra coverage for ListDirectory ---
-
-async def test_list_directory_subdir(tmp_path):
-    (tmp_path / "Notes").mkdir()
-    (tmp_path / "Notes" / "a.md").write_text("a")
-    (tmp_path / "Notes" / "b.md").write_text("b")
-    result = await ListDirectory().run({"path": "Notes"}, _ctx(_Agent(tmp_path)))
-    assert "a.md" in result
-    assert "b.md" in result
-
-
-async def test_list_directory_not_found(tmp_path):
-    result = await ListDirectory().run({"path": "nonexistent"}, _ctx(_Agent(tmp_path)))
-    assert "not found" in result.lower()
-
-
-async def test_list_directory_truncates_large_dir(tmp_path):
-    big = tmp_path / "AI"
-    big.mkdir()
-    for i in range(120):
-        (big / f"{i:03d}-topic.md").write_text(".")
-    result = await ListDirectory().run({"path": "AI"}, _ctx(_Agent(tmp_path)))
-    assert "000-topic.md" in result
-    assert "049-topic.md" in result
-    assert "050-topic.md" not in result
-    assert "showing 1-50 of 120" in result.lower()
-    assert "offset=50" in result
-
-
-async def test_list_directory_custom_limit(tmp_path):
-    big = tmp_path / "AI"
-    big.mkdir()
-    for i in range(30):
-        (big / f"{i:02d}-topic.md").write_text(".")
-    result = await ListDirectory().run({"path": "AI", "limit": 5}, _ctx(_Agent(tmp_path)))
-    assert "00-topic.md" in result
-    assert "04-topic.md" in result
-    assert "05-topic.md" not in result
-    assert "showing 1-5 of 30" in result.lower()
-
-
-async def test_list_directory_hides_system_dirs(tmp_path):
-    (tmp_path / "_wisdom").mkdir()
-    (tmp_path / "_wisdom" / "x.md").write_text("x")
-    (tmp_path / "public.md").write_text("y")
-    result = await ListDirectory().run({}, _ctx(_Agent(tmp_path)))
-    assert "_wisdom" not in result
-    assert "public.md" in result
-
-
-# --- Extra coverage for SearchContent ---
-
-async def test_search_content_skips_system_dirs(tmp_path):
-    (tmp_path / "_wisdom").mkdir()
-    (tmp_path / "_wisdom" / "secret.md").write_text("secret content")
-    result = await SearchContent().run({"query": "secret"}, _ctx(_Agent(tmp_path)))
-    assert "no results" in result.lower()
-
-
-async def test_search_content_empty_query(tmp_path):
-    result = await SearchContent().run({"query": ""}, _ctx(_Agent(tmp_path)))
-    assert "error" in result.lower()
 
 
 # --- Extra coverage for EditFile ---

@@ -57,9 +57,9 @@ def _discord_command_names() -> set[str]:
 # PAL-specific tool progress labels. format_tool_progress falls through
 # to the generic "tool..." label for any tool not in this dict.
 _PAL_TOOL_FORMATTERS: dict[str, Callable[[dict], str]] = {
-    "read_file":         lambda a: f"reading {a.get('path', '?')}...",
-    "list_directory":    lambda a: f"listing {a.get('path', '') or 'vault'}...",
-    "search_content":    lambda a: f"searching for \"{a.get('query', '?')}\"...",
+    "cat":               lambda a: f"reading {a.get('path', '?')}...",
+    "ls":                lambda a: f"listing {a.get('path', '') or 'vault'}...",
+    "grep":              lambda a: f"searching for \"{a.get('pattern', '?')}\"...",
     "search_vault":      lambda a: f"searching vault for \"{a.get('query', '?')}\"...",
     "edit_file":         lambda a: f"editing {a.get('path', '?')}...",
     "create_file":       lambda a: f"creating {a.get('path', '?')}...",
