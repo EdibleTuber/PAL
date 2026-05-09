@@ -211,7 +211,7 @@ class PalDiscordBot(discord.Client):
                 modal = build_compile_edit_modal(ctx)
                 await interaction.response.send_modal(modal)
                 return
-            else:  # reorg / consolidate / url_fix — v1 edit-as-decline, no modal
+            else:  # reorg / consolidate / url_fix: v1 edit-as-decline, no modal
                 try:
                     client = await self.connections.get_client(str(interaction.user.id))
                     await client.send(ResearchApprovalResponseMessage(
