@@ -104,3 +104,94 @@ class ProposeUrlFix(Tool):
             result["proposed_url"] = proposed_url
             result["proposed_source_file"] = proposed_source_file
         return json.dumps(result)
+
+
+class UrlFix(Tool):
+    """Execute an approved url_fix proposal: rewrite the article's first sources entry."""
+
+    name = "url_fix"
+    description = (
+        "Execute an approved propose_url_fix proposal. Pass the proposal_id (from "
+        "propose_url_fix's return) plus the approved article_path and proposed url/source_file. "
+        "Rewrites the first sources entry in the target article to include the approved values."
+    )
+    requires = ("approval_registry",)
+
+    @property
+    def schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "proposal_id": {"type": "string"},
+                "article_path": {"type": "string"},
+                "proposed_url": {"type": "string"},
+                "proposed_source_file": {"type": "string"},
+            },
+            "required": ["proposal_id", "article_path"],
+        }
+
+    async def run(self, args: dict, ctx: "HandlerContext") -> str:
+        proposal_id = args["proposal_id"]
+        article_path_rel = args["article_path"]
+        proposed_url = (args.get("proposed_url") or "").strip()
+        proposed_source_file = (args.get("proposed_source_file") or "").strip()
+
+        if not proposed_url and not proposed_source_file:
+            return json.dumps({
+                "status": "error",
+                "message": "Must provide at least one of proposed_url or proposed_source_file.",
+            })
+
+        ar = ctx.agent.approval_registry
+        proposal = ar.get(proposal_id)
+
+        if proposal is None:
+            return json.dumps({"status": "error", "message": f"Proposal not found: {proposal_id}"})
+
+        if proposal.status == "consumed":
+            return json.dumps({
+                "status": "error",
+                "message": f"Proposal {proposal_id} has already been consumed.",
+            })
+
+        if proposal.status != "approved":
+            return json.dumps({
+                "status": "error",
+                "message": f"Proposal {proposal_id} is not approved (status={proposal.status}).",
+            })
+
+        vault_path = ctx.agent.config.vault_path
+        full_path = vault_path / article_path_rel
+        if not full_path.exists():
+            return json.dumps({
+                "status": "error",
+                "message": f"Article not found at execute time: {article_path_rel}",
+            })
+
+        from agent_core.utils.frontmatter import parse_frontmatter, serialize_frontmatter
+
+        meta, body = parse_frontmatter(full_path.read_text())
+        sources = meta.get("sources", [])
+        if not sources:
+            return json.dumps({
+                "status": "error",
+                "message": f"Article {article_path_rel} has no sources array to fix.",
+            })
+
+        first = dict(sources[0])
+        if proposed_url:
+            first["url"] = proposed_url
+        if proposed_source_file:
+            first["source_file"] = proposed_source_file
+        sources[0] = first
+        meta["sources"] = sources
+
+        full_path.write_text(serialize_frontmatter(meta, body))
+        ar.consume(proposal_id)
+
+        return json.dumps({
+            "status": "fixed",
+            "article_path": article_path_rel,
+            "wrote_url": bool(proposed_url),
+            "wrote_source_file": bool(proposed_source_file),
+        })
