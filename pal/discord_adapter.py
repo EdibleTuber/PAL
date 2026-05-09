@@ -6,6 +6,7 @@ rewriting, tool-progress formatting) live in agent_core.adapters.discord_gateway
 PAL keeps PalDiscordBot here because of its approval UX (button/modal
 handlers, proposal threads) which are too domain-specific to lift.
 """
+import contextlib
 import logging
 from pathlib import Path
 from typing import Callable
@@ -38,6 +39,21 @@ from pal.discord_interactions import (
 from pal.protocol import ResearchApprovalResponseMessage
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.asynccontextmanager
+async def _maybe_typing(channel):
+    """Best-effort typing indicator. If Discord rate-limits or rejects the
+    typing call, log and proceed without it — better than aborting on_message
+    and ghosting the user with no response."""
+    try:
+        async with channel.typing():
+            yield
+    except discord.HTTPException as exc:
+        logger.warning(
+            "typing indicator failed (%s); proceeding without it", exc,
+        )
+        yield
 
 
 def _discord_command_names() -> set[str]:
@@ -116,8 +132,9 @@ class PalDiscordBot(discord.Client):
         if parsed is None:
             return
 
-        # Show typing indicator while working
-        async with message.channel.typing():
+        # Show typing indicator while working (best-effort: a 429 from
+        # Discord on the typing call shouldn't abort the whole handler).
+        async with _maybe_typing(message.channel):
             try:
                 client = await self.connections.get_client(user_id)
 
