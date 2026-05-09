@@ -23,6 +23,10 @@ from pal.archive import archive_raw_files, MAX_SLUG_BYTES
 logger = logging.getLogger(__name__)
 
 
+class EmptySourceError(ValueError):
+    """Raised when a summary has neither source_url nor source_file populated."""
+
+
 def _clip_title_for_slug(title: str, max_chars: int = 80, max_words: int = 8) -> str:
     """Clip a title to a readable length before slug generation.
 
@@ -116,6 +120,12 @@ class Compiler:
         source_url = summary_meta.get("source_url", "")
         source_hash = summary_meta.get("source_hash", "")
         source_file = summary_meta.get("source_file", "")
+
+        if not source_url and not source_file:
+            raise EmptySourceError(
+                f"Summary {summary_path} has empty source_url and empty source_file. "
+                f"Compile refuses to emit articles without provenance."
+            )
 
         # Step 1: Categorize
         category = await self.categorizer.categorize(
@@ -288,6 +298,12 @@ class Compiler:
         Used by compile_one's existing-match branch and by Reorganizer
         for merge operations.
         """
+        if not source_url and not source_file:
+            raise EmptySourceError(
+                f"Merge for '{new_title}' has empty source_url and empty source_file. "
+                f"Compile refuses to emit articles without provenance."
+            )
+
         base_prompt = self.prompt_builder.build()
 
         existing_text = (self.vault_path / existing_article_path).read_text()

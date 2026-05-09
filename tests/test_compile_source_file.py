@@ -98,11 +98,24 @@ def _make_prompt_builder():
     return pb
 
 
+def _build_test_compiler(vault, article_body=None):
+    """Build a Compiler with MagicMock/AsyncMock fakes pointing at the given vault."""
+    from pal.compiler import Compiler
+
+    if article_body is None:
+        article_body = "## Overview\n\nFrom PDF.\n\n## Key Concepts\n\nSome concepts.\n"
+    return Compiler(
+        vault_path=vault,
+        wiki=_make_wiki(),
+        inference=_make_inference(article_body),
+        categorizer=_make_categorizer("AI"),
+        prompt_builder=_make_prompt_builder(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_compile_one_extracts_source_file_from_summary_meta(tmp_path):
     """compile_one passes source_file from summary frontmatter into the article sources."""
-    from pal.compiler import Compiler
-
     vault = tmp_path / "vault"
     vault.mkdir()
     raw_dir = vault / "raw" / "summaries"
@@ -121,14 +134,7 @@ async def test_compile_one_extracts_source_file_from_summary_meta(tmp_path):
         "## Overview\n\nSummary body.\n"
     )
 
-    article_body = "## Overview\n\nFrom PDF.\n\n## Key Concepts\n\nSome concepts.\n"
-    compiler = Compiler(
-        vault_path=vault,
-        wiki=_make_wiki(),
-        inference=_make_inference(article_body),
-        categorizer=_make_categorizer("AI"),
-        prompt_builder=_make_prompt_builder(),
-    )
+    compiler = _build_test_compiler(vault)
 
     result = await compiler.compile_one(summary_path_rel)
 
@@ -143,3 +149,31 @@ async def test_compile_one_extracts_source_file_from_summary_meta(tmp_path):
     assert "url: ''" in text, (
         "empty source_url should serialize as url: ''"
     )
+
+
+@pytest.mark.asyncio
+async def test_compile_one_rejects_empty_source_url_and_source_file(tmp_path):
+    """When both source_url and source_file are empty, compile must refuse."""
+    from pal.compiler import EmptySourceError
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    raw = vault / "raw" / "summaries"
+    raw.mkdir(parents=True)
+
+    summary_path = raw / "no-source.md"
+    summary_path.write_text(
+        "---\n"
+        "title: No Source\n"
+        "source_url: ''\n"
+        "source_file: ''\n"
+        "source_hash: ''\n"
+        "---\n"
+        "\n"
+        "Summary body.\n"
+    )
+
+    compiler = _build_test_compiler(vault)
+
+    with pytest.raises(EmptySourceError):
+        await compiler.compile_one("raw/summaries/no-source.md")
