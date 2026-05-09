@@ -1,0 +1,10 @@
+UART protocol? Like what commands do we need documentation on?
+What GDB documentation do we have?
+Best way to deal with pavement ants?
+Put an r36max in maskrom mode?
+Sous vide cooking explained?
+I'm learning Bisaya and could use a lesson plan.
+Best practices for using a 5v pico to control a 120v current?
+Making an MCP bridge for an RE agent?
+Python documentation?
+iOS frida scripting commands?
