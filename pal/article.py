@@ -133,10 +133,13 @@ def append_timeline_entry(
     source_url: str,
     source_hash: str,
     summary: str,
+    source_file: str = "",
 ) -> Article:
     """Append a new timeline entry and update frontmatter sources list.
 
     Returns a new Article with the entry appended (does not mutate input).
+    If source_file is provided (non-empty), it is stored in the sources entry
+    alongside url and hash so local/PDF sources can be identified later.
     """
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%Y-%m-%d")
@@ -157,11 +160,14 @@ def append_timeline_entry(
     new_timeline = list(article.timeline) + [entry]
 
     new_sources = list(article.meta.get("sources", []))
-    new_sources.append({
+    source_entry: dict = {
         "url": source_url,
         "hash": source_hash,
         "added": added_str,
-    })
+    }
+    if source_file:
+        source_entry["source_file"] = source_file
+    new_sources.append(source_entry)
 
     new_meta = dict(article.meta)
     new_meta["sources"] = new_sources
