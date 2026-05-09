@@ -16,6 +16,7 @@ from pal.tools.vault import (
 from pal.tools.research import ProposeResearch, ResearchTopic
 from pal.tools.compile import CompileSummary, ProposeCompileBatch, CompileBatch
 from pal.tools.consolidate import ProposeConsolidate, Consolidate
+from pal.tools.url_fix import ProposeUrlFix, UrlFix
 from pal.tools.reorg import ProposeReorg, ProposePromote, Reorg
 from pal.tools.wait import WaitForReindex
 from pal.tools.scratch import UpdateScratch, AddLearning
@@ -31,6 +32,8 @@ __all__ = [
     "CompileBatch",
     "ProposeConsolidate",
     "Consolidate",
+    "ProposeUrlFix",
+    "UrlFix",
     "ProposeReorg",
     "ProposePromote",
     "Reorg",

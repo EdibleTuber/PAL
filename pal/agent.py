@@ -47,9 +47,11 @@ from pal.tools import (
     ProposePromote,
     ProposeReorg,
     ProposeResearch,
+    ProposeUrlFix,
     Reorg,
     ResearchTopic,
     UpdateScratch,
+    UrlFix,
     WaitForReindex,
 )
 from agent_core.scratchpad import ScratchpadTooLarge
@@ -133,6 +135,7 @@ class PALAgent(Agent):
              ProposeResearch, ResearchTopic,
              CompileSummary, ProposeCompileBatch, ToolCompileBatch,
              ProposeConsolidate, Consolidate,
+             ProposeUrlFix, UrlFix,
              ProposeReorg, ProposePromote, Reorg,
              WaitForReindex,
              UpdateScratch, AddLearning]
