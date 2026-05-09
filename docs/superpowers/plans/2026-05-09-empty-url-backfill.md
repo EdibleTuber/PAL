@@ -914,19 +914,23 @@ git commit -m "feat(tools): add ProposeUrlFix for empty-source backfill"
 - Modify: `pal/tools/url_fix.py` (add `UrlFix` class)
 - Test: `tests/test_tools_url_fix.py`
 
-- [ ] **Step 1: Add a failing test for execution that rewrites the article**
+**Architectural note (revised after Task 7 review).** The `agent_core.approval_registry.Proposal` dataclass does not store arbitrary fields. `ProposeConsolidate` works because `target_path`, `target_title`, etc. are real fields on the dataclass. The url-fix equivalents (`article_path`, `proposed_url`, `proposed_source_file`) are NOT on `Proposal`, so `ProposeUrlFix` does not (and cannot) pass them as kwargs to `create_proposal`. Instead, `ProposeUrlFix` returns those values in its result JSON when the proposal is approved. The agent reads them from that JSON and passes them to `UrlFix` as direct tool parameters. The registry is used only to verify the proposal is approved and not yet consumed.
 
-Append to `tests/test_tools_url_fix.py`:
+- [ ] **Step 1: Add failing tests for execution that rewrites the article**
+
+Append to `tests/test_tools_url_fix.py`. The tests use a real `ApprovalRegistry` (mirroring the consolidate test pattern from Task 7's fixes) and pass tool parameters directly:
 
 ```python
 @pytest.mark.asyncio
 async def test_url_fix_writes_source_file_and_preserves_other_frontmatter(tmp_path):
+    """An approved proposal causes the first sources entry to be rewritten with the approved fields."""
     from pal.tools.url_fix import UrlFix
+    from agent_core.approval_registry import ApprovalRegistry
 
     vault = tmp_path / "vault"
     (vault / "Hardware").mkdir(parents=True)
-    article_path = vault / "Hardware" / "arm-architecture.md"
-    article_path.write_text(
+    article_full_path = vault / "Hardware" / "arm-architecture.md"
+    article_full_path.write_text(
         "---\n"
         "title: ARM Architecture\n"
         "compiled_at: '2026-04-01T00:00:00+00:00'\n"
@@ -939,67 +943,104 @@ async def test_url_fix_writes_source_file_and_preserves_other_frontmatter(tmp_pa
         "## Overview\n\nbody\n"
     )
 
-    ar, proposal = _approval_registry_with_proposal()
-    proposal.fields = {
-        "article_path": "Hardware/arm-architecture.md",
-        "proposed_url": "",
-        "proposed_source_file": "raw/archived/arm-arm.pdf",
-        "rationale": "found",
-    }
+    ar = ApprovalRegistry()
+    proposal_id = ar.create_proposal(kind="url_fix", rationale="ARM ARM PDF found")
+    ar.approve(proposal_id)  # Test simulates user approval. Real flow waits on event.
 
     agent = _Agent(vault, ar)
     tool = UrlFix()
 
-    result = await tool.run(ctx=_ctx(agent), proposal_id="test-proposal-1")
+    result_json = await tool.run(
+        {
+            "proposal_id": proposal_id,
+            "article_path": "Hardware/arm-architecture.md",
+            "proposed_url": "",
+            "proposed_source_file": "raw/archived/arm-arm.pdf",
+        },
+        _ctx(agent),
+    )
+    result = json.loads(result_json)
 
     assert result["status"] == "fixed"
-    text = article_path.read_text()
+    text = article_full_path.read_text()
     assert "source_file: raw/archived/arm-arm.pdf" in text
     assert "title: ARM Architecture" in text
-    assert "hash: oldhash" in text
-    ar.consume.assert_called_once_with("test-proposal-1")
+    assert "hash: oldhash" in text  # other sources fields preserved
+    # Proposal should be consumed after successful execution.
+    assert ar.get(proposal_id).consumed
 
 
 @pytest.mark.asyncio
 async def test_url_fix_refuses_unapproved_proposal(tmp_path):
     from pal.tools.url_fix import UrlFix
+    from agent_core.approval_registry import ApprovalRegistry
 
     vault = tmp_path / "vault"
-    vault.mkdir()
+    (vault / "Hardware").mkdir(parents=True)
+    (vault / "Hardware" / "x.md").write_text(
+        "---\ntitle: X\nsources:\n  - url: ''\n    hash: ''\n---\n\nbody\n"
+    )
 
-    ar, proposal = _approval_registry_with_proposal()
-    proposal.status = "pending"
-    proposal.fields = {"article_path": "x", "proposed_url": "y", "proposed_source_file": "", "rationale": "z"}
+    ar = ApprovalRegistry()
+    proposal_id = ar.create_proposal(kind="url_fix", rationale="z")
+    # Do NOT approve.
 
     agent = _Agent(vault, ar)
     tool = UrlFix()
 
-    result = await tool.run(ctx=_ctx(agent), proposal_id="test-proposal-1")
+    result_json = await tool.run(
+        {
+            "proposal_id": proposal_id,
+            "article_path": "Hardware/x.md",
+            "proposed_url": "https://example.com",
+            "proposed_source_file": "",
+        },
+        _ctx(agent),
+    )
+    result = json.loads(result_json)
 
     assert result["status"] == "error"
     assert "approved" in result["message"].lower()
-    ar.consume.assert_not_called()
+    assert not ar.get(proposal_id).consumed
 
 
 @pytest.mark.asyncio
 async def test_url_fix_refuses_consumed_proposal(tmp_path):
     from pal.tools.url_fix import UrlFix
+    from agent_core.approval_registry import ApprovalRegistry
 
     vault = tmp_path / "vault"
-    vault.mkdir()
+    (vault / "Hardware").mkdir(parents=True)
+    (vault / "Hardware" / "x.md").write_text(
+        "---\ntitle: X\nsources:\n  - url: ''\n    hash: ''\n---\n\nbody\n"
+    )
 
-    ar, proposal = _approval_registry_with_proposal()
-    proposal.consumed = True
-    proposal.fields = {"article_path": "x", "proposed_url": "y", "proposed_source_file": "", "rationale": "z"}
+    ar = ApprovalRegistry()
+    proposal_id = ar.create_proposal(kind="url_fix", rationale="z")
+    ar.approve(proposal_id)
+    ar.consume(proposal_id)  # Mark already consumed.
 
     agent = _Agent(vault, ar)
     tool = UrlFix()
 
-    result = await tool.run(ctx=_ctx(agent), proposal_id="test-proposal-1")
+    result_json = await tool.run(
+        {
+            "proposal_id": proposal_id,
+            "article_path": "Hardware/x.md",
+            "proposed_url": "https://example.com",
+            "proposed_source_file": "",
+        },
+        _ctx(agent),
+    )
+    result = json.loads(result_json)
 
     assert result["status"] == "error"
-    assert "consumed" in result["message"].lower() or "already" in result["message"].lower()
+    assert ("consumed" in result["message"].lower()) or ("already" in result["message"].lower())
 ```
+
+(The exact `ApprovalRegistry` API and the test helpers `_Agent` / `_ctx` come from the patterns established in Task 7's fix commit. Mirror them. If the real `ApprovalRegistry.approve()` or `consume()` signature differs, adapt to match.)
+
+Add `import json` at the top of the test file if it isn't already present (Task 7's tests likely added it already).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1011,60 +1052,80 @@ Expected: 3 new tests FAIL with `ImportError: cannot import name 'UrlFix'`.
 
 - [ ] **Step 3: Add `UrlFix` to `pal/tools/url_fix.py`**
 
-Append to `pal/tools/url_fix.py`:
+Append to `pal/tools/url_fix.py` (mirror the `Tool` base class pattern that `ProposeUrlFix` uses, including the `args: dict, ctx` signature and JSON-string return shape):
 
 ```python
-class UrlFix:
+class UrlFix(Tool):
     """Execute an approved url_fix proposal: rewrite the article's first sources entry."""
 
     name = "url_fix"
     description = (
-        "Execute an approved propose_url_fix proposal. Rewrites the first sources entry "
-        "in the target article to include the approved url and/or source_file."
+        "Execute an approved propose_url_fix proposal. Pass the proposal_id (from "
+        "propose_url_fix's return) plus the approved article_path and proposed url/source_file. "
+        "Rewrites the first sources entry in the target article to include the approved values."
     )
     requires = ("approval_registry",)
 
-    async def run(self, ctx, proposal_id: str) -> dict[str, Any]:
+    @property
+    def schema(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "proposal_id": {"type": "string"},
+                "article_path": {"type": "string"},
+                "proposed_url": {"type": "string"},
+                "proposed_source_file": {"type": "string"},
+            },
+            "required": ["proposal_id", "article_path"],
+        }
+
+    async def run(self, args: dict, ctx) -> str:
+        proposal_id = args["proposal_id"]
+        article_path_rel = args["article_path"]
+        proposed_url = args.get("proposed_url", "")
+        proposed_source_file = args.get("proposed_source_file", "")
+
+        if not proposed_url.strip() and not proposed_source_file.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Must provide at least one of proposed_url or proposed_source_file.",
+            })
+
         ar = ctx.agent.approval_registry
         proposal = ar.get(proposal_id)
 
         if proposal is None:
-            return {"status": "error", "message": f"Proposal not found: {proposal_id}"}
+            return json.dumps({"status": "error", "message": f"Proposal not found: {proposal_id}"})
 
         if proposal.status != "approved":
-            return {
+            return json.dumps({
                 "status": "error",
                 "message": f"Proposal {proposal_id} is not approved (status={proposal.status}).",
-            }
+            })
 
         if proposal.consumed:
-            return {
+            return json.dumps({
                 "status": "error",
                 "message": f"Proposal {proposal_id} has already been consumed.",
-            }
-
-        fields = proposal.fields
-        article_path_rel = fields["article_path"]
-        proposed_url = fields.get("proposed_url", "")
-        proposed_source_file = fields.get("proposed_source_file", "")
+            })
 
         vault_path = ctx.agent.config.vault_path
         full_path = vault_path / article_path_rel
         if not full_path.exists():
-            return {
+            return json.dumps({
                 "status": "error",
                 "message": f"Article not found at execute time: {article_path_rel}",
-            }
+            })
 
         from agent_core.utils.frontmatter import parse_frontmatter, serialize_frontmatter
 
         meta, body = parse_frontmatter(full_path.read_text())
         sources = meta.get("sources", [])
         if not sources:
-            return {
+            return json.dumps({
                 "status": "error",
                 "message": f"Article {article_path_rel} has no sources array to fix.",
-            }
+            })
 
         first = dict(sources[0])
         if proposed_url:
@@ -1077,13 +1138,15 @@ class UrlFix:
         full_path.write_text(serialize_frontmatter(meta, body))
         ar.consume(proposal_id)
 
-        return {
+        return json.dumps({
             "status": "fixed",
             "article_path": article_path_rel,
             "wrote_url": bool(proposed_url),
             "wrote_source_file": bool(proposed_source_file),
-        }
+        })
 ```
+
+(Adapt the `Tool` base class import and the exact return-shape conventions to match what `ProposeUrlFix` uses post-Task 7 fixes. The intent: the tool takes the four parameters from the agent, validates the proposal is approved and not consumed via the registry, performs the frontmatter rewrite, marks the proposal consumed, and returns a JSON status.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
