@@ -160,7 +160,7 @@ def append_timeline_entry(
     new_timeline = list(article.timeline) + [entry]
 
     new_sources = list(article.meta.get("sources", []))
-    source_entry: dict = {
+    source_entry = {
         "url": source_url,
         "hash": source_hash,
         "added": added_str,
