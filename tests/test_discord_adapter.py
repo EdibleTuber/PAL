@@ -38,13 +38,13 @@ def test_parse_bang_only():
 
 
 def test_format_tool_progress_read():
-    result = format_tool_progress("read_file", {"path": "Research/quantum.md"})
+    result = format_tool_progress("cat", {"path": "Research/quantum.md"})
     assert "reading" in result.lower()
     assert "Research/quantum.md" in result
 
 
 def test_format_tool_progress_list():
-    result = format_tool_progress("list_directory", {"path": ""})
+    result = format_tool_progress("ls", {"path": ""})
     assert "listing" in result.lower()
 
 
@@ -215,3 +215,59 @@ async def test_on_message_command_forwards_channel_id():
     assert captured.get("channel_id") == "77777"
     assert captured.get("name") == "status"
 
+
+
+@pytest.mark.asyncio
+async def test_on_message_continues_when_typing_rate_limited(monkeypatch):
+    """If Discord 429s the typing indicator, on_message should still run
+    the handler and send a reply rather than aborting silently."""
+    import discord
+    from pal.discord_adapter import PalDiscordBot
+
+    captured: dict = {}
+
+    async def fake_chat_run(self, gen):
+        async for _ in gen:
+            pass
+        return ([], "ok")
+
+    monkeypatch.setattr(
+        "pal.discord_interactions.DiscordStreamProcessor.run", fake_chat_run,
+    )
+
+    async def fake_chat(text, *, channel_id=None):
+        captured["chat_text"] = text
+        if False:
+            yield  # async generator marker
+
+    fake_client = MagicMock()
+    fake_client.chat = fake_chat
+
+    bot = _make_bot_with_fake_user()
+    bot.connections = MagicMock()
+    bot.connections.is_allowed = MagicMock(return_value=True)
+    bot.connections.get_client = AsyncMock(return_value=fake_client)
+    bot.active_proposals = {}
+
+    fake_msg = _make_fake_message("hello", author_id=12345, channel_id=44444)
+    fake_msg.author = MagicMock()
+    fake_msg.author.id = 12345
+    fake_msg.author.bot = False
+    fake_msg.author.__eq__ = lambda self, other: False
+
+    class _RateLimitedTyping:
+        async def __aenter__(self):
+            response = MagicMock()
+            response.status = 429
+            response.reason = "Too Many Requests"
+            raise discord.HTTPException(response, {"code": 40062, "message": "rate limited"})
+
+        async def __aexit__(self, *args):
+            return False
+
+    fake_msg.channel.typing = MagicMock(return_value=_RateLimitedTyping())
+
+    await bot.on_message(fake_msg)
+
+    assert captured.get("chat_text") == "hello"
+    assert fake_msg.channel.send.called, "expected reply despite typing 429"

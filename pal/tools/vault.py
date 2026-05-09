@@ -1,10 +1,9 @@
-"""PAL vault Tool subclasses (Phase F PR2).
+"""PAL vault write Tool subclasses.
 
-Six Tool subclasses migrated from pal._legacy_tools.ToolExecutor:
-  ReadFile, ListDirectory, SearchContent — read-only, require only config.
-  EditFile, CreateFile, MoveFile — write tools, require config + wiki
-    (and reorganizer for MoveFile; retrieval may be None, reindex skipped
-    when absent).
+Three write Tool subclasses (EditFile, CreateFile, MoveFile) for vault
+mutation. Read-side tools (ReadFile, ListDirectory, SearchContent) were
+dropped in favor of agent_core builtins (cat, ls, grep), which cover the
+same functionality with broader capability.
 
 All path operations use _resolve_safe to prevent vault escapes. System
 directories (_-prefixed) are blocked on write operations.
@@ -23,9 +22,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Maximum characters to return from a file read (~8 000 tokens ≈ 32 000 chars).
-_READ_LIMIT = 32_000
-
 
 def _resolve_safe(vault: Path, path: str) -> Path | None:
     """Resolve a vault-relative path; return None if it escapes the vault."""
@@ -38,212 +34,6 @@ def _resolve_safe(vault: Path, path: str) -> Path | None:
 def _is_system_path(path: str) -> bool:
     """Return True if any component of path is _-prefixed (system dir)."""
     return any(part.startswith("_") for part in Path(path).parts)
-
-
-# ---------------------------------------------------------------------------
-# ReadFile
-# ---------------------------------------------------------------------------
-
-class ReadFile(Tool):
-    """Read a file from the vault, returning frontmatter and body."""
-
-    name = "read_file"
-    description = "Read a file from the vault. Returns frontmatter and body."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "path": {
-                "type": "string",
-                "description": (
-                    "File path relative to vault root (e.g. 'Research/quantum.md')"
-                ),
-            },
-        },
-        "required": ["path"],
-    }
-    requires = ("config",)
-
-    async def run(self, args: dict, ctx: "HandlerContext") -> str:
-        path = (args.get("path") or "").strip()
-        if not path:
-            return "Error: 'path' parameter is required."
-
-        vault = ctx.agent.config.vault_path.resolve()
-        resolved = _resolve_safe(vault, path)
-        if resolved is None:
-            return f"Error: path escapes outside vault: {path}"
-        if not resolved.exists():
-            return f"File not found: {path}"
-        if not resolved.is_file():
-            return f"Not a file: {path} (use list_directory for directories)"
-
-        content = resolved.read_text(errors="replace")
-        if len(content) > _READ_LIMIT:
-            content = (
-                content[:_READ_LIMIT]
-                + f"\n\n[Truncated — file exceeds {_READ_LIMIT} characters]"
-            )
-        return content
-
-
-# ---------------------------------------------------------------------------
-# ListDirectory
-# ---------------------------------------------------------------------------
-
-class ListDirectory(Tool):
-    """List files and subdirectories in a vault directory. Paginated."""
-
-    name = "list_directory"
-    description = (
-        "List files and subdirectories in a vault directory. Paginated: by default "
-        "returns up to 50 entries with a footer indicating the total and how to "
-        "continue. Use prefix to filter when reorganizing large directories."
-    )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "path": {
-                "type": "string",
-                "description": (
-                    "Directory path relative to vault root (e.g. 'Research'). "
-                    "Empty or omitted for root."
-                ),
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Max entries to return (default 50, cap 500).",
-            },
-            "offset": {
-                "type": "integer",
-                "description": "Skip this many entries before returning (for paging).",
-            },
-            "prefix": {
-                "type": "string",
-                "description": (
-                    "Only return entries whose filename starts with this string "
-                    "(e.g. 'agent-')."
-                ),
-            },
-        },
-        "required": [],
-    }
-    requires = ("config",)
-
-    async def run(self, args: dict, ctx: "HandlerContext") -> str:
-        vault = ctx.agent.config.vault_path.resolve()
-        path = (args.get("path") or "").strip()
-
-        target = _resolve_safe(vault, path) if path else vault
-        if target is None:
-            return f"Error: path escapes outside vault: {path}"
-        if not target.exists():
-            return f"Directory not found: {path}"
-        if not target.is_dir():
-            return f"Not a directory: {path} (use read_file for files)"
-
-        prefix = (args.get("prefix") or "").strip()
-        try:
-            offset = max(0, int(args.get("offset") or 0))
-        except (TypeError, ValueError):
-            offset = 0
-        try:
-            limit = int(args.get("limit") or 50)
-        except (TypeError, ValueError):
-            limit = 50
-        limit = max(1, min(limit, 500))
-
-        all_entries: list[str] = []
-        for child in sorted(target.iterdir()):
-            name = child.name
-            if name.startswith("_") or name.startswith("."):
-                continue
-            if prefix and not name.startswith(prefix):
-                continue
-            all_entries.append(f"  {name}/" if child.is_dir() else f"  {name}")
-
-        label = path or "(vault root)"
-        if not all_entries:
-            if prefix:
-                return f"No entries in {label} with prefix '{prefix}'."
-            return f"Directory is empty: {label}"
-
-        total = len(all_entries)
-        page = all_entries[offset : offset + limit]
-        if not page:
-            return (
-                f"offset {offset} is past the end ({total} entries"
-                f"{' matching prefix ' + repr(prefix) if prefix else ''}). "
-                f"Use offset < {total}."
-            )
-
-        shown_start = offset + 1
-        shown_end = offset + len(page)
-        filter_note = f" matching prefix '{prefix}'" if prefix else ""
-        header = f"Contents of {label}{filter_note}:"
-        body = "\n".join(page)
-
-        if total > shown_end or offset > 0:
-            footer_parts = [f"Showing {shown_start}-{shown_end} of {total}{filter_note}."]
-            if total > shown_end:
-                footer_parts.append(f"Call again with offset={shown_end} to continue.")
-            if not prefix and total > limit:
-                footer_parts.append("Narrow with prefix='<start-of-filename>'.")
-            return f"{header}\n{body}\n{' '.join(footer_parts)}"
-        return f"{header}\n{body}"
-
-
-# ---------------------------------------------------------------------------
-# SearchContent
-# ---------------------------------------------------------------------------
-
-class SearchContent(Tool):
-    """Keyword search across vault files. Returns matching filenames with line snippets."""
-
-    name = "search_content"
-    description = (
-        "Keyword search across vault files. Returns matching filenames with line snippets."
-    )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "Search term or phrase to find in vault files.",
-            },
-        },
-        "required": ["query"],
-    }
-    requires = ("config",)
-
-    async def run(self, args: dict, ctx: "HandlerContext") -> str:
-        query = (args.get("query") or "").strip()
-        if not query:
-            return "Error: 'query' parameter is required."
-
-        vault = ctx.agent.config.vault_path.resolve()
-        query_lower = query.lower()
-        matches: list[str] = []
-
-        for md_file in sorted(vault.rglob("*.md")):
-            rel = md_file.relative_to(vault)
-            if any(part.startswith("_") or part.startswith(".") for part in rel.parts):
-                continue
-            try:
-                content = md_file.read_text(errors="replace")
-            except OSError:
-                continue
-            for i, line in enumerate(content.splitlines(), 1):
-                if query_lower in line.lower():
-                    snippet = line.strip()[:120]
-                    matches.append(f"  {rel}:{i}  {snippet}")
-                    if len(matches) >= 20:
-                        break
-            if len(matches) >= 20:
-                break
-
-        if not matches:
-            return f"No results for: {query}"
-        return f"Found {len(matches)} match(es) for '{query}':\n" + "\n".join(matches)
 
 
 # ---------------------------------------------------------------------------

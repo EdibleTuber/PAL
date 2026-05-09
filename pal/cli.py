@@ -150,13 +150,13 @@ def format_consolidate_proposal(msg: "ConsolidateProposalMessage") -> str:
 
 def _tool_progress_label(tool: str, arguments: dict) -> str:
     """Format a brief progress label for a tool call."""
-    if tool == "read_file":
+    if tool == "cat":
         return f"[reading {arguments.get('path', '?')}...]"
-    if tool == "list_directory":
+    if tool == "ls":
         path = arguments.get("path", "")
         return f"[listing {path or 'vault'}...]"
-    if tool == "search_content":
-        return f"[searching for \"{arguments.get('query', '?')}\"...]"
+    if tool == "grep":
+        return f"[searching for \"{arguments.get('pattern', '?')}\"...]"
     if tool == "search_vault":
         return f"[searching vault for \"{arguments.get('query', '?')}\"...]"
     if tool == "edit_file":

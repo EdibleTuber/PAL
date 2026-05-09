@@ -24,7 +24,7 @@ class ProposeReorg(Tool):
         "delete op; merge into the target article is the only way "
         "to remove a source file. Prefer batches of 3-5 operations "
         "so the approval prompt stays scannable. Use exact filenames "
-        "from list_directory output, including any unicode characters. "
+        "from ls output, including any unicode characters. "
         "Do not paraphrase or approximate filename text. Blocks until "
         "the user approves, declines, or edits. After approval, call "
         "reorg(proposal_id) to execute."

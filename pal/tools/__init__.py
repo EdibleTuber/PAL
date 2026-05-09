@@ -2,18 +2,16 @@
 
 Phase F migration complete through PR7. Tool subclasses are added per-category
 across PRs 2-7 and re-exported here. Tasks owning each migration:
-    PR2: vault.py (read/list/search/edit/create/move)
+    PR2: vault.py (edit/create/move; read/list/search dropped in favor of
+         agent_core builtins cat/ls/grep)
     PR3: research.py (propose_research, research_topic)
     PR4: compile.py, consolidate.py, reorg.py, wait.py
-    PR7: scratch.py (update_scratch, add_learning — PAL overrides of framework builtins)
+    PR7: scratch.py (update_scratch, add_learning, PAL overrides of framework builtins)
 """
 from pal.tools.vault import (
     CreateFile,
     EditFile,
-    ListDirectory,
     MoveFile,
-    ReadFile,
-    SearchContent,
 )
 from pal.tools.research import ProposeResearch, ResearchTopic
 from pal.tools.compile import CompileSummary, ProposeCompileBatch, CompileBatch
@@ -25,10 +23,7 @@ from pal.tools.scratch import UpdateScratch, AddLearning
 __all__ = [
     "CreateFile",
     "EditFile",
-    "ListDirectory",
     "MoveFile",
-    "ReadFile",
-    "SearchContent",
     "ProposeResearch",
     "ResearchTopic",
     "CompileSummary",

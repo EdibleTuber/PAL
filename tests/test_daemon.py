@@ -79,7 +79,7 @@ async def test_daemon_chat_tool_use(running_daemon, socket_path):
     """Chat message that triggers tool use sends progress + final response."""
     reader, writer = await asyncio.open_unix_connection(str(socket_path))
 
-    msg = ChatMessage(text="TOOLCALL:read_file")
+    msg = ChatMessage(text="TOOLCALL:cat")
     writer.write(encode_message(msg))
     await writer.drain()
 
@@ -99,7 +99,7 @@ async def test_daemon_chat_tool_use(running_daemon, socket_path):
     progress_msgs = [m for m in received if isinstance(m, ToolProgressMessage)]
     response_msgs = [m for m in received if isinstance(m, ResponseMessage)]
     assert len(progress_msgs) >= 1
-    assert progress_msgs[0].tool == "read_file"
+    assert progress_msgs[0].tool == "cat"
     assert len(response_msgs) == 1
 
 

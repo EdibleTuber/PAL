@@ -6,6 +6,7 @@ rewriting, tool-progress formatting) live in agent_core.adapters.discord_gateway
 PAL keeps PalDiscordBot here because of its approval UX (button/modal
 handlers, proposal threads) which are too domain-specific to lift.
 """
+import contextlib
 import logging
 from pathlib import Path
 from typing import Callable
@@ -40,6 +41,21 @@ from pal.protocol import ResearchApprovalResponseMessage
 logger = logging.getLogger(__name__)
 
 
+@contextlib.asynccontextmanager
+async def _maybe_typing(channel):
+    """Best-effort typing indicator. If Discord rate-limits or rejects the
+    typing call, log and proceed without it — better than aborting on_message
+    and ghosting the user with no response."""
+    try:
+        async with channel.typing():
+            yield
+    except discord.HTTPException as exc:
+        logger.warning(
+            "typing indicator failed (%s); proceeding without it", exc,
+        )
+        yield
+
+
 def _discord_command_names() -> set[str]:
     """Return the set of registered command names for Discord prefix rewriting.
 
@@ -57,9 +73,9 @@ def _discord_command_names() -> set[str]:
 # PAL-specific tool progress labels. format_tool_progress falls through
 # to the generic "tool..." label for any tool not in this dict.
 _PAL_TOOL_FORMATTERS: dict[str, Callable[[dict], str]] = {
-    "read_file":         lambda a: f"reading {a.get('path', '?')}...",
-    "list_directory":    lambda a: f"listing {a.get('path', '') or 'vault'}...",
-    "search_content":    lambda a: f"searching for \"{a.get('query', '?')}\"...",
+    "cat":               lambda a: f"reading {a.get('path', '?')}...",
+    "ls":                lambda a: f"listing {a.get('path', '') or 'vault'}...",
+    "grep":              lambda a: f"searching for \"{a.get('pattern', '?')}\"...",
     "search_vault":      lambda a: f"searching vault for \"{a.get('query', '?')}\"...",
     "edit_file":         lambda a: f"editing {a.get('path', '?')}...",
     "create_file":       lambda a: f"creating {a.get('path', '?')}...",
@@ -116,8 +132,9 @@ class PalDiscordBot(discord.Client):
         if parsed is None:
             return
 
-        # Show typing indicator while working
-        async with message.channel.typing():
+        # Show typing indicator while working (best-effort: a 429 from
+        # Discord on the typing call shouldn't abort the whole handler).
+        async with _maybe_typing(message.channel):
             try:
                 client = await self.connections.get_client(user_id)
 

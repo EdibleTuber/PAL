@@ -151,7 +151,7 @@ async def test_stream_processor_plain_chat_returns_final_text():
     )
 
     async def stream():
-        yield ToolProgressMessage(tool="read_file", arguments={"path": "foo.md"})
+        yield ToolProgressMessage(tool="cat", arguments={"path": "foo.md"})
         yield StreamChunkMessage(token="Hello ")
         yield StreamChunkMessage(token="world")
         yield ResponseMessage(text="")
@@ -159,7 +159,7 @@ async def test_stream_processor_plain_chat_returns_final_text():
     progress, final_text = await processor.run(stream())
     assert final_text == "Hello world"
     assert len(progress) == 1
-    assert progress[0].tool == "read_file"
+    assert progress[0].tool == "cat"
     channel.send.assert_not_called()
 
 

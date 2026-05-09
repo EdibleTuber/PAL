@@ -41,17 +41,14 @@ from pal.tools import (
     Consolidate,
     CreateFile,
     EditFile,
-    ListDirectory,
     MoveFile,
     ProposeCompileBatch,
     ProposeConsolidate,
     ProposePromote,
     ProposeReorg,
     ProposeResearch,
-    ReadFile,
     Reorg,
     ResearchTopic,
-    SearchContent,
     UpdateScratch,
     WaitForReindex,
 )
@@ -132,7 +129,7 @@ class PALAgent(Agent):
     # the framework builtins to preserve PAL's parameter names and
     # git-commit behaviour). The framework's BUILTIN_TOOLS and
     # BUILTIN_COMMANDS are unioned in automatically by run_daemon._attach_registries.
-    tools = [ReadFile, ListDirectory, SearchContent, EditFile, CreateFile, MoveFile,
+    tools = [EditFile, CreateFile, MoveFile,
              ProposeResearch, ResearchTopic,
              CompileSummary, ProposeCompileBatch, ToolCompileBatch,
              ProposeConsolidate, Consolidate,
@@ -148,7 +145,10 @@ class PALAgent(Agent):
         CmdCompile, CmdCompileBatch, Import, Learn, Research,
         Status, Profile, Wisdom, Scratch, PALModel,
     ]
-    disabled_builtins = frozenset()
+    # fetch_url disabled in PAL: all web fetching goes through the
+    # consent-gated research pipeline (propose_research / research_topic).
+    # Direct URL fetch would bypass the approval flow.
+    disabled_builtins = frozenset({"fetch_url"})
 
     def setup(self) -> None:
         """Construct PAL-specific infrastructure.
