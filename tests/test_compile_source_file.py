@@ -1,7 +1,5 @@
 """Tests for source_file plumbing through the compile path."""
 
-import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -134,7 +132,7 @@ async def test_compile_one_extracts_source_file_from_summary_meta(tmp_path):
 
     result = await compiler.compile_one(summary_path_rel)
 
-    assert result["status"] in ("ok", "merged"), f"Unexpected status: {result}"
+    assert result["status"] == "ok", f"Unexpected status: {result}"
 
     article_path = vault / result["article_path_rel"]
     text = article_path.read_text()
