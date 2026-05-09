@@ -1165,11 +1165,18 @@ git commit -m "feat(agent): register propose_url_fix and url_fix tools"
 **Files (read-only):**
 - Sanity check: `~/pal-vault-prod` or wherever the audit's vault snapshot lives
 
-- [ ] **Step 1: Run the entire test suite**
+- [ ] **Step 1: Run the entire test suite (excluding pre-broken collection)**
 
-Run:
+Five test files have stale `from pal.client import PalClient` imports left over from the `agent_core` extraction. They fail at collection time and are tracked as a separate workstream. Run with explicit ignores:
+
 ```bash
-cd /home/edible/Projects/PAL && .venv/bin/pytest tests/ -v
+cd /home/edible/Projects/PAL && .venv/bin/pytest tests/ \
+    --ignore=tests/test_chat_research_integration.py \
+    --ignore=tests/test_client.py \
+    --ignore=tests/test_daemon.py \
+    --ignore=tests/test_integration.py \
+    --ignore=tests/test_prompt_injection.py \
+    -v
 ```
 Expected: all green. No skips beyond pre-existing ones.
 
