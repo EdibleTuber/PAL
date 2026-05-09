@@ -259,7 +259,7 @@ def find_articles_missing_source(vault_path: Path) -> list[Path]:
 
         try:
             meta, _ = parse_frontmatter(path.read_text())
-        except Exception:
+        except OSError:
             continue
 
         sources = meta.get("sources")
