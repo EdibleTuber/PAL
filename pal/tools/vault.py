@@ -45,8 +45,13 @@ class EditFile(Tool):
 
     name = "edit_file"
     description = (
-        "Rewrite the body of an existing vault file. Preserves frontmatter "
-        "(title, tags). Use for restructuring, reformatting, or updating content."
+        "Rewrite the entire body of an existing vault file. Preserves frontmatter "
+        "(title, tags). Use ONLY for structural overhauls where most of the body is "
+        "being replaced (e.g., reorganizing sections, swapping a draft for a final "
+        "version). For targeted changes (typo fix, link update, single-line edit, "
+        "adding a paragraph), use replace_in_file instead. The cost difference is "
+        "significant: edit_file requires retransmitting the entire body; "
+        "replace_in_file only the changed strings."
     )
     parameters = {
         "type": "object",

@@ -516,3 +516,12 @@ async def test_replace_in_file_empty_new_string_deletes_match(tmp_path):
     text = (tmp_path / "x.md").read_text(encoding="utf-8")
     assert "keep this and this" in text
     assert "DELETE_ME" not in text
+
+
+# --- EditFile description rewrite (regression guard) ---
+
+def test_edit_file_description_mentions_replace_in_file():
+    """The edit_file description must redirect targeted edits to replace_in_file."""
+    from pal.tools.vault import EditFile
+    desc = EditFile.description
+    assert "replace_in_file" in desc
