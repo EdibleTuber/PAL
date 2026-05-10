@@ -10,6 +10,7 @@ from pal.tools.vault import (
     CreateFile,
     EditFile,
     MoveFile,
+    DeleteFile,
 )
 
 
@@ -298,3 +299,89 @@ async def test_move_file_empty_args(tmp_path):
     )
     parsed = json.loads(result)
     assert "error" in parsed
+
+
+# --- DeleteFile (atomic git rm, surfaces reindex failure) ---
+
+async def test_delete_file_removes_file_via_git_rm_and_commits(tmp_path):
+    """Happy path: file removed via git_rm, committed, reindex triggered, JSON ok."""
+    from pal.tools.vault import DeleteFile
+
+    (tmp_path / "old.md").write_text("---\ntitle: Old\n---\n\nbody", encoding="utf-8")
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock()
+    wiki = MagicMock()
+    wiki.git_rm = MagicMock()
+    wiki.git_commit = MagicMock()
+
+    result = await DeleteFile().run(
+        {"path": "old.md"},
+        _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
+    )
+    parsed = json.loads(result)
+    assert parsed["status"] == "deleted"
+    assert parsed["path"] == "old.md"
+    assert parsed["reindex"] == "ok"
+    wiki.git_rm.assert_called_once_with("old.md")
+    wiki.git_commit.assert_called_once()
+    retrieval.trigger_reindex.assert_awaited_once()
+
+
+async def test_delete_file_refuses_system_dirs(tmp_path):
+    """Refuses paths in underscore-prefixed system directories. File untouched."""
+    from pal.tools.vault import DeleteFile
+
+    (tmp_path / "_wisdom").mkdir()
+    (tmp_path / "_wisdom" / "rule.md").write_text("body", encoding="utf-8")
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock()
+    wiki = MagicMock()
+    wiki.git_rm = MagicMock()
+
+    result = await DeleteFile().run(
+        {"path": "_wisdom/rule.md"},
+        _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
+    )
+    assert "system directories" in result.lower()
+    assert (tmp_path / "_wisdom" / "rule.md").exists()
+    wiki.git_rm.assert_not_called()
+    retrieval.trigger_reindex.assert_not_awaited()
+
+
+async def test_delete_file_refuses_path_escape(tmp_path):
+    """Refuses paths that resolve outside the vault. No git_rm call."""
+    from pal.tools.vault import DeleteFile
+
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock()
+    wiki = MagicMock()
+    wiki.git_rm = MagicMock()
+
+    result = await DeleteFile().run(
+        {"path": "../escape.md"},
+        _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
+    )
+    assert "escapes outside vault" in result.lower()
+    wiki.git_rm.assert_not_called()
+
+
+async def test_delete_file_surfaces_reindex_failure(tmp_path):
+    """Reindex failure: response sets reindex=failed but file is still deleted."""
+    from pal.tools.vault import DeleteFile
+
+    (tmp_path / "x.md").write_text("body", encoding="utf-8")
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock(side_effect=RuntimeError("reindex broken"))
+    wiki = MagicMock()
+    wiki.git_rm = MagicMock()
+    wiki.git_commit = MagicMock()
+
+    result = await DeleteFile().run(
+        {"path": "x.md"},
+        _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
+    )
+    parsed = json.loads(result)
+    assert parsed["status"] == "deleted"
+    assert parsed["reindex"] == "failed"
+    wiki.git_rm.assert_called_once_with("x.md")
+    wiki.git_commit.assert_called_once()

@@ -263,3 +263,75 @@ class MoveFile(Tool):
                 logger.warning("reindex trigger failed after move_file: %s", exc)
 
         return json.dumps({"moved": f"{src} -> {dst}", "reindex_queued": True})
+
+
+# ---------------------------------------------------------------------------
+# DeleteFile
+# ---------------------------------------------------------------------------
+
+class DeleteFile(Tool):
+    """Delete a vault file. Atomic git rm. Reversible via git history."""
+
+    name = "delete_file"
+    description = (
+        "Delete a vault file. Stages the removal atomically via git rm and commits. "
+        "Recoverable from git history with `git revert`. Refuses underscore-prefixed "
+        "system directories (_wisdom, _learning, _config, _channels, _profile). "
+        "Triggers reindex to remove the file from the embedding store. Reports if "
+        "reindex fails so the caller knows the embedding store is temporarily stale."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": (
+                    "Path relative to vault root (e.g. 'Hardware/old-article.md'). "
+                    "Must already exist. Must not be in a system directory."
+                ),
+            },
+        },
+        "required": ["path"],
+    }
+    requires = ("config",)
+
+    async def run(self, args: dict, ctx: "HandlerContext") -> str:
+        path = args.get("path", "")
+        if not path:
+            return "Error: 'path' parameter is required."
+
+        if _is_system_path(path):
+            return f"Error: writing to system directories is not allowed: {path}"
+
+        vault = ctx.agent.config.vault_path.resolve()
+        resolved = _resolve_safe(vault, path)
+        if resolved is None:
+            return f"Error: path escapes outside vault: {path}"
+        if not resolved.exists():
+            return f"Error: file does not exist: {path}"
+
+        wiki = getattr(ctx.agent, "wiki", None)
+        if wiki is None:
+            return "Error: write operations are not available (no wiki manager)."
+
+        try:
+            wiki.git_rm(path)
+        except Exception as exc:
+            return f"Error: git rm failed: {exc}"
+
+        wiki.git_commit(f"Delete {path} via chat")
+
+        reindex_status = "ok"
+        retrieval = getattr(ctx.agent, "retrieval", None)
+        if retrieval is not None:
+            try:
+                await retrieval.trigger_reindex(paths=[str(resolved)])
+            except Exception as exc:
+                logger.warning("reindex trigger failed after delete_file: %s", exc)
+                reindex_status = "failed"
+
+        return json.dumps({
+            "status": "deleted",
+            "path": path,
+            "reindex": reindex_status,
+        })
