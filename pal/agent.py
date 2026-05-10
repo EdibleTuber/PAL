@@ -40,6 +40,7 @@ from pal.tools import (
     CompileSummary,
     Consolidate,
     CreateFile,
+    DeleteFile,
     EditFile,
     MoveFile,
     ProposeCompileBatch,
@@ -49,6 +50,7 @@ from pal.tools import (
     ProposeResearch,
     ProposeUrlFix,
     Reorg,
+    ReplaceInFile,
     ResearchTopic,
     UpdateScratch,
     UrlFix,
@@ -131,7 +133,7 @@ class PALAgent(Agent):
     # the framework builtins to preserve PAL's parameter names and
     # git-commit behaviour). The framework's BUILTIN_TOOLS and
     # BUILTIN_COMMANDS are unioned in automatically by run_daemon._attach_registries.
-    tools = [EditFile, CreateFile, MoveFile,
+    tools = [EditFile, CreateFile, MoveFile, DeleteFile, ReplaceInFile,
              ProposeResearch, ResearchTopic,
              CompileSummary, ProposeCompileBatch, ToolCompileBatch,
              ProposeConsolidate, Consolidate,

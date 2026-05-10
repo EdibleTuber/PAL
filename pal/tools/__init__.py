@@ -10,8 +10,10 @@ across PRs 2-7 and re-exported here. Tasks owning each migration:
 """
 from pal.tools.vault import (
     CreateFile,
+    DeleteFile,
     EditFile,
     MoveFile,
+    ReplaceInFile,
 )
 from pal.tools.research import ProposeResearch, ResearchTopic
 from pal.tools.compile import CompileSummary, ProposeCompileBatch, CompileBatch
@@ -23,8 +25,10 @@ from pal.tools.scratch import UpdateScratch, AddLearning
 
 __all__ = [
     "CreateFile",
+    "DeleteFile",
     "EditFile",
     "MoveFile",
+    "ReplaceInFile",
     "ProposeResearch",
     "ResearchTopic",
     "CompileSummary",
