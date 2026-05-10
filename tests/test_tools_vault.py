@@ -385,3 +385,134 @@ async def test_delete_file_surfaces_reindex_failure(tmp_path):
     assert parsed["reindex"] == "failed"
     wiki.git_rm.assert_called_once_with("x.md")
     wiki.git_commit.assert_called_once()
+
+
+# --- ReplaceInFile (body-only, frontmatter preserved, restore on commit failure) ---
+
+async def test_replace_in_file_replaces_in_body_only(tmp_path):
+    """Frontmatter containing the same string is preserved; only body is replaced."""
+    from pal.tools.vault import ReplaceInFile
+
+    # Frontmatter has 'AI' in tags. Body has 'AI' too. Replace only in body.
+    (tmp_path / "x.md").write_text(
+        "---\ntitle: X\ntags:\n  - AI\n  - hardware\n---\n\nThis is about AI.",
+        encoding="utf-8",
+    )
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock()
+    wiki = MagicMock()
+    wiki.git_commit = MagicMock()
+
+    result = await ReplaceInFile().run(
+        {"path": "x.md", "old_string": "AI", "new_string": "ML"},
+        _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
+    )
+    parsed = json.loads(result)
+    assert parsed["status"] == "replaced"
+    assert parsed["occurrences"] == 1
+
+    text = (tmp_path / "x.md").read_text(encoding="utf-8")
+    assert "tags:" in text and "- AI" in text  # frontmatter preserved
+    assert "This is about ML." in text  # body changed
+    assert "This is about AI." not in text
+
+
+async def test_replace_in_file_refuses_non_unique_without_replace_all(tmp_path):
+    """Multiple body matches without replace_all returns error mentioning widening."""
+    from pal.tools.vault import ReplaceInFile
+
+    (tmp_path / "x.md").write_text(
+        "---\ntitle: X\n---\n\nfoo bar foo bar",
+        encoding="utf-8",
+    )
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock()
+    wiki = MagicMock()
+
+    result = await ReplaceInFile().run(
+        {"path": "x.md", "old_string": "bar", "new_string": "baz"},
+        _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
+    )
+    assert "appears" in result.lower()
+    assert "widen" in result.lower() or "replace_all" in result.lower()
+    text = (tmp_path / "x.md").read_text(encoding="utf-8")
+    assert "foo bar foo bar" in text  # unchanged
+    wiki.git_commit.assert_not_called()
+
+
+async def test_replace_in_file_replace_all_only_in_body(tmp_path):
+    """replace_all replaces every body occurrence; frontmatter occurrences untouched."""
+    from pal.tools.vault import ReplaceInFile
+
+    # 1 occurrence of 'foo' in frontmatter (as a tag), 3 in body
+    (tmp_path / "x.md").write_text(
+        "---\ntitle: X\ntags:\n  - foo\n---\n\nfoo bar foo bar foo",
+        encoding="utf-8",
+    )
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock()
+    wiki = MagicMock()
+    wiki.git_commit = MagicMock()
+
+    result = await ReplaceInFile().run(
+        {
+            "path": "x.md",
+            "old_string": "foo",
+            "new_string": "qux",
+            "replace_all": True,
+        },
+        _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
+    )
+    parsed = json.loads(result)
+    assert parsed["status"] == "replaced"
+    assert parsed["occurrences"] == 3  # body only
+
+    text = (tmp_path / "x.md").read_text(encoding="utf-8")
+    assert "tags:" in text and "- foo" in text  # frontmatter foo preserved
+    assert "qux bar qux bar qux" in text
+
+
+async def test_replace_in_file_restores_on_commit_failure(tmp_path):
+    """git_commit failure restores original body content."""
+    from pal.tools.vault import ReplaceInFile
+
+    original = "---\ntitle: X\n---\n\nhello world"
+    (tmp_path / "x.md").write_text(original, encoding="utf-8")
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock()
+    wiki = MagicMock()
+    wiki.git_commit = MagicMock(side_effect=RuntimeError("git locked"))
+
+    result = await ReplaceInFile().run(
+        {"path": "x.md", "old_string": "hello", "new_string": "goodbye"},
+        _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
+    )
+    assert "git commit failed" in result.lower()
+    text = (tmp_path / "x.md").read_text(encoding="utf-8")
+    # Original body is restored
+    assert "hello world" in text
+    assert "goodbye" not in text
+
+
+async def test_replace_in_file_empty_new_string_deletes_match(tmp_path):
+    """Empty new_string deletes the matched content."""
+    from pal.tools.vault import ReplaceInFile
+
+    (tmp_path / "x.md").write_text(
+        "---\ntitle: X\n---\n\nkeep this DELETE_ME and this",
+        encoding="utf-8",
+    )
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock()
+    wiki = MagicMock()
+    wiki.git_commit = MagicMock()
+
+    result = await ReplaceInFile().run(
+        {"path": "x.md", "old_string": " DELETE_ME", "new_string": ""},
+        _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
+    )
+    parsed = json.loads(result)
+    assert parsed["status"] == "replaced"
+    text = (tmp_path / "x.md").read_text(encoding="utf-8")
+    assert "keep this and this" in text
+    assert "DELETE_ME" not in text

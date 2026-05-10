@@ -335,3 +335,145 @@ class DeleteFile(Tool):
             "path": path,
             "reindex": reindex_status,
         })
+
+
+# ---------------------------------------------------------------------------
+# ReplaceInFile
+# ---------------------------------------------------------------------------
+
+class ReplaceInFile(Tool):
+    """Replace exact string match in body of a vault file. Frontmatter preserved."""
+
+    name = "replace_in_file"
+    description = (
+        "Replace an exact string match in the body of an existing vault file. "
+        "Frontmatter is parsed and reattached unchanged; this tool does not modify "
+        "YAML metadata (use the existing edit_file if a frontmatter rewrite is "
+        "genuinely needed). Whitespace-sensitive. Requires old_string to be unique "
+        "in the body unless replace_all is true. Useful for targeted edits without "
+        "rewriting the whole body, including appending content (use the trailing "
+        "portion of the body as old_string and the same trailing portion plus your "
+        "new content as new_string)."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": (
+                    "Path relative to vault root. Must already exist. Must not be in "
+                    "a system directory."
+                ),
+            },
+            "old_string": {
+                "type": "string",
+                "description": (
+                    "Exact string to find in the body. Must appear in the body. Must "
+                    "be unique unless replace_all is true. Whitespace-sensitive (preserve "
+                    "indentation and newlines exactly). To make a non-unique match unique, "
+                    "widen old_string to include surrounding lines."
+                ),
+            },
+            "new_string": {
+                "type": "string",
+                "description": (
+                    "Replacement string. Empty string deletes the matched content."
+                ),
+            },
+            "replace_all": {
+                "type": "boolean",
+                "description": (
+                    "If true, replace every occurrence of old_string in the body. If "
+                    "false (default), require old_string to be unique and replace one "
+                    "occurrence."
+                ),
+                "default": False,
+            },
+        },
+        "required": ["path", "old_string", "new_string"],
+    }
+    requires = ("config",)
+
+    async def run(self, args: dict, ctx: "HandlerContext") -> str:
+        path = args.get("path", "")
+        old_string = args.get("old_string", "")
+        new_string = args.get("new_string")
+        replace_all = bool(args.get("replace_all", False))
+
+        if not path:
+            return "Error: 'path' parameter is required."
+        if not old_string:
+            return "Error: 'old_string' parameter is required."
+        if new_string is None:
+            return "Error: 'new_string' parameter is required."
+
+        if _is_system_path(path):
+            return f"Error: writing to system directories is not allowed: {path}"
+
+        vault = ctx.agent.config.vault_path.resolve()
+        resolved = _resolve_safe(vault, path)
+        if resolved is None:
+            return f"Error: path escapes outside vault: {path}"
+        if not resolved.exists():
+            return f"Error: file does not exist: {path}"
+
+        wiki = getattr(ctx.agent, "wiki", None)
+        if wiki is None:
+            return "Error: write operations are not available (no wiki manager)."
+
+        from agent_core.utils.frontmatter import parse_frontmatter, serialize_frontmatter
+
+        original_text = resolved.read_text(encoding="utf-8")
+        meta, body = parse_frontmatter(original_text)
+        original_body = body
+
+        count = body.count(old_string)
+        if count == 0:
+            return f"Error: old_string not found in body of {path}"
+        if count > 1 and not replace_all:
+            return (
+                f"Error: old_string appears {count} times in body of {path}; "
+                f"pass replace_all=true, or widen old_string to include surrounding "
+                f"lines until it is unique in the body."
+            )
+
+        if old_string == new_string:
+            return json.dumps({
+                "status": "replaced",
+                "path": path,
+                "occurrences": 0,
+                "reindex": "ok",
+                "note": "no-op (old_string equals new_string)",
+            })
+
+        if replace_all:
+            new_body = body.replace(old_string, new_string)
+            occurrences = count
+        else:
+            new_body = body.replace(old_string, new_string, 1)
+            occurrences = 1
+
+        resolved.write_text(serialize_frontmatter(meta, new_body), encoding="utf-8")
+
+        try:
+            wiki.git_commit(f"Edit {path} via chat (replace_in_file)")
+        except Exception as exc:
+            # Restore original content
+            resolved.write_text(serialize_frontmatter(meta, original_body), encoding="utf-8")
+            return f"Error: git commit failed; original content restored: {exc}"
+
+        reindex_status = "ok"
+        retrieval = getattr(ctx.agent, "retrieval", None)
+        if retrieval is not None:
+            try:
+                await retrieval.trigger_reindex(paths=[str(resolved)])
+            except Exception as exc:
+                logger.warning("reindex trigger failed after replace_in_file: %s", exc)
+                reindex_status = "failed"
+
+        return json.dumps({
+            "status": "replaced",
+            "path": path,
+            "occurrences": occurrences,
+            "reindex": reindex_status,
+        })
