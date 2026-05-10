@@ -425,7 +425,6 @@ class ReplaceInFile(Tool):
 
         original_text = resolved.read_text(encoding="utf-8")
         meta, body = parse_frontmatter(original_text)
-        original_body = body
 
         count = body.count(old_string)
         if count == 0:
@@ -439,10 +438,10 @@ class ReplaceInFile(Tool):
 
         if old_string == new_string:
             return json.dumps({
-                "status": "replaced",
+                "status": "no_change",
                 "path": path,
                 "occurrences": 0,
-                "reindex": "ok",
+                "reindex": "skipped",
                 "note": "no-op (old_string equals new_string)",
             })
 
@@ -459,7 +458,7 @@ class ReplaceInFile(Tool):
             wiki.git_commit(f"Edit {path} via chat (replace_in_file)")
         except Exception as exc:
             # Restore original content
-            resolved.write_text(serialize_frontmatter(meta, original_body), encoding="utf-8")
+            resolved.write_text(original_text, encoding="utf-8")
             return f"Error: git commit failed; original content restored: {exc}"
 
         reindex_status = "ok"

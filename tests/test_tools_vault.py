@@ -489,8 +489,8 @@ async def test_replace_in_file_restores_on_commit_failure(tmp_path):
     )
     assert "git commit failed" in result.lower()
     text = (tmp_path / "x.md").read_text(encoding="utf-8")
-    # Original body is restored
-    assert "hello world" in text
+    # Exact restore (no round-trip mutation)
+    assert text == original
     assert "goodbye" not in text
 
 
