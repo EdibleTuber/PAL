@@ -203,6 +203,16 @@ class WikiManager:
         )
         logger.info("Committed: %s", message)
 
+    def git_rm(self, path: str) -> None:
+        """Remove a file via 'git rm', staging the deletion atomically."""
+        subprocess.run(
+            ["git", "rm", "--", path],
+            cwd=self.vault_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     def lint(self) -> list[dict]:
         """Check vault health. Returns a list of issue dicts.
 
