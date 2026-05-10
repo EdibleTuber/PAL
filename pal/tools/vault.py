@@ -324,7 +324,14 @@ class DeleteFile(Tool):
         except Exception as exc:
             return f"Error: git rm failed: {exc}"
 
-        wiki.git_commit(f"Delete {path} via chat")
+        try:
+            wiki.git_commit(f"Delete {path} via chat")
+        except Exception as exc:
+            return json.dumps({
+                "status": "deleted_uncommitted",
+                "path": path,
+                "warning": f"git commit failed; staged removal in index, manual recovery required: {exc}",
+            })
 
         reindex_status = "ok"
         retrieval = getattr(ctx.agent, "retrieval", None)
@@ -353,8 +360,7 @@ class ReplaceInFile(Tool):
     description = (
         "Replace an exact string match in the body of an existing vault file. "
         "Frontmatter is parsed and reattached unchanged; this tool does not modify "
-        "YAML metadata (use the existing edit_file if a frontmatter rewrite is "
-        "genuinely needed). Whitespace-sensitive. Requires old_string to be unique "
+        "YAML metadata. Whitespace-sensitive. Requires old_string to be unique "
         "in the body unless replace_all is true. Useful for targeted edits without "
         "rewriting the whole body, including appending content (use the trailing "
         "portion of the body as old_string and the same trailing portion plus your "

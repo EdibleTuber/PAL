@@ -387,6 +387,29 @@ async def test_delete_file_surfaces_reindex_failure(tmp_path):
     wiki.git_commit.assert_called_once()
 
 
+async def test_delete_file_surfaces_commit_failure(tmp_path):
+    """git_commit failure: file is git_rm'd but JSON reports deleted_uncommitted."""
+    from pal.tools.vault import DeleteFile
+
+    (tmp_path / "x.md").write_text("body", encoding="utf-8")
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock()
+    wiki = MagicMock()
+    wiki.git_rm = MagicMock()
+    wiki.git_commit = MagicMock(side_effect=RuntimeError("git locked"))
+
+    result = await DeleteFile().run(
+        {"path": "x.md"},
+        _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
+    )
+    parsed = json.loads(result)
+    assert parsed["status"] == "deleted_uncommitted"
+    assert "git commit failed" in parsed["warning"].lower()
+    wiki.git_rm.assert_called_once_with("x.md")
+    # Reindex should NOT be triggered when commit failed (file not actually committed-deleted)
+    retrieval.trigger_reindex.assert_not_awaited()
+
+
 # --- ReplaceInFile (body-only, frontmatter preserved, restore on commit failure) ---
 
 async def test_replace_in_file_replaces_in_body_only(tmp_path):
