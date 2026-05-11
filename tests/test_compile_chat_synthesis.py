@@ -184,5 +184,11 @@ async def test_merge_chat_synthesis_preserves_banner(tmp_path, monkeypatch):
     merged_text = existing_path.read_text()
     article = parse_article(merged_text)
     assert article.compiled_truth.lstrip().startswith(CHAT_BANNER_SENTINEL)
+    # Banner date must be preserved from the seeded article, not regenerated.
+    original_banner = make_chat_banner("2026-05-09")
+    assert article.compiled_truth.lstrip().startswith(original_banner), (
+        f"banner date should be preserved; expected {original_banner!r} prefix, "
+        f"got {article.compiled_truth.lstrip()[:200]!r}"
+    )
     # The new synthesis content must have landed in the article.
     assert "Updated overview." in article.compiled_truth or "new point" in article.compiled_truth
