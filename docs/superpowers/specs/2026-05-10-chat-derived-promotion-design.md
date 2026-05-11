@@ -23,7 +23,7 @@ Knowledge that emerges purely from conversation has neither. PAL's only currentl
 1. **Conversation snapshots.** No `raw/conversations/` directory, no verbatim transcript capture. The article points at the synthesis note PAL wrote; the actual conversation is not preserved on disk. If transcript audit becomes load-bearing, add it additively in v2.
 2. **Dereferenceable Discord pointers.** No message IDs, no `[msg:1234567890]` tagging in PAL's context, no bridge changes. PAL does not need to predict opaque Discord IDs.
 3. **Surface-specific provenance types.** One source type (`chat`) covers Discord, CLI, and orphan notes. The spec previously distinguished `chat_discord` / `chat_cli` / `user_attested`; v1 collapses all three.
-4. **In-body banner.** Banner is rendered at display time from `meta.sources[].source_type`, not baked into `compiled_truth`. Removes the merge-fragility risk where a future merge silently strips the trust signal.
+4. **Render-time banner.** v1 ships the banner in `compiled_truth` (in-body). Render-time rendering from `meta.sources[].source_type` is deferred to the broader prompt + tool audit pass (where `search_vault` will be touched anyway for the path-determinism fix). v1 mitigates the merge-fragility risk by making `merge_chat_synthesis_into_existing` explicitly preserve the banner sentinel.
 5. **Auto-promotion.** PAL never calls the promotion tool unprompted; it may nudge once per conversation, execution always requires user approval.
 6. **Fixing the unrelated `raw/` indexing leak** (already tracked separately in memory).
 
@@ -176,18 +176,30 @@ Required:
 
 This is the only "boring plumbing" YAGNI+ can't skip.
 
-## Banner rendering (read time, not write time)
+## Banner rendering (in-body for v1)
 
-Banner is *not* stored in the article body. Instead:
+The banner is prepended to `compiled_truth` when `compile_chat_synthesis` writes a chat-derived article:
 
-- The chat answer renderer (in PAL's response synthesis path) prepends a banner when an article cited as evidence has any `meta.sources[].source_type == "chat"`:
-  > _Source: chat-derived synthesis (no transcript). User-approved on &lt;date&gt;._
-- The retrieval surface (when returning article excerpts) annotates results with `source_type` so downstream consumers can apply the same banner if relevant.
-- The article view (when read directly via the CLI/Discord file inspector) prepends the banner from frontmatter.
+```
+> _Source: chat-derived synthesis (no transcript). User-approved on 2026-05-10._
 
-The single source of truth is `meta.sources[].source_type`. Body content is unchanged regardless of source type.
+## Overview
+...
+```
 
-This is the architect's and epistemology critic's recommendation, against YAGNI's preference for in-body. The reasoning that won: in-body banners can be silently dropped during merges, requiring "log a warning" mitigations that are really an admission the banner isn't reliable. Read-time rendering keeps the banner reliable without polluting compiled_truth.
+The exact banner text uses `> _Source: chat-derived synthesis (no transcript). User-approved on <YYYY-MM-DD>._` as a sentinel. The leading blockquote + italic markers + the literal phrase "chat-derived synthesis" are the load-bearing parts; downstream code can detect a chat-derived article by matching the sentinel substring.
+
+`merge_chat_synthesis_into_existing` and any future merge path that touches a chat-derived article must preserve the banner: read the existing compiled_truth, detect the sentinel, ensure the resulting compiled_truth still begins with it. A round-trip test enforces this.
+
+`source_type` still lives on `meta.sources[]` entries (the structured-metadata source of truth). The in-body banner is the v1 display surface; render-time rendering from metadata is deferred to the broader tool/prompt audit pass.
+
+### Companion system prompt rule
+
+The banner alone is text PAL might or might not surface in answers. To make it functional, the per-channel system prompt builder gets one short addition:
+
+> When a retrieved article's body begins with `> _Source: chat-derived synthesis`, this article was synthesized from a prior conversation rather than external research. When citing or relying on it, briefly note this provenance to the user (e.g., "in a previous chat we discussed..."). Do not treat chat-derived articles as having the same evidentiary weight as articles compiled from external documents.
+
+Without this rule, the banner is decoration. With it, the banner becomes a behavioral hook that PAL can act on.
 
 ## Nudge mechanism
 
@@ -254,6 +266,7 @@ Two types only. The trust invariant shifts from "every article has external prov
 - Migration script to backfill `source_type: external` on existing article frontmatter (default handles this).
 - `search_vault` returning exact paths as a primary field (separate workstream, see `project_pal_path_determinism` memory).
 - Batch-tool "did you mean" error suggestions (separate workstream, same memory).
+- Render-time banner from `meta.sources[].source_type` (deferred to the prompt + tool audit pass, where `search_vault` and adjacent surfaces are touched anyway).
 
 ## Panel review notes (2026-05-10)
 
@@ -261,7 +274,10 @@ This design is the product of a four-reviewer critique panel (architect, epistem
 
 - **Double-LLM removal.** Earlier draft fed approved synthesis through `compile_one`'s extraction prompt, throwing away the user-approved text. New chat-aware compile entrypoint treats synthesis as compiled truth directly. (Architect, epistemology, realist all flagged.)
 - **Snapshot deferral.** Earlier draft created `raw/conversations/` and required bridge changes to resolve Discord message IDs. Realist confirmed the daemon→bridge RPC channel does not exist; YAGNI argued snapshots aren't load-bearing for v1. Deferred to v2.
-- **Banner moved to read time.** Earlier draft baked banner into `compiled_truth`; risk of silent drop during merges. Now rendered from `meta.sources[].source_type` at display time.
 - **Source-type collapsed.** Earlier draft had four types (`external`, `chat_discord`, `chat_cli`, `user_attested`); now two (`external`, `chat`). Backfill and forward use the same path.
 - **Tools collapsed.** Earlier draft had four tools (propose/execute pairs for both chat and orphan-note); now one tool that handles both cases via a `note_path` parameter.
 - **Plumbing risk surfaced.** Realist found that `_parse_timeline_entries` would silently drop `source_type` without explicit parser changes. Now a required spec item with a round-trip test.
+
+Then, during implementation planning, one further revision after grounding in the actual code:
+
+- **Banner location: in-body for v1, render-time deferred.** Architect and epistemology argued for render-time. Implementation discovery showed render-time requires modifying `search_vault` (in agent_core, cross-package). For v1, banner is in-body with explicit merge-preservation. Render-time migration is parked for the prompt + tool audit pass, which already needs to touch `search_vault` for the path-determinism fix. A companion system prompt rule makes the banner functional rather than decorative.
