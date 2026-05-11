@@ -42,9 +42,10 @@ def _format_timeline_entry(entry: TimelineEntry) -> str:
         f"**Source:** {entry.source_url}",
         f"**Added:** {entry.added}",
         f"**Source hash:** {entry.source_hash}",
-        "",
-        entry.summary.strip(),
     ]
+    if entry.source_type != "external":
+        lines.append(f"**Source type:** {entry.source_type}")
+    lines.extend(["", entry.summary.strip()])
     return "\n".join(lines)
 
 
@@ -84,10 +85,13 @@ def _parse_timeline_entries(timeline_text: str) -> list[TimelineEntry]:
         source_hash = ""
         added = ""
         summary_lines = []
+        source_type = "external"
 
         for line in body.splitlines():
             stripped = line.strip()
-            if stripped.startswith("**Source:**"):
+            if stripped.startswith("**Source type:**"):
+                source_type = stripped.replace("**Source type:**", "").strip() or "external"
+            elif stripped.startswith("**Source:**"):
                 source_url = stripped.replace("**Source:**", "").strip()
             elif stripped.startswith("**Added:**"):
                 added = stripped.replace("**Added:**", "").strip()
@@ -103,6 +107,7 @@ def _parse_timeline_entries(timeline_text: str) -> list[TimelineEntry]:
             source_hash=source_hash,
             added=added,
             summary="\n".join(summary_lines),
+            source_type=source_type,
         ))
         i += 3
 

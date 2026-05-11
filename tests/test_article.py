@@ -12,6 +12,8 @@ from pal.article import (
     TIMELINE_MARKER,
     append_timeline_entry,
     validate_compiled_truth,
+    _format_timeline_entry,
+    _parse_timeline_entries,
 )
 
 
@@ -326,3 +328,84 @@ def test_timeline_entry_explicit_source_type_chat():
         source_type="chat",
     )
     assert entry.source_type == "chat"
+
+
+def test_format_timeline_entry_includes_source_type_when_chat():
+    entry = TimelineEntry(
+        date="2026-05-10",
+        source_label="chat",
+        source_url="",
+        source_hash="abc123",
+        added="2026-05-10T15:00:00+00:00",
+        summary="example",
+        source_type="chat",
+    )
+    formatted = _format_timeline_entry(entry)
+    assert "**Source type:** chat" in formatted
+
+
+def test_format_timeline_entry_omits_source_type_when_external():
+    entry = TimelineEntry(
+        date="2026-05-10",
+        source_label="example.com",
+        source_url="https://example.com",
+        source_hash="abc123",
+        added="2026-05-10T15:00:00+00:00",
+        summary="example",
+        source_type="external",
+    )
+    formatted = _format_timeline_entry(entry)
+    assert "**Source type:**" not in formatted
+
+
+def test_parse_timeline_reads_source_type():
+    timeline_text = """
+### 2026-05-10 - chat
+**Source:**
+**Added:** 2026-05-10T15:00:00+00:00
+**Source hash:** abc123
+**Source type:** chat
+
+example summary
+"""
+    entries = _parse_timeline_entries(timeline_text)
+    assert len(entries) == 1
+    assert entries[0].source_type == "chat"
+
+
+def test_parse_timeline_defaults_source_type_external():
+    timeline_text = """
+### 2026-05-10 - example.com
+**Source:** https://example.com
+**Added:** 2026-05-10T15:00:00+00:00
+**Source hash:** abc123
+
+example summary
+"""
+    entries = _parse_timeline_entries(timeline_text)
+    assert len(entries) == 1
+    assert entries[0].source_type == "external"
+
+
+def test_timeline_round_trip_preserves_source_type():
+    """Critical: serialize -> parse -> re-serialize must preserve source_type."""
+    article = Article(
+        meta={"title": "x", "sources": []},
+        compiled_truth="## Overview\nfoo\n## Key Concepts\nbar\n",
+        timeline=[
+            TimelineEntry(
+                date="2026-05-10",
+                source_label="chat",
+                source_url="",
+                source_hash="abc123",
+                added="2026-05-10T15:00:00+00:00",
+                summary="synth",
+                source_type="chat",
+            ),
+        ],
+    )
+    serialized = serialize_article(article)
+    reparsed = parse_article(serialized)
+    assert reparsed.timeline[0].source_type == "chat"
+    re_serialized = serialize_article(reparsed)
+    assert re_serialized == serialized
