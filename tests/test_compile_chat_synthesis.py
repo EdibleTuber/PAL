@@ -134,3 +134,55 @@ def test_make_chat_banner_format():
     banner = make_chat_banner("2026-05-10")
     assert banner.startswith(CHAT_BANNER_SENTINEL)
     assert "2026-05-10" in banner
+
+
+@pytest.mark.asyncio
+async def test_merge_chat_synthesis_preserves_banner(tmp_path, monkeypatch):
+    """When chat synthesis topic-matches an existing chat-derived article,
+    the merged article must still begin with the chat banner sentinel."""
+    # Pre-seed an existing chat-derived article.
+    cat_dir = tmp_path / "Software-Development"
+    cat_dir.mkdir(parents=True)
+    existing_article_text = (
+        "---\n"
+        "title: \"Vibe-coding comprehension strategies\"\n"
+        "sources: []\n"
+        "---\n"
+        f"{make_chat_banner('2026-05-09')}\n\n"
+        "## Overview\nOriginal overview.\n\n"
+        "## Key Concepts\n- existing point\n\n"
+        "<!-- TIMELINE -->\n"
+    )
+    existing_path = cat_dir / "vibe-coding-comprehension-strategies.md"
+    existing_path.write_text(existing_article_text)
+
+    # New synthesis on the same topic.
+    body = "## Overview\nUpdated overview.\n\n## Key Concepts\n- new point\n"
+    summary_rel = _write_summary(tmp_path, "vibe-coding-comprehension-strategies", body)
+
+    class MatchingWiki(FakeWiki):
+        def list_articles(self):
+            return [{"path": "Software-Development/vibe-coding-comprehension-strategies.md",
+                     "title": "Vibe-coding comprehension strategies"}]
+
+    compiler = Compiler(
+        vault_path=tmp_path,
+        wiki=MatchingWiki(),
+        inference=FakeInference(),
+        categorizer=FakeCategorizer(),
+        prompt_builder=FakePromptBuilder(),
+    )
+
+    # Force topic match: patch find_existing_article in BOTH modules that import it.
+    async def fake_find(**kwargs):
+        return {"path": "Software-Development/vibe-coding-comprehension-strategies.md"}
+    monkeypatch.setattr("pal.compiler.find_existing_article", fake_find)
+
+    result = await compiler.compile_chat_synthesis(summary_rel)
+
+    assert result["status"] == "merged"
+    merged_text = existing_path.read_text()
+    article = parse_article(merged_text)
+    assert article.compiled_truth.lstrip().startswith(CHAT_BANNER_SENTINEL)
+    # The new synthesis content must have landed in the article.
+    assert "Updated overview." in article.compiled_truth or "new point" in article.compiled_truth

@@ -401,24 +401,18 @@ class Compiler:
         )
 
         if existing_match:
-            # Delegate to chat-aware merge. Added in a follow-up task.
-            result = await self.merge_chat_synthesis_into_existing(
-                new_content=summary_body,
+            # Delegate to chat-aware merge. The merge helper owns archive
+            # so the banner-preservation contract and post-merge cleanup
+            # live in one place.
+            return await self.merge_chat_synthesis_into_existing(
+                new_synthesis=summary_body,
                 new_title=title,
                 existing_article_path=existing_match["path"],
                 source_url=source_url,
                 source_hash=source_hash,
                 source_file=source_file,
+                summary_path=summary_path,
             )
-            if result.get("status") == "merged":
-                source_raw = summary_meta.get("source_raw", "")
-                archive_raw_files(
-                    self.vault_path,
-                    raw_path=source_raw,
-                    summary_path=summary_path,
-                )
-                self.wiki.git_commit(f"archive: {title}")
-            return result
 
         # No existing match: write a new article with banner prepended.
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -487,6 +481,95 @@ class Compiler:
         }
         if self.retrieval is not None:
             absolute_target = str((self.vault_path / article_path_rel).resolve())
+            outcome["reindex"] = await self.retrieval.trigger_reindex(paths=[absolute_target])
+        return outcome
+
+    async def merge_chat_synthesis_into_existing(
+        self,
+        new_synthesis: str,
+        new_title: str,
+        existing_article_path: str,
+        source_url: str,
+        source_hash: str,
+        source_file: str,
+        summary_path: str,
+    ) -> dict[str, Any]:
+        """Merge a chat synthesis into an existing article.
+
+        Banner preservation is load-bearing. The merged compiled_truth
+        must still begin with CHAT_BANNER_SENTINEL so the system prompt's
+        banner-reaction rule continues to trigger.
+
+        Strategy: keep the existing article's banner (or generate one if
+        absent), then replace the rest of the compiled_truth with the new
+        synthesis. The previous synthesis is preserved in the timeline.
+        """
+        existing_text = (self.vault_path / existing_article_path).read_text()
+        existing_article = parse_article(existing_text)
+
+        existing_truth = existing_article.compiled_truth.lstrip()
+        if existing_truth.startswith(CHAT_BANNER_SENTINEL):
+            # Extract existing banner line (first paragraph).
+            banner_end = existing_truth.find("\n\n")
+            existing_banner = (
+                existing_truth[:banner_end] if banner_end != -1 else existing_truth
+            )
+        else:
+            # Existing article is external-source; banner-ify it because the
+            # merged content is now chat-derived and the trust signal must
+            # surface to the reader.
+            now_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            existing_banner = make_chat_banner(now_date)
+
+        compiled_truth = f"{existing_banner}\n\n{new_synthesis.strip()}\n"
+
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        article = Article(
+            meta=dict(existing_article.meta),
+            compiled_truth=compiled_truth,
+            timeline=list(existing_article.timeline),
+        )
+        article.meta["updated"] = now
+        article.meta["compiled_at"] = now
+
+        article = append_timeline_entry(
+            article=article,
+            source_url=source_url,
+            source_hash=source_hash,
+            source_file=source_file,
+            source_type="chat",
+            summary=new_synthesis.strip(),
+        )
+
+        article_full_path = self.vault_path / existing_article_path
+        article_full_path.write_text(serialize_article(article))
+        logger.info("Merged (chat) -> %s", existing_article_path)
+
+        self.wiki.rebuild_index()
+        self.wiki.git_init()
+        self.wiki.git_commit(f"compile: {new_title}")
+
+        source_raw_meta = ""
+        # Read summary frontmatter once more to find source_raw for archive
+        summary_full = self.vault_path / summary_path
+        if summary_full.exists():
+            sm, _ = parse_frontmatter(summary_full.read_text())
+            source_raw_meta = sm.get("source_raw", "")
+        archive_raw_files(
+            self.vault_path,
+            raw_path=source_raw_meta,
+            summary_path=summary_path,
+        )
+        self.wiki.git_commit(f"archive: {new_title}")
+
+        outcome = {
+            "status": "merged",
+            "title": new_title,
+            "article_path_rel": existing_article_path,
+            "compiled_truth": compiled_truth.strip(),
+        }
+        if self.retrieval is not None:
+            absolute_target = str((self.vault_path / existing_article_path).resolve())
             outcome["reindex"] = await self.retrieval.trigger_reindex(paths=[absolute_target])
         return outcome
 
