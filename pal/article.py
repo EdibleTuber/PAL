@@ -159,6 +159,11 @@ def append_timeline_entry(
 
     parsed_url = urlparse(source_url)
     label = parsed_url.hostname or source_url
+    if not label:
+        # Non-URL provenance (e.g. source_type == "chat"). Use the type
+        # as the label so the timeline header is non-empty and survives
+        # parse round-trip.
+        label = source_type if source_type != "external" else "unknown"
 
     entry = TimelineEntry(
         date=date_str,

@@ -441,3 +441,43 @@ def test_append_timeline_entry_default_source_type_external():
     )
     assert updated.timeline[-1].source_type == "external"
     assert updated.meta["sources"][-1].get("source_type", "external") == "external"
+
+
+def test_append_timeline_entry_chat_label_fallback():
+    """When source_url is empty and source_type is chat, label falls back to 'chat'.
+
+    This ensures the timeline header is non-empty so _ENTRY_HEADER_RE matches
+    on parse round-trip. Bug found via integration tests on 2026-05-11.
+    """
+    article = Article(meta={"title": "x", "sources": []}, compiled_truth="", timeline=[])
+    updated = append_timeline_entry(
+        article=article,
+        source_url="",
+        source_hash="abc",
+        summary="s",
+        source_file="raw/notes/x.md",
+        source_type="chat",
+    )
+    assert updated.timeline[-1].source_label == "chat"
+
+
+def test_append_timeline_entry_chat_round_trip_preserves_timeline():
+    """Chat-derived entries must survive serialize -> parse -> re-serialize."""
+    article = Article(
+        meta={"title": "x", "sources": []},
+        compiled_truth="## Overview\nfoo\n## Key Concepts\nbar\n",
+        timeline=[],
+    )
+    updated = append_timeline_entry(
+        article=article,
+        source_url="",
+        source_hash="abc",
+        summary="s",
+        source_file="raw/notes/x.md",
+        source_type="chat",
+    )
+    serialized = serialize_article(updated)
+    reparsed = parse_article(serialized)
+    assert len(reparsed.timeline) == 1
+    assert reparsed.timeline[0].source_type == "chat"
+    assert reparsed.timeline[0].source_label == "chat"
