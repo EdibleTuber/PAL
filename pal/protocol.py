@@ -24,7 +24,6 @@ from agent_core.protocol import (
     ToolProgressMessage,
     register_message,
 )
-from agent_core.protocol.transport import _MESSAGE_TYPES as MESSAGE_REGISTRY
 
 
 @register_message

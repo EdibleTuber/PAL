@@ -1,4 +1,5 @@
-from pal.protocol import PromoteSynthesisProposalMessage, MESSAGE_REGISTRY
+from agent_core.protocol.transport import _MESSAGE_TYPES as MESSAGE_REGISTRY
+from pal.protocol import PromoteSynthesisProposalMessage
 
 
 def test_promote_synthesis_proposal_message_fields():
