@@ -79,7 +79,7 @@ async def test_promote_synthesis_creates_proposal_and_emits_message(tmp_path):
     assert result["article_path_rel"] == "Software-Development/vibe.md"
 
     ctx.emit.assert_awaited()
-    compiler.compile_chat_synthesis.assert_awaited_once()
+    compiler.compile_chat_synthesis.assert_awaited_once_with("raw/summaries/vibe.md")
 
 
 @pytest.mark.asyncio
@@ -110,3 +110,45 @@ async def test_promote_synthesis_declined_returns_status(tmp_path):
     result = json.loads(result_str)
     assert result["status"] == "declined"
     compiler.compile_chat_synthesis.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_promote_synthesis_handles_title_with_special_chars(tmp_path):
+    """Titles with quotes/backslashes/newlines must not break frontmatter."""
+    notes = tmp_path / "raw" / "notes"
+    notes.mkdir(parents=True)
+    (notes / "weird.md").write_text("## Overview\nfoo\n## Key Concepts\nbar\n")
+
+    compiler = MagicMock()
+    compiler.compile_chat_synthesis = AsyncMock(return_value={
+        "status": "ok",
+        "title": "x",
+        "article_path_rel": "Software-Development/x.md",
+    })
+
+    ar = ApprovalRegistry()
+    ctx = _make_ctx(tmp_path, ar, compiler)
+
+    tool = PromoteSynthesisProposal()
+
+    async def auto_approve():
+        await asyncio.sleep(0.05)
+        for p in ar._proposals.values():
+            if p.status == "pending":
+                ar.approve(p.proposal_id)
+                return
+
+    asyncio.create_task(auto_approve())
+    tricky_title = 'Weird: "quoted" and \\backslashed'
+    await tool.run(
+        {"title": tricky_title, "rationale": "test", "note_path": "raw/notes/weird.md"},
+        ctx,
+    )
+
+    # The summary file must be readable as valid frontmatter.
+    from agent_core.utils.frontmatter import parse_frontmatter
+    summary_path = tmp_path / "raw" / "summaries" / "weird-quoted-and-backslashed.md"
+    assert summary_path.exists()
+    meta, body = parse_frontmatter(summary_path.read_text())
+    assert meta["title"] == tricky_title
+    assert meta["source_type"] == "chat"

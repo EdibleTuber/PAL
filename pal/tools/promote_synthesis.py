@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from agent_core.tools.base import Tool
+from agent_core.utils.frontmatter import serialize_frontmatter
 
 if TYPE_CHECKING:
     from agent_core.agent import HandlerContext
@@ -144,17 +145,15 @@ class PromoteSynthesisProposal(Tool):
             })
         summary_full.parent.mkdir(parents=True, exist_ok=True)
 
-        summary_text = (
-            "---\n"
-            f"title: \"{title}\"\n"
-            f"source_file: \"{note_path}\"\n"
-            "source_url: \"\"\n"
-            "source_type: chat\n"
-            f"source_hash: \"{note_hash}\"\n"
-            f"source_raw: \"{note_path}\"\n"
-            "---\n"
-            f"{note_body}"
-        )
+        summary_meta = {
+            "title": title,
+            "source_file": note_path,
+            "source_url": "",
+            "source_type": "chat",
+            "source_hash": note_hash,
+            "source_raw": note_path,
+        }
+        summary_text = serialize_frontmatter(summary_meta, note_body)
         summary_full.write_text(summary_text)
 
         try:
