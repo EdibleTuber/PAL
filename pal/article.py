@@ -87,6 +87,8 @@ def _parse_timeline_entries(timeline_text: str) -> list[TimelineEntry]:
         summary_lines = []
         source_type = "external"
 
+        # Order matters: "**Source type:**" must be checked before "**Source:**"
+        # because the latter is a prefix substring of the former.
         for line in body.splitlines():
             stripped = line.strip()
             if stripped.startswith("**Source type:**"):
