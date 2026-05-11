@@ -305,7 +305,10 @@ class Compiler:
         topic-matches, and writes/commits/archives like compile_one.
 
         Status values: ok, merged, insufficient, not_found, invalid_path,
-        too_large, error, wrong_source_type.
+        too_large, error, wrong_source_type, missing_source_file.
+
+        Provenance contract: source_url is exempt (chat has no URL);
+        source_file is REQUIRED and must point at the synthesis note.
         """
         # Path traversal guard
         if ".." in summary_path.split("/") or summary_path.startswith("/"):
@@ -355,6 +358,19 @@ class Compiler:
         source_url = summary_meta.get("source_url", "")
         source_hash = summary_meta.get("source_hash", "")
         source_file = summary_meta.get("source_file", "")
+
+        # Chat-derived requires source_file pointing at the synthesis note.
+        # source_url is exempt (chat conversations have no URL), but the note
+        # path is the provenance anchor and must not be empty.
+        if not source_file:
+            return {
+                "status": "missing_source_file",
+                "title": title,
+                "reason": (
+                    "compile_chat_synthesis requires source_file in summary "
+                    "frontmatter (path to synthesis note under raw/notes/)."
+                ),
+            }
 
         # Validate required sections in the user-approved synthesis.
         # If sections are missing, refuse to promote (return insufficient)

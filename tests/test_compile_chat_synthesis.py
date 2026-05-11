@@ -104,6 +104,32 @@ async def test_compile_chat_synthesis_returns_insufficient_when_sections_missing
     assert result["status"] == "insufficient"
 
 
+@pytest.mark.asyncio
+async def test_compile_chat_synthesis_rejects_empty_source_file(tmp_path):
+    """Chat path requires source_file pointing at the synthesis note."""
+    summaries = tmp_path / "raw" / "summaries"
+    summaries.mkdir(parents=True)
+    (summaries / "no-source.md").write_text(
+        "---\n"
+        "title: \"No source\"\n"
+        "source_file: \"\"\n"
+        "source_url: \"\"\n"
+        "source_type: chat\n"
+        "source_hash: \"abc\"\n"
+        "---\n"
+        "## Overview\nfoo\n## Key Concepts\nbar\n"
+    )
+    compiler = Compiler(
+        vault_path=tmp_path,
+        wiki=FakeWiki(),
+        inference=FakeInference(),
+        categorizer=FakeCategorizer(),
+        prompt_builder=FakePromptBuilder(),
+    )
+    result = await compiler.compile_chat_synthesis("raw/summaries/no-source.md")
+    assert result["status"] == "missing_source_file"
+
+
 def test_make_chat_banner_format():
     banner = make_chat_banner("2026-05-10")
     assert banner.startswith(CHAT_BANNER_SENTINEL)
