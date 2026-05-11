@@ -401,13 +401,33 @@ class Compiler:
         )
 
         if existing_match:
+            existing_article_path = existing_match["path"]
+            existing_text = (self.vault_path / existing_article_path).read_text()
+            existing_article = parse_article(existing_text)
+            existing_truth = existing_article.compiled_truth.lstrip()
+            if not existing_truth.startswith(CHAT_BANNER_SENTINEL):
+                # External-sourced article: refuse to overwrite. Trust-level
+                # downgrade through chat-merge would be silent, so we block
+                # and tell the user to use propose_consolidate explicitly.
+                return {
+                    "status": "needs_consolidate",
+                    "title": title,
+                    "article_path_rel": existing_article_path,
+                    "reason": (
+                        f"Topic match found at {existing_article_path}, but that "
+                        f"article is external-sourced. Refusing to overwrite "
+                        f"external content with chat-derived synthesis. Use "
+                        f"propose_consolidate to merge them manually if you "
+                        f"want to combine them."
+                    ),
+                }
             # Delegate to chat-aware merge. The merge helper owns archive
             # so the banner-preservation contract and post-merge cleanup
             # live in one place.
             return await self.merge_chat_synthesis_into_existing(
                 new_synthesis=summary_body,
                 new_title=title,
-                existing_article_path=existing_match["path"],
+                existing_article_path=existing_article_path,
                 source_url=source_url,
                 source_hash=source_hash,
                 source_file=source_file,

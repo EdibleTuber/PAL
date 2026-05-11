@@ -192,3 +192,50 @@ async def test_merge_chat_synthesis_preserves_banner(tmp_path, monkeypatch):
     )
     # The new synthesis content must have landed in the article.
     assert "Updated overview." in article.compiled_truth or "new point" in article.compiled_truth
+
+
+@pytest.mark.asyncio
+async def test_compile_chat_synthesis_blocks_merge_into_external(tmp_path, monkeypatch):
+    """When chat synthesis topic-matches an external-sourced article, refuse
+    the merge and suggest propose_consolidate."""
+    # Pre-seed an external-sourced article (NO chat banner).
+    cat_dir = tmp_path / "Software-Development"
+    cat_dir.mkdir(parents=True)
+    existing_path = cat_dir / "external-topic.md"
+    existing_path.write_text(
+        "---\n"
+        "title: \"External topic\"\n"
+        "sources: []\n"
+        "---\n"
+        "## Overview\nOriginally compiled from a URL.\n\n"
+        "## Key Concepts\n- a\n\n"
+        "<!-- TIMELINE -->\n"
+    )
+
+    body = "## Overview\nChat synthesis on same topic.\n\n## Key Concepts\n- new\n"
+    summary_rel = _write_summary(tmp_path, "external-topic", body)
+
+    class MatchingWiki(FakeWiki):
+        def list_articles(self):
+            return [{"path": "Software-Development/external-topic.md", "title": "External topic"}]
+
+    compiler = Compiler(
+        vault_path=tmp_path,
+        wiki=MatchingWiki(),
+        inference=FakeInference(),
+        categorizer=FakeCategorizer(),
+        prompt_builder=FakePromptBuilder(),
+    )
+
+    async def fake_find(**kwargs):
+        return {"path": "Software-Development/external-topic.md"}
+    monkeypatch.setattr("pal.compiler.find_existing_article", fake_find)
+
+    result = await compiler.compile_chat_synthesis(summary_rel)
+
+    assert result["status"] == "needs_consolidate"
+    assert "propose_consolidate" in result["reason"]
+    # External article must NOT have been modified.
+    text_after = existing_path.read_text()
+    assert "Originally compiled from a URL" in text_after
+    assert CHAT_BANNER_SENTINEL not in text_after
