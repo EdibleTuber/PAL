@@ -134,3 +134,71 @@ async def test_backfill_orphan_note_end_to_end(tmp_path):
     assert article_path.exists()
     article = parse_article(article_path.read_text())
     assert article.compiled_truth.lstrip().startswith(CHAT_BANNER_SENTINEL)
+
+
+@pytest.mark.asyncio
+async def test_topic_match_merge_preserves_banner(tmp_path, monkeypatch):
+    """Promoting onto an existing chat-derived article must preserve the banner."""
+    # Pre-seed an existing chat-derived article.
+    cat_dir = tmp_path / "Software-Development"
+    cat_dir.mkdir(parents=True)
+    from pal.compiler import make_chat_banner
+    existing_path = cat_dir / "vibe-coding.md"
+    existing_path.write_text(
+        "---\n"
+        "title: \"Vibe-coding\"\n"
+        "sources: []\n"
+        "---\n"
+        f"{make_chat_banner('2026-05-09')}\n\n"
+        "## Overview\nOriginal.\n\n## Key Concepts\n- a\n\n"
+        "<!-- TIMELINE -->\n"
+    )
+
+    notes = tmp_path / "raw" / "notes"
+    notes.mkdir(parents=True)
+    (notes / "vibe-coding-v2.md").write_text(
+        "## Overview\nUpdated.\n\n## Key Concepts\n- a\n- b\n"
+    )
+
+    wiki = FakeWiki(existing=[
+        {"path": "Software-Development/vibe-coding.md", "title": "Vibe-coding"},
+    ])
+    compiler = _build_compiler(tmp_path, wiki=wiki)
+
+    # Force topic match.
+    async def fake_find(**kwargs):
+        return {"path": "Software-Development/vibe-coding.md"}
+    monkeypatch.setattr("pal.compiler.find_existing_article", fake_find)
+
+    ar = ApprovalRegistry()
+    ctx = MagicMock()
+    ctx.agent.approval_registry = ar
+    ctx.agent.compiler = compiler
+    ctx.agent.config.vault_path = tmp_path
+    ctx.emit = AsyncMock()
+
+    tool = PromoteSynthesisProposal()
+
+    async def auto_approve():
+        await asyncio.sleep(0.05)
+        for p in ar._proposals.values():
+            if p.status == "pending":
+                ar.approve(p.proposal_id)
+                return
+
+    asyncio.create_task(auto_approve())
+    result_str = await tool.run(
+        {
+            "title": "Vibe-coding v2",
+            "rationale": "extend with new concept",
+            "note_path": "raw/notes/vibe-coding-v2.md",
+        },
+        ctx,
+    )
+    result = json.loads(result_str)
+    assert result["status"] == "merged"
+
+    merged = parse_article(existing_path.read_text())
+    assert merged.compiled_truth.lstrip().startswith(CHAT_BANNER_SENTINEL)
+    # New synthesis content present.
+    assert "Updated." in merged.compiled_truth or "- b" in merged.compiled_truth
