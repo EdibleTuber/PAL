@@ -91,3 +91,46 @@ async def test_forward_promotion_end_to_end(tmp_path):
     assert article.compiled_truth.lstrip().startswith(CHAT_BANNER_SENTINEL)
     assert article.meta["sources"][-1]["source_type"] == "chat"
     assert article.timeline[-1].source_type == "chat"
+
+
+@pytest.mark.asyncio
+async def test_backfill_orphan_note_end_to_end(tmp_path):
+    """Backfill an orphan note created days ago (no special handling)."""
+    notes = tmp_path / "raw" / "notes"
+    notes.mkdir(parents=True)
+    orphan = notes / "old-orphan-note.md"
+    orphan.write_text("## Overview\nOld knowledge.\n\n## Key Concepts\n- a\n- b\n")
+
+    compiler = _build_compiler(tmp_path)
+    ar = ApprovalRegistry()
+
+    ctx = MagicMock()
+    ctx.agent.approval_registry = ar
+    ctx.agent.compiler = compiler
+    ctx.agent.config.vault_path = tmp_path
+    ctx.emit = AsyncMock()
+
+    tool = PromoteSynthesisProposal()
+
+    async def auto_approve():
+        await asyncio.sleep(0.05)
+        for p in ar._proposals.values():
+            if p.status == "pending":
+                ar.approve(p.proposal_id)
+                return
+
+    asyncio.create_task(auto_approve())
+    result_str = await tool.run(
+        {
+            "title": "Old knowledge",
+            "rationale": "backfill orphan",
+            "note_path": "raw/notes/old-orphan-note.md",
+        },
+        ctx,
+    )
+    result = json.loads(result_str)
+    assert result["status"] == "ok"
+    article_path = tmp_path / result["article_path_rel"]
+    assert article_path.exists()
+    article = parse_article(article_path.read_text())
+    assert article.compiled_truth.lstrip().startswith(CHAT_BANNER_SENTINEL)
