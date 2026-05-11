@@ -24,6 +24,7 @@ from agent_core.protocol import (
     ToolProgressMessage,
     register_message,
 )
+from agent_core.protocol.transport import _MESSAGE_TYPES as MESSAGE_REGISTRY
 
 
 @register_message
@@ -101,6 +102,18 @@ class PromoteProposalMessage:
 
 @register_message
 @dataclass
+class PromoteSynthesisProposalMessage:
+    """Daemon to client: a chat-derived synthesis is proposed for promotion to a wiki article."""
+    proposal_id: str
+    title: str
+    rationale: str
+    note_path: str
+    note_body_preview: str
+    type: str = "promote_synthesis_proposal"
+
+
+@register_message
+@dataclass
 class BatchFallbackProposal:
     """Emitted when a user-facing call to the batch inference backend fails
     and the user should choose: retry on batch, run on main, or skip this step.
@@ -149,6 +162,7 @@ Message = (
     | ConsolidateProposalMessage
     | UrlFixProposalMessage
     | PromoteProposalMessage
+    | PromoteSynthesisProposalMessage
     | LearningCandidateProposalMessage
     | BatchFallbackProposal
     | BatchFallbackApprovalMessage
