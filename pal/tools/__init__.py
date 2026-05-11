@@ -20,6 +20,7 @@ from pal.tools.compile import CompileSummary, ProposeCompileBatch, CompileBatch
 from pal.tools.consolidate import ProposeConsolidate, Consolidate
 from pal.tools.url_fix import ProposeUrlFix, UrlFix
 from pal.tools.reorg import ProposeReorg, ProposePromote, Reorg
+from pal.tools.promote_synthesis import PromoteSynthesisProposal
 from pal.tools.wait import WaitForReindex
 from pal.tools.scratch import UpdateScratch, AddLearning
 
@@ -41,6 +42,7 @@ __all__ = [
     "ProposeReorg",
     "ProposePromote",
     "Reorg",
+    "PromoteSynthesisProposal",
     "WaitForReindex",
     "UpdateScratch",
     "AddLearning",

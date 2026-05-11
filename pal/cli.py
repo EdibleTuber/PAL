@@ -27,6 +27,7 @@ from pal.protocol import (
     ResearchApprovalResponseMessage,
     CompileProposalMessage,
     ConsolidateProposalMessage,
+    PromoteSynthesisProposalMessage,
     ReorgProposalMessage,
     UrlFixProposalMessage,
     BatchFallbackProposal,
@@ -146,6 +147,27 @@ def format_consolidate_proposal(msg: "ConsolidateProposalMessage") -> str:
         "  [a]pprove  [d]ecline  [e]dit",
         "> ",
     ])
+    return "\n".join(lines)
+
+
+def format_promote_synthesis_proposal(msg: "PromoteSynthesisProposalMessage") -> str:
+    """Render a chat-derived synthesis promotion approval prompt. Pure formatter."""
+    preview = msg.note_body_preview.strip()
+    if len(preview) > 600:
+        preview = preview[:597] + "..."
+    preview_lines = preview.splitlines() or [""]
+    indented_preview = "\n".join(f"    {line}" for line in preview_lines)
+    lines = [
+        "",
+        "────────── PAL proposes promote (chat synthesis) ──────────",
+        f"  Title:     {msg.title}",
+        f"  Note path: {msg.note_path}",
+        f"  Rationale: {msg.rationale}",
+        "  Preview:",
+        indented_preview,
+        "  [a]pprove  [d]ecline",
+        "> ",
+    ]
     return "\n".join(lines)
 
 
@@ -427,6 +449,23 @@ async def run_repl() -> None:
                         elif choice in ("e", "edit"):
                             response = ResearchApprovalResponseMessage(
                                 proposal_id=msg.proposal_id, decision="decline"
+                            )
+                        else:
+                            response = ResearchApprovalResponseMessage(
+                                proposal_id=msg.proposal_id, decision="decline"
+                            )
+                        await client.send(response)
+                        continue
+                    elif isinstance(msg, PromoteSynthesisProposalMessage):
+                        if live is not None:
+                            live.stop()
+                            live = None
+                        print(format_promote_synthesis_proposal(msg), end="", flush=True)
+                        loop = asyncio.get_running_loop()
+                        choice = (await loop.run_in_executor(None, input)).strip().lower()
+                        if choice in ("a", "approve"):
+                            response = ResearchApprovalResponseMessage(
+                                proposal_id=msg.proposal_id, decision="approve"
                             )
                         else:
                             response = ResearchApprovalResponseMessage(

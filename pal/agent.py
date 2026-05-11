@@ -49,6 +49,7 @@ from pal.tools import (
     ProposeReorg,
     ProposeResearch,
     ProposeUrlFix,
+    PromoteSynthesisProposal,
     Reorg,
     ReplaceInFile,
     ResearchTopic,
@@ -139,6 +140,7 @@ class PALAgent(Agent):
              ProposeConsolidate, Consolidate,
              ProposeUrlFix, UrlFix,
              ProposeReorg, ProposePromote, Reorg,
+             PromoteSynthesisProposal,
              WaitForReindex,
              UpdateScratch, AddLearning]
     # Phase F PR5: PAL-specific command subclasses. The framework's

@@ -23,13 +23,14 @@ from pal.protocol import (
     ConsolidateProposalMessage,
     LearningCandidateProposalMessage,
     PromoteProposalMessage,
+    PromoteSynthesisProposalMessage,
     ResearchApprovalResponseMessage,
     ResearchProposalMessage,
     ReorgProposalMessage,
     UrlFixProposalMessage,
 )
 
-ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote", "learning_candidate", "url_fix"]
+ProposalKind = Literal["research", "compile", "reorg", "consolidate", "promote", "promote_synthesis", "learning_candidate", "url_fix"]
 
 _DISCORD_FIELD_VALUE_LIMIT = 1024
 _FIELD_BUDGET_HEADROOM = 40  # "+NNN more" plus newlines
@@ -328,6 +329,39 @@ def build_promote_proposal_embed(
     return embed, view
 
 
+def build_promote_synthesis_proposal_embed(
+    msg: PromoteSynthesisProposalMessage,
+) -> tuple[discord.Embed, discord.ui.View]:
+    """Pure builder: embed for chat-derived synthesis promotion. Two buttons (no Edit)."""
+    embed = discord.Embed(
+        title="PAL proposes promoting a chat-derived synthesis",
+        color=discord.Color.gold(),
+    )
+    embed.add_field(name="Title", value=msg.title, inline=False)
+    embed.add_field(name="Rationale", value=msg.rationale, inline=False)
+    embed.add_field(name="Note path", value=f"`{msg.note_path}`", inline=False)
+    cap = _DISCORD_FIELD_VALUE_LIMIT - _FIELD_BUDGET_HEADROOM
+    preview = msg.note_body_preview if len(msg.note_body_preview) <= cap else (
+        msg.note_body_preview[: cap - 3] + "..."
+    )
+    embed.add_field(name="Preview", value=preview, inline=False)
+
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.success,
+        label="Approve",
+        emoji="✅",
+        custom_id=f"promote_synthesis:approve:{msg.proposal_id}",
+    ))
+    view.add_item(discord.ui.Button(
+        style=discord.ButtonStyle.danger,
+        label="Decline",
+        emoji="❌",
+        custom_id=f"promote_synthesis:decline:{msg.proposal_id}",
+    ))
+    return embed, view
+
+
 def build_learning_candidate_embed(
     msg: LearningCandidateProposalMessage,
 ) -> tuple[discord.Embed, discord.ui.View]:
@@ -595,6 +629,8 @@ class DiscordStreamProcessor:
                 await self._handle_url_fix_proposal(msg)
             elif isinstance(msg, PromoteProposalMessage):
                 await self._handle_promote_proposal(msg)
+            elif isinstance(msg, PromoteSynthesisProposalMessage):
+                await self._handle_promote_synthesis_proposal(msg)
             elif isinstance(msg, LearningCandidateProposalMessage):
                 await self._handle_learning_candidate_proposal(msg)
             elif isinstance(msg, BatchFallbackProposal):
@@ -657,6 +693,14 @@ class DiscordStreamProcessor:
                                   rationale=msg.rationale,
                                   ctx_extras={"slug": msg.slug, "title": msg.title,
                                               "body": msg.body})
+
+    async def _handle_promote_synthesis_proposal(self, msg: PromoteSynthesisProposalMessage) -> None:
+        embed, view = build_promote_synthesis_proposal_embed(msg)
+        await self._post_proposal(embed, view, msg.proposal_id, "promote_synthesis",
+                                  rationale=msg.rationale,
+                                  ctx_extras={"title": msg.title,
+                                              "note_path": msg.note_path,
+                                              "note_body_preview": msg.note_body_preview})
 
     async def _handle_learning_candidate_proposal(self, msg: LearningCandidateProposalMessage) -> None:
         embed, view = build_learning_candidate_embed(msg)
@@ -763,7 +807,7 @@ def parse_button_custom_id(
     if len(parts) != 3:
         return None
     kind, action, proposal_id = parts
-    if kind not in ("research", "compile", "reorg", "consolidate", "promote", "learning_candidate", "url_fix"):
+    if kind not in ("research", "compile", "reorg", "consolidate", "promote", "promote_synthesis", "learning_candidate", "url_fix"):
         return None
     if action not in ("approve", "decline", "edit"):
         return None
@@ -778,7 +822,7 @@ def parse_modal_custom_id(cid: str) -> Optional[tuple[ProposalKind, str]]:
     if len(parts) != 2:
         return None
     kind, proposal_id = parts
-    if kind not in ("research", "compile", "reorg", "consolidate", "promote", "learning_candidate", "url_fix"):
+    if kind not in ("research", "compile", "reorg", "consolidate", "promote", "promote_synthesis", "learning_candidate", "url_fix"):
         return None
     if not proposal_id:
         return None
