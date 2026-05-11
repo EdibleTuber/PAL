@@ -25,6 +25,7 @@ class TimelineEntry:
     source_hash: str     # content hash from raw file
     added: str           # ISO timestamp
     summary: str         # thorough summary text
+    source_type: str = "external"  # provenance class: "external" or "chat"
 
 
 @dataclass

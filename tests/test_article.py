@@ -301,3 +301,28 @@ async def test_find_existing_article_empty_category():
     )
     assert result is None
     inference.complete.assert_not_called()
+
+
+def test_timeline_entry_default_source_type_is_external():
+    entry = TimelineEntry(
+        date="2026-05-10",
+        source_label="example.com",
+        source_url="https://example.com",
+        source_hash="abc123",
+        added="2026-05-10T15:00:00+00:00",
+        summary="example summary",
+    )
+    assert entry.source_type == "external"
+
+
+def test_timeline_entry_explicit_source_type_chat():
+    entry = TimelineEntry(
+        date="2026-05-10",
+        source_label="chat",
+        source_url="",
+        source_hash="abc123",
+        added="2026-05-10T15:00:00+00:00",
+        summary="example summary",
+        source_type="chat",
+    )
+    assert entry.source_type == "chat"
