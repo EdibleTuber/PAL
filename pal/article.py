@@ -142,12 +142,16 @@ def append_timeline_entry(
     source_hash: str,
     summary: str,
     source_file: str = "",
+    source_type: str = "external",
 ) -> Article:
     """Append a new timeline entry and update frontmatter sources list.
 
     Returns a new Article with the entry appended (does not mutate input).
     If source_file is provided (non-empty), it is stored in the sources entry
     alongside url and hash so local/PDF sources can be identified later.
+    source_type defaults to "external"; non-default values are stored on both
+    the TimelineEntry and the meta.sources entry so chat-derived and other
+    provenance can be distinguished later.
     """
     now = datetime.now(timezone.utc)
     date_str = now.strftime("%Y-%m-%d")
@@ -163,6 +167,7 @@ def append_timeline_entry(
         source_hash=source_hash,
         added=added_str,
         summary=summary.strip(),
+        source_type=source_type,
     )
 
     new_timeline = list(article.timeline) + [entry]
@@ -175,6 +180,8 @@ def append_timeline_entry(
     }
     if source_file:
         source_entry["source_file"] = source_file
+    if source_type != "external":
+        source_entry["source_type"] = source_type
     new_sources.append(source_entry)
 
     new_meta = dict(article.meta)

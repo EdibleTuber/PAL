@@ -409,3 +409,35 @@ def test_timeline_round_trip_preserves_source_type():
     assert reparsed.timeline[0].source_type == "chat"
     re_serialized = serialize_article(reparsed)
     assert re_serialized == serialized
+
+
+def test_append_timeline_entry_propagates_source_type_to_entry_and_meta():
+    article = Article(
+        meta={"title": "x", "sources": []},
+        compiled_truth="## Overview\nfoo\n",
+        timeline=[],
+    )
+    updated = append_timeline_entry(
+        article=article,
+        source_url="",
+        source_hash="abc123",
+        summary="synth",
+        source_file="raw/notes/foo.md",
+        source_type="chat",
+    )
+    assert updated.timeline[-1].source_type == "chat"
+    assert updated.meta["sources"][-1]["source_type"] == "chat"
+    assert updated.meta["sources"][-1]["source_file"] == "raw/notes/foo.md"
+
+
+def test_append_timeline_entry_default_source_type_external():
+    """Existing call sites with no source_type kwarg get external."""
+    article = Article(meta={"title": "x", "sources": []}, compiled_truth="", timeline=[])
+    updated = append_timeline_entry(
+        article=article,
+        source_url="https://example.com",
+        source_hash="abc",
+        summary="s",
+    )
+    assert updated.timeline[-1].source_type == "external"
+    assert updated.meta["sources"][-1].get("source_type", "external") == "external"
