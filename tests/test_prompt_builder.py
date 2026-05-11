@@ -152,6 +152,22 @@ def test_base_prompt_mentions_wait_for_reindex():
     assert "reindex" in PAL_BASE_PROMPT.lower()
 
 
+def test_base_prompt_mentions_promote_synthesis_tool():
+    assert "propose_promote_synthesis" in PAL_BASE_PROMPT
+
+
+def test_base_prompt_includes_chat_promotion_nudge():
+    lower = PAL_BASE_PROMPT.lower()
+    assert "promote this thread" in lower or "promote this chat" in lower
+    assert "once per conversation" in lower
+
+
+def test_base_prompt_includes_banner_reaction_rule():
+    assert "chat-derived synthesis" in PAL_BASE_PROMPT
+    lower = PAL_BASE_PROMPT.lower()
+    assert "previous chat" in lower or "prior conversation" in lower
+
+
 def test_adapter_omits_scratchpad_section(adapter):
     # The base adapter (used by Compiler/Consolidator) has no channel context;
     # it must not include a Channel Scratchpad section.
