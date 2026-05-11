@@ -23,6 +23,22 @@ from pal.archive import archive_raw_files, MAX_SLUG_BYTES
 logger = logging.getLogger(__name__)
 
 
+CHAT_BANNER_SENTINEL = "> _Source: chat-derived synthesis"
+
+
+def make_chat_banner(date_str: str) -> str:
+    """Return the in-body trust banner for a chat-derived article.
+
+    The sentinel substring (CHAT_BANNER_SENTINEL) must appear at the
+    start of compiled_truth for the system prompt's banner-reaction rule
+    to trigger and for merge_chat_synthesis_into_existing to detect and
+    preserve it.
+    """
+    return (
+        f"{CHAT_BANNER_SENTINEL} (no transcript). User-approved on {date_str}._"
+    )
+
+
 class EmptySourceError(ValueError):
     """Raised when a summary has neither source_url nor source_file populated."""
 
@@ -256,6 +272,186 @@ class Compiler:
 
         article_full_path.write_text(serialize_article(article))
         logger.info("Compiled %s -> %s", summary_path, article_path_rel)
+
+        # Rebuild index and commit
+        self.wiki.rebuild_index()
+        self.wiki.git_init()
+        self.wiki.git_commit(f"compile: {title}")
+
+        # Archive raw intermediates
+        source_raw = summary_meta.get("source_raw", "")
+        archive_raw_files(self.vault_path, raw_path=source_raw, summary_path=summary_path)
+        self.wiki.git_commit(f"archive: {title}")
+
+        outcome = {
+            "status": "ok",
+            "title": title,
+            "article_path_rel": article_path_rel,
+            "compiled_truth": compiled_truth.strip(),
+        }
+        if self.retrieval is not None:
+            absolute_target = str((self.vault_path / article_path_rel).resolve())
+            outcome["reindex"] = await self.retrieval.trigger_reindex(paths=[absolute_target])
+        return outcome
+
+    async def compile_chat_synthesis(self, summary_path: str) -> dict[str, Any]:
+        """Compile a chat-derived synthesis directly into a wiki article.
+
+        Unlike compile_one, this entrypoint trusts the summary body as
+        already user-approved compiled truth. It does NOT call inference
+        for extraction. It prepends a sentinel banner so downstream
+        readers know the article came from chat synthesis without an
+        external transcript, validates required sections, categorizes,
+        topic-matches, and writes/commits/archives like compile_one.
+
+        Status values: ok, merged, insufficient, not_found, invalid_path,
+        too_large, error, wrong_source_type.
+        """
+        # Path traversal guard
+        if ".." in summary_path.split("/") or summary_path.startswith("/"):
+            return {"status": "invalid_path", "reason": f"Invalid path: {summary_path}"}
+
+        full_path = self.vault_path / summary_path
+        if not full_path.exists():
+            return {"status": "not_found", "reason": f"File not found: {summary_path}"}
+
+        # Resolve + boundary check
+        try:
+            resolved = full_path.resolve()
+            vault_resolved = self.vault_path.resolve()
+            if not str(resolved).startswith(str(vault_resolved) + "/"):
+                return {"status": "invalid_path", "reason": f"Invalid path: {summary_path}"}
+        except Exception:
+            return {"status": "invalid_path", "reason": f"Invalid path: {summary_path}"}
+
+        summary_meta, summary_body = parse_frontmatter(full_path.read_text())
+
+        # Size guard mirrors compile_one. Even though we don't call
+        # inference here, downstream merge and indexing have their own
+        # practical limits; refuse oversized synthesis early.
+        if len(summary_body) > self.max_body_chars:
+            return {
+                "status": "too_large",
+                "title": summary_meta.get("title", full_path.stem),
+                "reason": (
+                    f"Source body is {len(summary_body)} characters; "
+                    f"exceeds compile limit of {self.max_body_chars}."
+                ),
+            }
+
+        # Defensive: this entrypoint is only for chat-derived material.
+        source_type = summary_meta.get("source_type", "")
+        if source_type != "chat":
+            return {
+                "status": "wrong_source_type",
+                "title": summary_meta.get("title", full_path.stem),
+                "reason": (
+                    f"compile_chat_synthesis requires source_type=chat; "
+                    f"got source_type={source_type!r}."
+                ),
+            }
+
+        title = summary_meta.get("title", full_path.stem)
+        source_url = summary_meta.get("source_url", "")
+        source_hash = summary_meta.get("source_hash", "")
+        source_file = summary_meta.get("source_file", "")
+
+        # Validate required sections in the user-approved synthesis.
+        # If sections are missing, refuse to promote (return insufficient)
+        # rather than emit a malformed article.
+        issues = validate_compiled_truth(summary_body)
+        if issues:
+            return {
+                "status": "insufficient",
+                "title": title,
+                "reason": "; ".join(issues),
+            }
+
+        # Step 1: Categorize (reuses the deterministic categorizer)
+        category = await self.categorizer.categorize(
+            title=title,
+            body=summary_body,
+            vault_path=self.vault_path,
+        )
+
+        # Step 2: Topic matching against existing articles in category
+        all_articles = self.wiki.list_articles()
+        existing_match = await find_existing_article(
+            summary_title=title,
+            summary_preview=summary_body[:400],
+            category=category,
+            articles=all_articles,
+            inference=self.inference,
+        )
+
+        if existing_match:
+            # Delegate to chat-aware merge. Added in a follow-up task.
+            result = await self.merge_chat_synthesis_into_existing(
+                new_content=summary_body,
+                new_title=title,
+                existing_article_path=existing_match["path"],
+                source_url=source_url,
+                source_hash=source_hash,
+                source_file=source_file,
+            )
+            if result.get("status") == "merged":
+                source_raw = summary_meta.get("source_raw", "")
+                archive_raw_files(
+                    self.vault_path,
+                    raw_path=source_raw,
+                    summary_path=summary_path,
+                )
+                self.wiki.git_commit(f"archive: {title}")
+            return result
+
+        # No existing match: write a new article with banner prepended.
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        banner = make_chat_banner(date_str)
+        compiled_truth = f"{banner}\n\n{summary_body.strip()}\n"
+
+        article = Article(
+            meta={
+                "title": title,
+                "created": now,
+                "updated": now,
+                "compiled_at": now,
+                "status": "compiled",
+                "sources": [],
+            },
+            compiled_truth=compiled_truth,
+            timeline=[],
+        )
+
+        # Append timeline entry with chat provenance
+        article = append_timeline_entry(
+            article=article,
+            source_url=source_url,
+            source_hash=source_hash,
+            source_file=source_file,
+            summary=summary_body.strip(),
+            source_type="chat",
+        )
+
+        # Determine save path (new article)
+        slug_source = _clip_title_for_slug(title)
+        slug = slug_source.lower().replace("_", "-").replace(" ", "-")
+        slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-") or "untitled"
+        if len(slug.encode("utf-8")) > MAX_SLUG_BYTES:
+            h = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
+            truncated = (
+                slug.encode("utf-8")[: MAX_SLUG_BYTES - 9]
+                .decode("utf-8", errors="ignore")
+                .rstrip("-")
+            )
+            slug = f"{truncated}-{h}"
+        target_dir = self.vault_path / category
+        target_dir.mkdir(parents=True, exist_ok=True)
+        article_path_rel = f"{category}/{slug}.md"
+        article_full_path = target_dir / f"{slug}.md"
+
+        article_full_path.write_text(serialize_article(article))
+        logger.info("Compiled (chat) %s -> %s", summary_path, article_path_rel)
 
         # Rebuild index and commit
         self.wiki.rebuild_index()
