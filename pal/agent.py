@@ -152,10 +152,18 @@ class PALAgent(Agent):
         CmdCompile, CmdCompileBatch, Import, Learn, Research,
         Status, Profile, Wisdom, Scratch, PALModel,
     ]
-    # fetch_url disabled in PAL: all web fetching goes through the
-    # consent-gated research pipeline (propose_research / research_topic).
-    # Direct URL fetch would bypass the approval flow.
-    disabled_builtins = frozenset({"fetch_url"})
+    # Disabled LLM-facing builtin tools in PAL.
+    #   fetch_url: all web fetching goes through the consent-gated research
+    #     pipeline (propose_research / research_topic); direct URL fetch
+    #     would bypass the approval flow.
+    #   search_web: output URLs are mostly unfetchable due to FetchUrl's
+    #     allowlist filter; the user prefers propose_research for web work.
+    #     See docs/superpowers/specs/2026-05-12-search-vault-json-result-format-design.md.
+    # agent_core's SearchWeb/FetchUrl classes stay intact (future agents may
+    # want them); PAL just stops registering them. The /search-web slash
+    # command (separate user-facing surface in pal/commands/domain.py) is
+    # unaffected.
+    disabled_builtins: frozenset[str] = frozenset({"fetch_url", "search_web"})
 
     def setup(self) -> None:
         """Construct PAL-specific infrastructure.
