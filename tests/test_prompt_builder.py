@@ -82,11 +82,32 @@ def test_build_sections_ordered(adapter, vault):
 
 def test_base_prompt_lists_real_tools():
     assert "search_vault" in PAL_BASE_PROMPT
-    assert "search_web" in PAL_BASE_PROMPT
     assert "propose_research" in PAL_BASE_PROMPT
     assert "research_topic" in PAL_BASE_PROMPT
     assert "edit_file" in PAL_BASE_PROMPT
     assert "create_file" in PAL_BASE_PROMPT
+
+
+def test_base_prompt_describes_search_vault_json_shape():
+    """After the 2026-05-12 JSON migration, the prompt must teach PAL the
+    new envelope so it knows to use the `path` field for follow-up tools."""
+    assert (
+        "results: [{path, name, summary, score}]" in PAL_BASE_PROMPT
+        or "Use the `path` field directly" in PAL_BASE_PROMPT
+    )
+
+
+def test_base_prompt_does_not_mention_search_web_as_llm_tool():
+    """search_web is disabled from PAL's LLM tool surface (Task 4).
+    The prompt must not advertise it as a callable tool.
+
+    Note: the /search-web slash command may still appear via slash-command
+    help registration (separate surface); that's outside this test.
+    """
+    import re
+    pattern = r"\bsearch_web\b"
+    matches = re.findall(pattern, PAL_BASE_PROMPT)
+    assert matches == [], f"Expected no LLM-tool references to search_web; found {len(matches)}"
 
 
 def test_base_prompt_forbids_hallucinated_capability():
