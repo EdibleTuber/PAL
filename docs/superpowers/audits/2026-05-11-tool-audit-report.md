@@ -1,15 +1,18 @@
 # PAL Tool Audit Report
 
 **Date:** 2026-05-11
-**Status:** Draft (panel review pending)
+**Status:** Accepted (panel reviewed 2026-05-11)
+**Panel:** Architecture coherence, YAGNI skeptic, Implementation realist, API consumer (PAL's-eye)
+**Revisions applied from panel review:** see "Panel revisions applied" section below.
 **Spec:** docs/superpowers/specs/2026-05-11-tool-audit-design.md
 
 ## Summary
 
-- Total tools audited: 24 (2 retrieval, 5 file ops, 3 compile, 3 consolidate/promote, 5 knowledge management, 2 utility, 5 slash command surfaces minus overlaps where listed; total counted as distinct entries in the seven inputs is 24)
+- Total tools audited: 24 (2 retrieval, 5 file ops, 3 compile, 3 consolidate/promote, 5 knowledge management, 2 utility, 5 slash command surfaces; 24 distinct entries across the seven category inputs)
 - Verdicts: 24 keep / 0 consolidate / 0 delete
-- Cross-cutting fixes (deduped): 6
-- Items needing their own specs: 9
+- Cross-cutting must-fixes (deduped): 6
+- Tool-specific must-fixes: 12
+- Items needing their own specs: 10
 
 ## Deletes
 
@@ -25,13 +28,15 @@ None. Subagents identified overlap (e.g., edit_file/replace_in_file/create_file;
 
 - **Affected tools:** propose_compile_batch, propose_consolidate, propose_promote_synthesis (and indirectly url_fix's CLI edit branch)
 - **Recommendation:** Move all input validation (path shape, file existence, raw/system-prefix checks, target collisions, size guards, required-section checks for compiled_truth) to BEFORE `create_proposal`. Today the user spends an approval round-trip only for the executor to surface insufficient/invalid_path/too_large/summary_collision after the fact. Each tool should resolve and stat its inputs, run any required-section validator (e.g., `validate_compiled_truth` for promote_synthesis), and short-circuit with a structured error before the proposal is ever created. Smoke-confirmed for promote_synthesis on 2026-05-11.
-- **Needs spec:** no
+- **Invariant introduced (named per panel review):** the propose-tool and the executor must agree on validation. After this fix, both code paths run the same checks. Extract a shared `validate_<kind>_inputs(...)` helper per proposal kind so they can't drift; the executor's call becomes defense-in-depth, not primary validation.
+- **TOCTOU caveat (named per panel review):** for `propose_promote_synthesis`, the `summary_collision` check has a 15-minute approval window during which another tool call could land the same slug. Pre-stat catches the common case but the executor must still re-stat after approval (and either re-propose or reserve the slug at proposal time). Spec must address this; pre-stat alone does not eliminate the failure mode.
+- **Needs spec:** yes (TOCTOU window + slug-reservation strategy needs design before implementation)
 
-### Return-shape inconsistency across vault write tools
+### Vault-write success shape and reindex propagation (BUNDLED)
 
-- **Affected tools:** edit_file, create_file, delete_file, replace_in_file, move_file
-- **Recommendation:** Five tools currently emit four shapes (bare "Updated: {path}" and "Created: {path}" strings; JSON for delete/replace; mixed JSON-vs-prose errors on move). Pick one shape (JSON everywhere, including errors) and propagate it. Each success result should at minimum include `{"status": ..., "path": ..., "reindex": {...}}`. This is a precondition for the reindex-contract fix below.
-- **Needs spec:** yes (move_file subagent flagged needs_spec: true on error-shape unification; bundle the rest with it)
+- **Affected tools:** edit_file, create_file, delete_file, replace_in_file, move_file (consumer: wait_for_reindex; promise made in pal/prompts/system.py:100; same fix unblocks url_fix's missing reindex call at url_fix.py:200)
+- **Recommendation:** Five tools currently emit four shapes (bare "Updated: {path}" and "Created: {path}" strings; JSON for delete/replace; `{moved, reindex_queued: bool}` for move). The reindex contract advertised by the system prompt (`{job_id, status}` from any write tool) is also broken: three tools return bare strings; the other two return JSON without the reindex field; `move_file` already uses a third name `reindex_queued`. **Land as one spec, in this order:** (1) pin the canonical success shape `{"status": ..., "path": ..., "reindex": {...}}` in a single source-of-truth location, with errors also as JSON; (2) propagate `RetrievalClient.trigger_reindex(...)` return values into the `reindex` field on every vault tool. Critically, the audit assumes `RetrievalClient.trigger_reindex` returns `{job_id, status}` but no caller in `vault.py` captures any return today -- verify the client interface BEFORE depending on it; if the client returns `None`, the client itself needs to change first. Also affects `url_fix.py:200` which never calls `trigger_reindex` at all.
+- **Needs spec:** yes (architecture-level shape decision plus client-interface verification; bundle reindex + return-shape into one workstream)
 
 ### Commit-failure handling missing on three vault tools
 
@@ -45,11 +50,11 @@ None. Subagents identified overlap (e.g., edit_file/replace_in_file/create_file;
 - **Recommendation:** Both formatters hard-truncate at 200 chars with no marker, leaving the LLM unable to tell whether the match continued past the cut. Append "..." (or equivalent) when truncated. Single-character fix in two locations (`agent_core/agent_core/tools/_framework.py:106` and `:147-149`).
 - **Needs spec:** no
 
-### Reindex job_id contract broken on vault writes
+### Vault read 404s lack nearest-match suggestions
 
-- **Affected tools:** edit_file, create_file, move_file, delete_file, replace_in_file (consumer: wait_for_reindex; promise made in pal/prompts/system.py:100)
-- **Recommendation:** The system prompt promises every write returns `{job_id, status}` for `wait_for_reindex`. Three tools return bare strings; two return JSON without the reindex field. Capture `retrieval.trigger_reindex(...)` return values and propagate `{job_id, status}` into each tool's outcome. Same fix unblocks url_fix's missing reindex call (url_fix.py:200, where `trigger_reindex` is never invoked at all).
-- **Needs spec:** no
+- **Affected tools:** cat (`agent_core/agent_core/tools/_shell.py:32`), edit_file (vault.py), grep (any read path that 404s)
+- **Recommendation:** PAL's explicit ask #2 from the path-determinism feedback. When a vault read tool 404s, run a cheap stem/dirname fuzzy match against the index (or filesystem) and append "nearest matches: a.md, b.md" to the error. Without this, even after the `search_vault` id fix lands, PAL still re-enters guessing loops on cat/edit/grep failures. Promoted to must-fix from should-fix on panel review (API consumer): the two friction asks are complementary, not substitutes.
+- **Needs spec:** yes (shared helper across read tools, story for index-vs-filesystem fuzzy match)
 
 ### Stale or missing prompt catalog entries
 
@@ -78,6 +83,7 @@ None. Subagents identified overlap (e.g., edit_file/replace_in_file/create_file;
 - **propose_consolidate** does not validate sources exist or reject raw/system-prefix paths before approval. `pal/tools/consolidate.py:50-89`. Resolve each `source_path` against vault, reject missing/raw/_-prefixed entries pre-`create_proposal`. (See cross-cutting validation-timing item.)
 - **propose_consolidate** does not preview total source body size pre-approval; consolidator returns `too_large` only after the user approves. `pal/tools/consolidate.py:50-89`, `pal/consolidator.py:97`. Pre-read sizes; reject or warn before `create_proposal`.
 - **propose_promote_synthesis** required-section validation fires AFTER user approval (smoke-confirmed 2026-05-11). `pal/tools/promote_synthesis.py:85-98` (validation absent), `pal/compiler.py:378-384` (where it currently runs). Call `validate_compiled_truth(note_body)` after reading the note and return `insufficient` with missing sections BEFORE `create_proposal`. (See cross-cutting validation-timing item.)
+- **propose_promote_synthesis** consume-before-write is a correctness bug, not polish. `pal/tools/promote_synthesis.py:135` calls `ar.consume(proposal_id)` BEFORE `summary_full.write_text` (line 157) and `compile_chat_synthesis` (line 160). If either raises, the proposal is consumed (single-use) but no article exists. Wrap write+compile in try/except; on failure, surface `error` so PAL can re-propose without ambiguity. **Promoted from should-fix to must-fix on panel review** (Implementation realist's correctness escalation).
 
 ### File ops
 
@@ -97,7 +103,6 @@ None. Subagents identified overlap (e.g., edit_file/replace_in_file/create_file;
 
 ### Retrieval
 
-- search_vault: no nearest-match suggestion when path 404s (cat at `_shell.py:32` just says "File not found"). Run cheap fuzzy match against index when vault read tool 404s.
 - search_web: no engine/category surfaced; SearxNG returns engine attribution and PAL strips it. Add to SearchResult and render.
 - search_vault: optional `tags` parameter exposed by RetrievalClient.search isn't surfaced.
 
@@ -138,7 +143,6 @@ None. Subagents identified overlap (e.g., edit_file/replace_in_file/create_file;
 - propose_promote_synthesis: no test exercises missing-required-sections path through the tool (add after must-fix lands).
 - propose_promote_synthesis: `needs_consolidate` status bubbles up but tool description doesn't mention this branch and result has no field naming the existing article path explicitly.
 - propose_promote_synthesis: description says "directly under raw/notes/" but check allows nested subdirs.
-- propose_promote_synthesis: `ar.consume` happens before write; crash in between leaves an unrecoverable proposal. Wrap write+compile in try/except.
 
 ### Knowledge management
 
@@ -165,10 +169,11 @@ None. Subagents identified overlap (e.g., edit_file/replace_in_file/create_file;
 
 ## Candidates for individual brainstorming (needs_spec items)
 
+- **Validation timing + slug reservation** (cross-cutting): the validation-timing fix introduces a duplicate-validation invariant and a TOCTOU window for `summary_collision`. Spec must address shared validator extraction and slug reservation (or post-approval re-stat) before implementation. Promoted from no-spec to needs_spec on panel review.
+- **Vault-write success shape and reindex propagation** (cross-cutting): bundled spec covering canonical JSON shape across all five vault tools PLUS reindex `{job_id, status}` propagation. Includes pre-spec verification of `RetrievalClient.trigger_reindex` return contract. Replaces the original two separate items per panel review.
 - **search_vault structured/JSON result format** (retrieval): the shift from human-prose to structured per-result lines (path, score, snippet) or JSON changes the LLM-facing contract; worth its own design pass.
 - **Vault-tool 404 nearest-match suggestion** (retrieval): cuts across all vault read tools (cat/edit/grep), not just search_vault; needs a shared helper and a story for index-vs-filesystem fuzzy matching.
 - **search_web allowlist filter contract** (retrieval): two surfaces (slash command and LLM tool) with the same name and divergent filtering; pick a single contract before diverging further.
-- **Vault-tool error-shape unification** (file ops): five tools, four shapes; the move_file subagent flagged this needs_spec because picking JSON-everywhere has knock-on effects on every callsite, prompt, and test.
 - **propose_consolidate dead [e]dit branch** (consolidate): decide whether to remove `get_successor` handling or actually wire the edit modal across CLI and Discord.
 - **/think Discord reasoning rendering** (slash commands): touches DiscordStreamProcessor, channel-scoped overrides store, and the show/hide control surface; Phase 2 inference investigation territory.
 - **/think show / /think hide per-channel persistence on Discord** (slash commands): currently CLI-only; Discord needs `conv.overrides["reasoning_display"]` plumbing and an interaction with the cross-cutting reasoning render fix.
@@ -177,12 +182,27 @@ None. Subagents identified overlap (e.g., edit_file/replace_in_file/create_file;
 
 ## Disagreements surfaced during synthesis
 
-### Splash-page memory may be stale
+### Splash-page memory: RESOLVED (stale)
 
-The slash-commands subagent flagged that the user-facing memory item "Splash page needs cleanup" (missing /research /model /think) may be out of date because `cli.py:53-65` already iterates the dynamic command union. No other category subagent touched this; the file was not directly re-read during synthesis. **Synthesis position:** flag for panel review rather than silently dropping the memory item. Recommend a quick read of `pal/cli.py:53-65` during the panel to confirm; if confirmed, retire the memory note.
+The slash-commands subagent flagged that the user-facing memory item "Splash page needs cleanup" (missing /research /model /think) may be out of date because `cli.py:53-65` already iterates the dynamic command union. **Confirmed during panel-review revision pass:** `render_splash_commands()` at `pal/cli.py:53-65` calls `_all_command_classes()` which dynamically merges `BUILTIN_COMMANDS + PALAgent.commands`. The splash page IS dynamic; the memory item is stale. Retire the `project_splash_cleanup` memory note.
 
-### Phase E learning-flow concern
+### Phase E learning-flow concern: RESOLVED (wire-up intact)
 
-The knowledge-management subagent recorded that the previously flagged Phase E learning-flow wire-up concern was resolved by code-reading (intact). No conflict with other reports, but worth noting since the "Phase E post-extraction review" memory item still lists it as outstanding. **Synthesis position:** treat the memory item's learning-flow bullet as resolved for the purposes of this audit; /scratch read and Discord /think rendering remain as the active Phase E carry-overs (both captured above).
+The knowledge-management subagent recorded that the previously flagged Phase E learning-flow wire-up concern was resolved by code-reading. No conflict with other reports. Treat the `project_phase_e_post_extraction_review` memory item's learning-flow bullet as resolved for the purposes of this audit; /scratch read and Discord /think rendering remain as the active Phase E carry-overs (both captured as must-fixes above).
 
-No other contradictions between subagents were detected during synthesis; the seven reports were largely orthogonal by category and converged on the six cross-cutting patterns enumerated above.
+No other contradictions between subagents were detected during synthesis; the seven reports were largely orthogonal by category and converged on the cross-cutting patterns enumerated above.
+
+## Panel revisions applied
+
+This report was revised after a 4-reviewer panel (Architecture coherence, YAGNI skeptic, Implementation realist, API consumer (PAL's-eye)). Five revisions were applied before acceptance:
+
+1. **Bundled reindex-contract + return-shape into one cross-cutting must-fix** (Architecture concern #1, Realist confirmed move_file uses a third name `reindex_queued`). Land canonical success shape first, then propagate reindex into it.
+2. **Promoted "Vault read 404s lack nearest-match suggestions" from should-fix to must-fix** (API consumer: PAL's explicit ask #2 from the path-determinism feedback was demoted in error). Now a cross-cutting must-fix in its own right.
+3. **Promoted `propose_promote_synthesis` consume-before-write from should-fix to must-fix** (Implementation realist's correctness escalation). It's an unrecoverable-state correctness bug, not polish.
+4. **Named the duplicate-validation invariant and the TOCTOU window in the validation-timing fix** (Architecture concern #2 + Realist concern #1). Pre-stat alone does not eliminate `summary_collision`; spec must address slug reservation or post-approval re-stat. Fix bumped to `needs_spec: yes`.
+5. **Added verification gap for `RetrievalClient.trigger_reindex` return shape** (Realist verification gap). Audit assumes `{job_id, status}` return; confirm before depending. Inlined into the bundled vault-write spec.
+
+Panel suggestions NOT applied:
+- YAGNI: delete `propose_promote_synthesis` outright. Rejected; the tool is one day old and friction is implementation-incomplete (the cross-cutting validation-timing and consume-before-write fixes resolve the named concerns). Distinct contract is genuinely worth keeping.
+- YAGNI: drop most prompt catalog fixes. Rejected; Realist verified the staleness verbatim, all four are real bugs. Bundle into one prompt-edit task to address YAGNI's cost concern.
+- YAGNI keystone: pull telemetry before defending the surface. Deferred; no logs to mine right now. Future re-audit can refine verdicts with usage data.
