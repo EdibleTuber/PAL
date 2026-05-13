@@ -90,8 +90,9 @@ async def test_move_file_rejects_missing_src(tmp_path: Path):
         {"src": "Security/ghost.md", "dst": "IoT/ghost.md"},
         _ctx(_Agent(vault, reorganizer=reorganizer)),
     )
-    parsed = json.loads(result)
-    assert "error" in parsed
+    # Pre-existence check returns a plain "file does not exist" string with
+    # optional nearest-match suggestion tail, not the JSON-wrapped form.
+    assert "file does not exist: Security/ghost.md" in result
 
 
 @pytest.mark.asyncio

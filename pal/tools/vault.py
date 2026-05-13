@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_core.tools.base import Tool
+from agent_core.tools._shell_helpers import format_not_found_with_suggestions
 
 if TYPE_CHECKING:
     from agent_core.agent import HandlerContext
@@ -250,6 +251,15 @@ class MoveFile(Tool):
         if not src or not dst:
             return json.dumps({"error": "src and dst are required"})
 
+        vault = ctx.agent.config.vault_path.resolve()
+        resolved_src = _resolve_safe(vault, src)
+        if resolved_src is not None and not resolved_src.exists():
+            return format_not_found_with_suggestions(
+                ctx.agent.config.vault_path,
+                src,
+                f"Error: file does not exist: {src}",
+            )
+
         try:
             reorganizer.move_single(src, dst)
         except (FileNotFoundError, FileExistsError, ValueError) as exc:
@@ -313,7 +323,11 @@ class DeleteFile(Tool):
         if resolved is None:
             return f"Error: path escapes outside vault: {path}"
         if not resolved.exists():
-            return f"Error: file does not exist: {path}"
+            return format_not_found_with_suggestions(
+                ctx.agent.config.vault_path,
+                path,
+                f"Error: file does not exist: {path}",
+            )
 
         wiki = getattr(ctx.agent, "wiki", None)
         if wiki is None:
@@ -426,7 +440,11 @@ class ReplaceInFile(Tool):
         if resolved is None:
             return f"Error: path escapes outside vault: {path}"
         if not resolved.exists():
-            return f"Error: file does not exist: {path}"
+            return format_not_found_with_suggestions(
+                ctx.agent.config.vault_path,
+                path,
+                f"Error: file does not exist: {path}",
+            )
 
         wiki = getattr(ctx.agent, "wiki", None)
         if wiki is None:

@@ -155,6 +155,8 @@ async def test_create_file_no_wiki(tmp_path):
 
 async def test_move_file_happy_path(tmp_path):
     """reorganizer.move_single called; wiki.git_commit called; reindex triggered; returns JSON."""
+    (tmp_path / "Security").mkdir()
+    (tmp_path / "Security" / "old.md").write_text("body")
     retrieval = MagicMock()
     retrieval.trigger_reindex = AsyncMock()
     wiki = MagicMock()
@@ -183,6 +185,9 @@ async def test_move_file_no_reorganizer(tmp_path):
 
 
 async def test_move_file_move_single_raises_file_not_found(tmp_path):
+    # src must physically exist for the pre-existence check to pass, so the
+    # reorganizer mock's side_effect fires (simulates a race/symlink edge case).
+    (tmp_path / "ghost.md").write_text("body")
     reorganizer = MagicMock()
     reorganizer.move_single.side_effect = FileNotFoundError("src not found")
     result = await MoveFile().run(
@@ -195,6 +200,7 @@ async def test_move_file_move_single_raises_file_not_found(tmp_path):
 
 
 async def test_move_file_move_single_raises_file_exists_error(tmp_path):
+    (tmp_path / "src.md").write_text("body")
     reorganizer = MagicMock()
     reorganizer.move_single.side_effect = FileExistsError("dst already exists")
     result = await MoveFile().run(
@@ -207,6 +213,7 @@ async def test_move_file_move_single_raises_file_exists_error(tmp_path):
 
 
 async def test_move_file_move_single_raises_value_error(tmp_path):
+    (tmp_path / "src.md").write_text("body")
     reorganizer = MagicMock()
     reorganizer.move_single.side_effect = ValueError("invalid path")
     result = await MoveFile().run(
@@ -548,3 +555,45 @@ def test_edit_file_description_mentions_replace_in_file():
     from pal.tools.vault import EditFile
     desc = EditFile.description
     assert "replace_in_file" in desc
+
+
+# --- 404 nearest-match suggestions on vault write tools ---
+
+
+async def test_delete_file_404_includes_suggestions(tmp_path):
+    """delete_file's 'file does not exist' error gets a Did-you-mean tail."""
+    from pal.tools.vault import DeleteFile
+    (tmp_path / "foo.md").write_text("body")
+    result = await DeleteFile().run(
+        {"path": "fooo.md"},
+        _ctx(_Agent(tmp_path)),
+    )
+    assert "file does not exist: fooo.md" in result
+    assert "Did you mean: " in result
+    assert "foo.md" in result
+
+
+async def test_move_file_404_on_missing_source_includes_suggestions(tmp_path):
+    """move_file's missing-src error gets a Did-you-mean tail."""
+    from pal.tools.vault import MoveFile
+    (tmp_path / "foo.md").write_text("body")
+    result = await MoveFile().run(
+        {"src": "fooo.md", "dst": "other.md"},
+        _ctx(_Agent(tmp_path)),
+    )
+    assert "file does not exist: fooo.md" in result
+    assert "Did you mean: " in result
+    assert "foo.md" in result
+
+
+async def test_replace_in_file_404_includes_suggestions(tmp_path):
+    """replace_in_file's 'file does not exist' error gets a Did-you-mean tail."""
+    from pal.tools.vault import ReplaceInFile
+    (tmp_path / "foo.md").write_text("body")
+    result = await ReplaceInFile().run(
+        {"path": "fooo.md", "old_string": "a", "new_string": "b"},
+        _ctx(_Agent(tmp_path)),
+    )
+    assert "file does not exist: fooo.md" in result
+    assert "Did you mean: " in result
+    assert "foo.md" in result
