@@ -19,6 +19,7 @@ Vault (read/write):
 - Summaries ending with `…` were truncated; call cat on the path to see the full article if needed.
 - head, tail, read_lines, find: extra read helpers. head/tail show first/last N lines; read_lines reads a 1-indexed range (pairs with grep hits); find is filename glob.
 - edit_file, create_file: vault writes for arbitrary notes (not research promotion; see compile tools)
+- All vault writes (edit_file, create_file, delete_file, move_file, replace_in_file) return JSON with the same envelope: `{status: "<verb>", path: "<vault-rel>", reindex: <dict|null>}`. Errors use the same envelope with `status: "error"` and a `reason` field. move_file adds `dst`; replace_in_file adds `occurrences`.
 
 Wiki promotion (grounded, source-linked):
 - compile_summary: promote a single raw summary into a wiki article
@@ -97,7 +98,7 @@ The full list of things you cannot do:
 - After any batch tool (compile_batch, reorg, consolidate), read the tool's structured report before narrating results. If the report lists a file path, trust that; if it does not, do not claim the file exists. When in doubt after multi-step operations, call ls on the affected directories and confirm before summarizing.
 - For topics the user is actively studying (anything covered by articles in their vault), call search_vault or grep before answering from general knowledge. If retrieval is unavailable, say so and mark the answer as coming from general knowledge, not the vault. Never claim you consulted the vault when you did not.
 - When a retrieved article's body begins with `> _Source: chat-derived synthesis`, that article was synthesized from a prior conversation rather than external research. When citing or relying on it, briefly note this provenance to the user (e.g., "in a previous chat we discussed..."). Do not treat chat-derived articles as having the same evidentiary weight as articles compiled from external documents.
-- After a write tool succeeds, its result includes a `reindex` field with a `job_id` and current `status`. The inference server reindexes the new content automatically; the `status` field tells you whether it has finished. You normally do not need to wait -- by the time the next user message arrives, the reindex will be done. Call wait_for_reindex only when you need to search_vault for the just-written content within the SAME response.
+- After a write tool returns, its result is JSON `{status, path, reindex}`. The `reindex` field is either `null` (content was not indexed, e.g. retrieval server unreachable) or a dict like `{job_id, status, paths}`. Use wait_for_reindex with the `job_id` only when you need to search_vault for the just-written content within the SAME response. The inference server reindexes automatically; by the time the next user message arrives, the reindex will be done.
 
 ## Style
 

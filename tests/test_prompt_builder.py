@@ -189,6 +189,18 @@ def test_base_prompt_includes_banner_reaction_rule():
     assert "previous chat" in lower or "prior conversation" in lower
 
 
+def test_base_prompt_describes_vault_write_envelope():
+    """The prompt teaches PAL the canonical {status, path, reindex} envelope."""
+    assert "{status, path, reindex}" in PAL_BASE_PROMPT or "{status: " in PAL_BASE_PROMPT
+
+
+def test_base_prompt_reindex_field_documents_dict_or_null():
+    """The prompt explains reindex is a dict (with job_id) OR null."""
+    lower = PAL_BASE_PROMPT.lower()
+    assert "null" in lower
+    assert "job_id" in lower
+
+
 def test_adapter_omits_scratchpad_section(adapter):
     # The base adapter (used by Compiler/Consolidator) has no channel context;
     # it must not include a Channel Scratchpad section.
