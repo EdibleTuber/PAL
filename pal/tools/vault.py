@@ -97,23 +97,37 @@ class EditFile(Tool):
         content = args.get("content", "")
 
         if not path:
-            return "Error: 'path' parameter is required."
+            return json.dumps({"status": "error", "path": "", "reason": "'path' parameter is required."})
         if not content:
-            return "Error: 'content' parameter is required."
+            return json.dumps({"status": "error", "path": path, "reason": "'content' parameter is required."})
 
         if _is_system_path(path):
-            return f"Error: writing to system directories is not allowed: {path}"
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": f"writing to system directories is not allowed: {path}",
+            })
 
         vault = ctx.agent.config.vault_path.resolve()
         resolved = _resolve_safe(vault, path)
         if resolved is None:
-            return f"Error: path escapes outside vault: {path}"
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": f"path escapes outside vault: {path}",
+            })
         if not resolved.exists():
-            return f"Error: file does not exist: {path} (use create_file for new files)"
+            base = f"file does not exist: {path} (use create_file for new files)"
+            reason = format_not_found_with_suggestions(ctx.agent.config.vault_path, path, base)
+            return json.dumps({"status": "error", "path": path, "reason": reason})
 
         wiki = getattr(ctx.agent, "wiki", None)
         if wiki is None:
-            return "Error: write operations are not available (no wiki manager)."
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": "write operations are not available (no wiki manager).",
+            })
 
         meta, _ = wiki.read_article(path)
         title = meta.get("title", Path(path).stem)
@@ -121,15 +135,8 @@ class EditFile(Tool):
         wiki.write_article(path, title, content, tags=tags)
         wiki.git_commit(f"Edit {path} via chat")
 
-        retrieval = getattr(ctx.agent, "retrieval", None)
-        if retrieval is not None:
-            absolute = str((ctx.agent.config.vault_path / path).resolve())
-            try:
-                await retrieval.trigger_reindex(paths=[absolute])
-            except Exception as exc:
-                logger.warning("reindex trigger failed after edit_file: %s", exc)
-
-        return f"Updated: {path}"
+        reindex = await _maybe_reindex(getattr(ctx.agent, "retrieval", None), [str(resolved)])
+        return json.dumps({"status": "updated", "path": path, "reindex": reindex})
 
 
 # ---------------------------------------------------------------------------

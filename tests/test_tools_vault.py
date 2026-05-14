@@ -44,7 +44,7 @@ async def test_edit_file_happy_path(tmp_path):
     """Rewrite body: read_article called, write_article called with preserved title+tags, reindex triggered."""
     (tmp_path / "x.md").write_text("---\ntitle: X\n---\n\nold body")
     retrieval = MagicMock()
-    retrieval.trigger_reindex = AsyncMock()
+    retrieval.trigger_reindex = AsyncMock(return_value={"job_id": "j1", "status": "queued", "paths": []})
     wiki = MagicMock()
     wiki.read_article.return_value = ({"title": "X", "tags": ["t1"]}, "old body")
     wiki.write_article = MagicMock()
@@ -53,7 +53,10 @@ async def test_edit_file_happy_path(tmp_path):
         {"path": "x.md", "content": "new body"},
         _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
     )
-    assert result == "Updated: x.md"
+    payload = json.loads(result)
+    assert payload["status"] == "updated"
+    assert payload["path"] == "x.md"
+    assert payload["reindex"] == {"job_id": "j1", "status": "queued", "paths": []}
     wiki.read_article.assert_called_once_with("x.md")
     wiki.write_article.assert_called_once_with("x.md", "X", "new body", tags=["t1"])
     wiki.git_commit.assert_called_once()
@@ -69,7 +72,10 @@ async def test_edit_file_missing(tmp_path):
         {"path": "nope.md", "content": "new body"},
         _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
     )
-    assert "does not exist" in result.lower()
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "nope.md"
+    assert "does not exist" in payload["reason"].lower()
     retrieval.trigger_reindex.assert_not_awaited()
     wiki.write_article.assert_not_called()
 
@@ -83,7 +89,10 @@ async def test_edit_file_no_wiki(tmp_path):
         {"path": "x.md", "content": "new body"},
         _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=None)),
     )
-    assert "no wiki manager" in result.lower()
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "x.md"
+    assert "no wiki manager" in payload["reason"].lower()
     retrieval.trigger_reindex.assert_not_awaited()
 
 
@@ -93,7 +102,10 @@ async def test_edit_file_empty_content(tmp_path):
         {"path": "x.md", "content": ""},
         _ctx(_Agent(tmp_path)),
     )
-    assert "'content' parameter is required" in result
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "x.md"
+    assert "'content' parameter is required" in payload["reason"]
 
 
 # --- CreateFile (must trigger reindex on success) ---
@@ -233,7 +245,10 @@ async def test_edit_file_system_dir(tmp_path):
         {"path": "_wisdom/x.md", "content": "hacked"},
         _ctx(_Agent(tmp_path)),
     )
-    assert "not allowed" in result.lower()
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "_wisdom/x.md"
+    assert "not allowed" in payload["reason"].lower()
 
 
 async def test_edit_file_path_traversal(tmp_path):
@@ -241,7 +256,10 @@ async def test_edit_file_path_traversal(tmp_path):
         {"path": "../../etc/passwd", "content": "hacked"},
         _ctx(_Agent(tmp_path)),
     )
-    assert "escapes" in result.lower() or "outside vault" in result.lower()
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "../../etc/passwd"
+    assert "escapes" in payload["reason"].lower() or "outside vault" in payload["reason"].lower()
 
 
 async def test_edit_file_no_reindex_when_no_retrieval(tmp_path):
@@ -250,12 +268,14 @@ async def test_edit_file_no_reindex_when_no_retrieval(tmp_path):
     wiki.read_article.return_value = ({"title": "X", "tags": None}, "body")
     wiki.write_article = MagicMock()
     wiki.git_commit = MagicMock()
-    # No retrieval — should still succeed without error
+    # No retrieval, should still succeed without error and reindex is null.
     result = await EditFile().run(
         {"path": "x.md", "content": "new body"},
         _ctx(_Agent(tmp_path, retrieval=None, wiki=wiki)),
     )
-    assert "updated" in result.lower()
+    payload = json.loads(result)
+    assert payload["status"] == "updated"
+    assert payload["reindex"] is None
     wiki.write_article.assert_called_once()
 
 
@@ -627,3 +647,73 @@ async def test_maybe_reindex_passes_through_dict_on_success():
     retrieval.trigger_reindex = AsyncMock(return_value=server_response)
     result = await _maybe_reindex(retrieval, ["/some/path"])
     assert result == server_response
+
+
+# ---------------------------------------------------------------------------
+# EditFile canonical envelope (Task 2 of vault-write-success-shape)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_edit_file_success_returns_canonical_envelope(tmp_path):
+    """edit_file returns {status: 'updated', path, reindex} on success."""
+    from pal.wiki import WikiManager
+    from pal.tools.vault import EditFile
+    (tmp_path / "foo.md").write_text("---\ntitle: foo\n---\noriginal body\n")
+    wiki = WikiManager(tmp_path)
+    retrieval = MagicMock()
+    server_response = {"job_id": "xyz", "status": "queued", "paths": [str(tmp_path / "foo.md")]}
+    retrieval.trigger_reindex = AsyncMock(return_value=server_response)
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), wiki=wiki, retrieval=retrieval)
+    ctx = MagicMock(agent=agent)
+    result = await EditFile().run({"path": "foo.md", "content": "new body"}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "updated"
+    assert payload["path"] == "foo.md"
+    assert payload["reindex"] == server_response
+
+
+@pytest.mark.asyncio
+async def test_edit_file_error_returns_canonical_envelope(tmp_path):
+    """edit_file returns {status: 'error', path, reason} on parameter error."""
+    from pal.tools.vault import EditFile
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path))
+    ctx = MagicMock(agent=agent)
+    result = await EditFile().run({}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == ""
+    assert "path" in payload["reason"].lower()
+    assert "required" in payload["reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_edit_file_reindex_null_when_no_client(tmp_path):
+    """edit_file returns reindex: null when agent has no retrieval client."""
+    from pal.wiki import WikiManager
+    from pal.tools.vault import EditFile
+    (tmp_path / "foo.md").write_text("---\ntitle: foo\n---\noriginal\n")
+    wiki = WikiManager(tmp_path)
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), wiki=wiki, retrieval=None)
+    ctx = MagicMock(agent=agent)
+    result = await EditFile().run({"path": "foo.md", "content": "new"}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "updated"
+    assert payload["reindex"] is None
+
+
+@pytest.mark.asyncio
+async def test_edit_file_reindex_null_on_trigger_exception(tmp_path):
+    """edit_file returns reindex: null when trigger_reindex raises."""
+    from pal.wiki import WikiManager
+    from pal.tools.vault import EditFile
+    (tmp_path / "foo.md").write_text("---\ntitle: foo\n---\noriginal\n")
+    wiki = WikiManager(tmp_path)
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock(side_effect=RuntimeError("down"))
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), wiki=wiki, retrieval=retrieval)
+    ctx = MagicMock(agent=agent)
+    result = await EditFile().run({"path": "foo.md", "content": "new"}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "updated"
+    assert payload["reindex"] is None
