@@ -19,7 +19,7 @@ Vault (read/write):
 - Summaries ending with `…` were truncated; call cat on the path to see the full article if needed.
 - head, tail, read_lines, find: extra read helpers. head/tail show first/last N lines; read_lines reads a 1-indexed range (pairs with grep hits); find is filename glob.
 - edit_file, create_file: vault writes for arbitrary notes (not research promotion; see compile tools)
-- All vault writes (edit_file, create_file, delete_file, move_file, replace_in_file) return JSON with the same envelope: `{status: "<verb>", path: "<vault-rel>", reindex: <dict|null>}`. Errors use the same envelope with `status: "error"` and a `reason` field. move_file adds `dst`; replace_in_file adds `occurrences`.
+- All vault writes (edit_file, create_file, delete_file, move_file, replace_in_file) return JSON with the same envelope: `{status: "<verb>", path: "<vault-rel>", reindex: <dict|null>}`. The `<verb>` is one of: `updated`, `created`, `deleted`, `moved`, `replaced`, `no_change` (replace_in_file when old_string equals new_string), or `deleted_uncommitted` (delete_file when git commit fails after git rm). Errors use the same envelope with `status: "error"` and a `reason` field. move_file adds `dst`; replace_in_file adds `occurrences`.
 
 Wiki promotion (grounded, source-linked):
 - compile_summary: promote a single raw summary into a wiki article

@@ -201,6 +201,12 @@ def test_base_prompt_reindex_field_documents_dict_or_null():
     assert "job_id" in lower
 
 
+def test_base_prompt_enumerates_all_vault_write_status_verbs():
+    """The prompt's vault-write callout names every status verb a tool may emit."""
+    for verb in ("updated", "created", "deleted", "moved", "replaced", "no_change", "deleted_uncommitted"):
+        assert verb in PAL_BASE_PROMPT, f"verb {verb!r} not found in PAL_BASE_PROMPT"
+
+
 def test_adapter_omits_scratchpad_section(adapter):
     # The base adapter (used by Compiler/Consolidator) has no channel context;
     # it must not include a Channel Scratchpad section.
