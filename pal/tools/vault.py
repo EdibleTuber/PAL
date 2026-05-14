@@ -525,7 +525,7 @@ class ReplaceInFile(Tool):
                 "status": "no_change",
                 "path": path,
                 "occurrences": 0,
-                "reindex": "skipped",
+                "reindex": None,
                 "note": "no-op (old_string equals new_string)",
             })
 

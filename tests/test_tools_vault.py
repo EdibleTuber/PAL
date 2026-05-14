@@ -908,3 +908,18 @@ async def test_replace_in_file_error_uses_canonical_envelope(tmp_path):
     assert payload["status"] == "error"
     assert payload["path"] == ""
     assert "path" in payload["reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_replace_in_file_no_change_returns_null_reindex(tmp_path):
+    """When old_string == new_string, no reindex is triggered and reindex field is null."""
+    from pal.tools.vault import ReplaceInFile
+    (tmp_path / "foo.md").write_text("hello world")
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), wiki=MagicMock(), retrieval=None)
+    ctx = MagicMock(agent=agent)
+    result = await ReplaceInFile().run(
+        {"path": "foo.md", "old_string": "hello", "new_string": "hello"}, ctx,
+    )
+    payload = json.loads(result)
+    assert payload["status"] == "no_change"
+    assert payload["reindex"] is None
