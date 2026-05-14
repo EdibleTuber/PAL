@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pal.boundary import generate_guid, wrap_untrusted, SANITIZATION_SYSTEM_PROMPT
+from agent_core.boundary import generate_guid, wrap_untrusted, SANITIZATION_SYSTEM_PROMPT
 from agent_core.utils.frontmatter import parse_frontmatter, serialize_frontmatter
 from agent_core.utils.sanitizer import sanitize
 from pal.title_cleanup import TITLE_RULES, parse_title_and_body
