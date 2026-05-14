@@ -474,7 +474,8 @@ async def test_replace_in_file_replaces_in_body_only(tmp_path):
         encoding="utf-8",
     )
     retrieval = MagicMock()
-    retrieval.trigger_reindex = AsyncMock()
+    server_response = {"job_id": "j1", "status": "queued", "paths": []}
+    retrieval.trigger_reindex = AsyncMock(return_value=server_response)
     wiki = MagicMock()
     wiki.git_commit = MagicMock()
 
@@ -485,6 +486,7 @@ async def test_replace_in_file_replaces_in_body_only(tmp_path):
     parsed = json.loads(result)
     assert parsed["status"] == "replaced"
     assert parsed["occurrences"] == 1
+    assert parsed["reindex"] == server_response
 
     text = (tmp_path / "x.md").read_text(encoding="utf-8")
     assert "tags:" in text and "- AI" in text  # frontmatter preserved
@@ -525,7 +527,8 @@ async def test_replace_in_file_replace_all_only_in_body(tmp_path):
         encoding="utf-8",
     )
     retrieval = MagicMock()
-    retrieval.trigger_reindex = AsyncMock()
+    server_response = {"job_id": "j2", "status": "queued", "paths": []}
+    retrieval.trigger_reindex = AsyncMock(return_value=server_response)
     wiki = MagicMock()
     wiki.git_commit = MagicMock()
 
@@ -541,6 +544,7 @@ async def test_replace_in_file_replace_all_only_in_body(tmp_path):
     parsed = json.loads(result)
     assert parsed["status"] == "replaced"
     assert parsed["occurrences"] == 3  # body only
+    assert parsed["reindex"] == server_response
 
     text = (tmp_path / "x.md").read_text(encoding="utf-8")
     assert "tags:" in text and "- foo" in text  # frontmatter foo preserved
@@ -578,7 +582,7 @@ async def test_replace_in_file_empty_new_string_deletes_match(tmp_path):
         encoding="utf-8",
     )
     retrieval = MagicMock()
-    retrieval.trigger_reindex = AsyncMock()
+    retrieval.trigger_reindex = AsyncMock(return_value={"job_id": "j3", "status": "queued", "paths": []})
     wiki = MagicMock()
     wiki.git_commit = MagicMock()
 
@@ -843,6 +847,63 @@ async def test_delete_file_error_uses_canonical_envelope(tmp_path):
     agent = MagicMock(config=MagicMock(vault_path=tmp_path))
     ctx = MagicMock(agent=agent)
     result = await DeleteFile().run({}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == ""
+    assert "path" in payload["reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_replace_in_file_reindex_passes_through_dict(tmp_path):
+    """replace_in_file's reindex field is the server's response dict."""
+    from pal.tools.vault import ReplaceInFile
+    (tmp_path / "foo.md").write_text("hello world")
+    retrieval = MagicMock()
+    server_response = {"job_id": "rep-1", "status": "queued", "paths": [str(tmp_path / "foo.md")]}
+    retrieval.trigger_reindex = AsyncMock(return_value=server_response)
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), wiki=MagicMock(), retrieval=retrieval)
+    ctx = MagicMock(agent=agent)
+    result = await ReplaceInFile().run(
+        {"path": "foo.md", "old_string": "hello", "new_string": "hi"}, ctx,
+    )
+    payload = json.loads(result)
+    assert payload["status"] == "replaced"
+    assert payload["path"] == "foo.md"
+    assert payload["occurrences"] == 1
+    assert payload["reindex"] == server_response
+
+
+@pytest.mark.asyncio
+async def test_replace_in_file_commit_failure_returns_error_envelope(tmp_path):
+    """replace_in_file's git-commit-failed path returns the canonical error envelope.
+
+    Original content must be restored on disk.
+    """
+    from pal.tools.vault import ReplaceInFile
+    (tmp_path / "foo.md").write_text("hello world")
+    wiki = MagicMock()
+    wiki.git_commit = MagicMock(side_effect=RuntimeError("git failed"))
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), wiki=wiki, retrieval=None)
+    ctx = MagicMock(agent=agent)
+    result = await ReplaceInFile().run(
+        {"path": "foo.md", "old_string": "hello", "new_string": "hi"}, ctx,
+    )
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "foo.md"
+    assert "git commit failed" in payload["reason"]
+    assert "restored" in payload["reason"]
+    # Original content restored
+    assert (tmp_path / "foo.md").read_text() == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_replace_in_file_error_uses_canonical_envelope(tmp_path):
+    """replace_in_file's parameter-validation errors use the canonical envelope."""
+    from pal.tools.vault import ReplaceInFile
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path))
+    ctx = MagicMock(agent=agent)
+    result = await ReplaceInFile().run({}, ctx)
     payload = json.loads(result)
     assert payload["status"] == "error"
     assert payload["path"] == ""

@@ -463,29 +463,39 @@ class ReplaceInFile(Tool):
         replace_all = bool(args.get("replace_all", False))
 
         if not path:
-            return "Error: 'path' parameter is required."
+            return json.dumps({"status": "error", "path": "", "reason": "'path' parameter is required."})
         if not old_string:
-            return "Error: 'old_string' parameter is required."
+            return json.dumps({"status": "error", "path": path, "reason": "'old_string' parameter is required."})
         if new_string is None:
-            return "Error: 'new_string' parameter is required."
+            return json.dumps({"status": "error", "path": path, "reason": "'new_string' parameter is required."})
 
         if _is_system_path(path):
-            return f"Error: writing to system directories is not allowed: {path}"
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": f"writing to system directories is not allowed: {path}",
+            })
 
         vault = ctx.agent.config.vault_path.resolve()
         resolved = _resolve_safe(vault, path)
         if resolved is None:
-            return f"Error: path escapes outside vault: {path}"
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": f"path escapes outside vault: {path}",
+            })
         if not resolved.exists():
-            return format_not_found_with_suggestions(
-                ctx.agent.config.vault_path,
-                path,
-                f"Error: file does not exist: {path}",
-            )
+            base = f"file does not exist: {path}"
+            reason = format_not_found_with_suggestions(ctx.agent.config.vault_path, path, base)
+            return json.dumps({"status": "error", "path": path, "reason": reason})
 
         wiki = getattr(ctx.agent, "wiki", None)
         if wiki is None:
-            return "Error: write operations are not available (no wiki manager)."
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": "write operations are not available (no wiki manager).",
+            })
 
         from agent_core.utils.frontmatter import parse_frontmatter, serialize_frontmatter
 
@@ -494,13 +504,21 @@ class ReplaceInFile(Tool):
 
         count = body.count(old_string)
         if count == 0:
-            return f"Error: old_string not found in body of {path}"
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": f"old_string not found in body of {path}",
+            })
         if count > 1 and not replace_all:
-            return (
-                f"Error: old_string appears {count} times in body of {path}; "
-                f"pass replace_all=true, or widen old_string to include surrounding "
-                f"lines until it is unique in the body."
-            )
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": (
+                    f"old_string appears {count} times in body of {path}; "
+                    f"pass replace_all=true, or widen old_string to include surrounding "
+                    f"lines until it is unique in the body."
+                ),
+            })
 
         if old_string == new_string:
             return json.dumps({
@@ -525,20 +543,16 @@ class ReplaceInFile(Tool):
         except Exception as exc:
             # Restore original content
             resolved.write_text(original_text, encoding="utf-8")
-            return f"Error: git commit failed; original content restored: {exc}"
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": f"git commit failed; original content restored: {exc}",
+            })
 
-        reindex_status = "ok"
-        retrieval = getattr(ctx.agent, "retrieval", None)
-        if retrieval is not None:
-            try:
-                await retrieval.trigger_reindex(paths=[str(resolved)])
-            except Exception as exc:
-                logger.warning("reindex trigger failed after replace_in_file: %s", exc)
-                reindex_status = "failed"
-
+        reindex = await _maybe_reindex(getattr(ctx.agent, "retrieval", None), [str(resolved)])
         return json.dumps({
             "status": "replaced",
             "path": path,
             "occurrences": occurrences,
-            "reindex": reindex_status,
+            "reindex": reindex,
         })
