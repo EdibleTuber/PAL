@@ -113,7 +113,7 @@ async def test_edit_file_empty_content(tmp_path):
 async def test_create_file_happy_path(tmp_path):
     """write_article called with all four args; commit called; reindex triggered."""
     retrieval = MagicMock()
-    retrieval.trigger_reindex = AsyncMock()
+    retrieval.trigger_reindex = AsyncMock(return_value={"job_id": "j1", "status": "queued", "paths": []})
     wiki = MagicMock()
     wiki.write_article = MagicMock()
     wiki.git_commit = MagicMock()
@@ -121,7 +121,9 @@ async def test_create_file_happy_path(tmp_path):
         {"path": "raw/notes/test.md", "title": "Test Note", "content": "body text", "tags": ["tag1"]},
         _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
     )
-    assert result == "Created: raw/notes/test.md"
+    payload = json.loads(result)
+    assert payload["status"] == "created"
+    assert payload["path"] == "raw/notes/test.md"
     wiki.write_article.assert_called_once_with(
         "raw/notes/test.md", "Test Note", "body text", tags=["tag1"]
     )
@@ -139,7 +141,9 @@ async def test_create_file_refuses_overwrite(tmp_path):
         {"path": "raw/exists.md", "title": "T", "content": "new"},
         _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
     )
-    assert "already" in result.lower() or "exists" in result.lower()
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert "already exists" in payload["reason"].lower()
     retrieval.trigger_reindex.assert_not_awaited()
     wiki.write_article.assert_not_called()
 
@@ -149,7 +153,9 @@ async def test_create_file_missing_title(tmp_path):
         {"path": "raw/x.md", "title": "", "content": "body"},
         _ctx(_Agent(tmp_path)),
     )
-    assert "'title' parameter is required" in result
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert "title" in payload["reason"].lower()
 
 
 async def test_create_file_no_wiki(tmp_path):
@@ -159,7 +165,9 @@ async def test_create_file_no_wiki(tmp_path):
         {"path": "raw/x.md", "title": "T", "content": "body"},
         _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=None)),
     )
-    assert "no wiki manager" in result.lower()
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert "no wiki manager" in payload["reason"].lower()
     retrieval.trigger_reindex.assert_not_awaited()
 
 
@@ -286,7 +294,9 @@ async def test_create_file_system_dir(tmp_path):
         {"path": "_wisdom/new.md", "title": "T", "content": "content"},
         _ctx(_Agent(tmp_path)),
     )
-    assert "not allowed" in result.lower()
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert "system directories" in payload["reason"].lower()
 
 
 async def test_create_file_rejects_promoted_category(tmp_path):
@@ -294,7 +304,9 @@ async def test_create_file_rejects_promoted_category(tmp_path):
         {"path": "Research/newtons-laws.md", "title": "T", "content": "Three laws."},
         _ctx(_Agent(tmp_path)),
     )
-    assert "scoped to raw/" in result
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert "scoped to raw/" in payload["reason"]
 
 
 async def test_create_file_wiki_write_not_called_outside_raw(tmp_path):
@@ -305,7 +317,9 @@ async def test_create_file_wiki_write_not_called_outside_raw(tmp_path):
         _ctx(_Agent(tmp_path, wiki=wiki)),
     )
     wiki.write_article.assert_not_called()
-    assert "scoped to raw/" in result
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert "scoped to raw/" in payload["reason"]
 
 
 async def test_create_file_path_traversal(tmp_path):
@@ -313,7 +327,9 @@ async def test_create_file_path_traversal(tmp_path):
         {"path": "../../etc/evil.md", "title": "T", "content": "hacked"},
         _ctx(_Agent(tmp_path)),
     )
-    assert "escapes" in result.lower() or "outside vault" in result.lower()
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert "escapes" in payload["reason"].lower() or "outside vault" in payload["reason"].lower()
 
 
 # --- MoveFile extra coverage ---
@@ -716,4 +732,58 @@ async def test_edit_file_reindex_null_on_trigger_exception(tmp_path):
     result = await EditFile().run({"path": "foo.md", "content": "new"}, ctx)
     payload = json.loads(result)
     assert payload["status"] == "updated"
+    assert payload["reindex"] is None
+
+
+# ---------------------------------------------------------------------------
+# CreateFile canonical envelope (Task 3 of vault-write-success-shape)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_file_success_returns_canonical_envelope(tmp_path):
+    """create_file returns {status: 'created', path, reindex} on success."""
+    from pal.wiki import WikiManager
+    from pal.tools.vault import CreateFile
+    raw = tmp_path / "raw" / "notes"
+    raw.mkdir(parents=True)
+    wiki = WikiManager(tmp_path)
+    retrieval = MagicMock()
+    server_response = {"job_id": "abc", "status": "queued", "paths": [str(tmp_path / "raw" / "notes" / "foo.md")]}
+    retrieval.trigger_reindex = AsyncMock(return_value=server_response)
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), wiki=wiki, retrieval=retrieval)
+    ctx = MagicMock(agent=agent)
+    result = await CreateFile().run({"path": "raw/notes/foo.md", "title": "Foo", "content": "body"}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "created"
+    assert payload["path"] == "raw/notes/foo.md"
+    assert payload["reindex"] == server_response
+
+
+@pytest.mark.asyncio
+async def test_create_file_error_returns_canonical_envelope(tmp_path):
+    """create_file missing-path error uses canonical envelope."""
+    from pal.tools.vault import CreateFile
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path))
+    ctx = MagicMock(agent=agent)
+    result = await CreateFile().run({}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == ""
+    assert "path" in payload["reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_create_file_reindex_null_when_no_client(tmp_path):
+    """create_file returns reindex: null when agent has no retrieval client."""
+    from pal.wiki import WikiManager
+    from pal.tools.vault import CreateFile
+    raw = tmp_path / "raw" / "notes"
+    raw.mkdir(parents=True)
+    wiki = WikiManager(tmp_path)
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), wiki=wiki, retrieval=None)
+    ctx = MagicMock(agent=agent)
+    result = await CreateFile().run({"path": "raw/notes/x.md", "title": "X", "content": "body"}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "created"
     assert payload["reindex"] is None

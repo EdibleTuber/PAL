@@ -191,47 +191,60 @@ class CreateFile(Tool):
         tags = args.get("tags")
 
         if not path:
-            return "Error: 'path' parameter is required."
+            return json.dumps({"status": "error", "path": "", "reason": "'path' parameter is required."})
         if not title:
-            return "Error: 'title' parameter is required."
+            return json.dumps({"status": "error", "path": path, "reason": "'title' parameter is required."})
         if not content:
-            return "Error: 'content' parameter is required."
+            return json.dumps({"status": "error", "path": path, "reason": "'content' parameter is required."})
 
         if _is_system_path(path):
-            return f"Error: writing to system directories is not allowed: {path}"
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": f"writing to system directories is not allowed: {path}",
+            })
 
         vault = ctx.agent.config.vault_path.resolve()
         resolved = _resolve_safe(vault, path)
         if resolved is None:
-            return f"Error: path escapes outside vault: {path}"
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": f"path escapes outside vault: {path}",
+            })
         if resolved.exists():
-            return f"Error: file already exists: {path} (use edit_file to modify)"
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": f"file already exists: {path} (use edit_file to modify)",
+            })
 
         wiki = getattr(ctx.agent, "wiki", None)
         if wiki is None:
-            return "Error: write operations are not available (no wiki manager)."
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": "write operations are not available (no wiki manager).",
+            })
 
         if not path.startswith("raw/"):
-            return (
-                f"Error: create_file is scoped to raw/ (got: {path}). "
-                "Wiki articles are produced by compile_summary, compile_batch, "
-                "or consolidate. If you are trying to write a new article in "
-                "a promoted category, tell the user that create_file cannot do "
-                "this and propose the correct workflow."
-            )
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": (
+                    f"create_file is scoped to raw/ (got: {path}). "
+                    "Wiki articles are produced by compile_summary, compile_batch, "
+                    "or consolidate. If you are trying to write a new article in "
+                    "a promoted category, tell the user that create_file cannot do "
+                    "this and propose the correct workflow."
+                ),
+            })
 
         wiki.write_article(path, title, content, tags=tags)
         wiki.git_commit(f"Create {path} via chat")
 
-        retrieval = getattr(ctx.agent, "retrieval", None)
-        if retrieval is not None:
-            absolute = str((ctx.agent.config.vault_path / path).resolve())
-            try:
-                await retrieval.trigger_reindex(paths=[absolute])
-            except Exception as exc:
-                logger.warning("reindex trigger failed after create_file: %s", exc)
-
-        return f"Created: {path}"
+        reindex = await _maybe_reindex(getattr(ctx.agent, "retrieval", None), [str(resolved)])
+        return json.dumps({"status": "created", "path": path, "reindex": reindex})
 
 
 # ---------------------------------------------------------------------------
