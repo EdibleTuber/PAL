@@ -597,3 +597,33 @@ async def test_replace_in_file_404_includes_suggestions(tmp_path):
     assert "file does not exist: fooo.md" in result
     assert "Did you mean: " in result
     assert "foo.md" in result
+
+
+# ---------------------------------------------------------------------------
+# _maybe_reindex helper
+# ---------------------------------------------------------------------------
+
+from pal.tools.vault import _maybe_reindex
+
+
+@pytest.mark.asyncio
+async def test_maybe_reindex_returns_none_when_no_client():
+    result = await _maybe_reindex(None, ["/some/path"])
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_maybe_reindex_returns_none_on_exception():
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock(side_effect=RuntimeError("server down"))
+    result = await _maybe_reindex(retrieval, ["/some/path"])
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_maybe_reindex_passes_through_dict_on_success():
+    retrieval = MagicMock()
+    server_response = {"job_id": "abc-123", "status": "queued", "paths": ["/some/path"]}
+    retrieval.trigger_reindex = AsyncMock(return_value=server_response)
+    result = await _maybe_reindex(retrieval, ["/some/path"])
+    assert result == server_response

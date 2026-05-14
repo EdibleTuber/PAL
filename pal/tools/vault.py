@@ -24,6 +24,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _maybe_reindex(retrieval, paths: list[str]) -> dict | None:
+    """Trigger reindex for the given absolute paths.
+
+    Returns the inference server's response dict on success
+    (`{job_id, status, paths}`), or None on any failure (no retrieval
+    client, server unreachable, exception). Logs failures at WARN.
+
+    Used by the 5 vault write tools to propagate `wait_for_reindex`-ready
+    job_ids into their canonical {status, path, reindex} envelope.
+    """
+    if retrieval is None:
+        return None
+    try:
+        return await retrieval.trigger_reindex(paths=paths)
+    except Exception as exc:
+        logger.warning("reindex trigger failed: %s", exc)
+        return None
+
+
 def _resolve_safe(vault: Path, path: str) -> Path | None:
     """Resolve a vault-relative path; return None if it escapes the vault."""
     full = (vault / path).resolve()
