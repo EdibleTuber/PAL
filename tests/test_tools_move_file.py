@@ -65,17 +65,20 @@ def _make_reorganizer_that_renames(vault: Path):
 async def test_move_file_moves_and_triggers_reindex(tmp_path: Path):
     vault = _make_vault(tmp_path)
     retrieval = MagicMock()
-    retrieval.trigger_reindex = AsyncMock()
+    server_response = {"job_id": "mv-1", "status": "queued", "paths": [str(vault / "IoT" / "methodology.md")]}
+    retrieval.trigger_reindex = AsyncMock(return_value=server_response)
     reorganizer = _make_reorganizer_that_renames(vault)
 
     result = await MoveFile().run(
         {"src": "Security/methodology.md", "dst": "IoT/methodology.md"},
         _ctx(_Agent(vault, retrieval=retrieval, reorganizer=reorganizer)),
     )
-    parsed = json.loads(result)
+    payload = json.loads(result)
 
-    assert parsed["moved"] == "Security/methodology.md -> IoT/methodology.md"
-    assert parsed["reindex_queued"] is True
+    assert payload["status"] == "moved"
+    assert payload["path"] == "Security/methodology.md"
+    assert payload["dst"] == "IoT/methodology.md"
+    assert payload["reindex"] == server_response
     assert (vault / "IoT" / "methodology.md").exists()
     assert not (vault / "Security" / "methodology.md").exists()
     retrieval.trigger_reindex.assert_awaited_once()
@@ -90,9 +93,11 @@ async def test_move_file_rejects_missing_src(tmp_path: Path):
         {"src": "Security/ghost.md", "dst": "IoT/ghost.md"},
         _ctx(_Agent(vault, reorganizer=reorganizer)),
     )
-    # Pre-existence check returns a plain "file does not exist" string with
-    # optional nearest-match suggestion tail, not the JSON-wrapped form.
-    assert "file does not exist: Security/ghost.md" in result
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "Security/ghost.md"
+    assert "file does not exist: Security/ghost.md" in payload["reason"]
+    assert "Did you mean" in payload["reason"]
 
 
 @pytest.mark.asyncio
@@ -105,9 +110,10 @@ async def test_move_file_rejects_existing_dst(tmp_path: Path):
         {"src": "Security/methodology.md", "dst": "IoT/methodology.md"},
         _ctx(_Agent(vault, reorganizer=reorganizer)),
     )
-    parsed = json.loads(result)
-    assert "error" in parsed
-    assert "exist" in parsed["error"].lower()
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "Security/methodology.md"
+    assert "exist" in payload["reason"].lower()
 
 
 @pytest.mark.asyncio
@@ -116,8 +122,9 @@ async def test_move_file_rejects_empty_args(tmp_path: Path):
         {"src": "", "dst": ""},
         _ctx(_Agent(tmp_path)),
     )
-    parsed = json.loads(result)
-    assert "error" in parsed
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == ""
 
 
 @pytest.mark.asyncio
@@ -133,7 +140,8 @@ async def test_move_file_rejects_system_dirs(tmp_path: Path):
         {"src": "_wisdom/x.md", "dst": "IoT/x.md"},
         _ctx(_Agent(vault, reorganizer=reorganizer)),
     )
-    parsed = json.loads(result)
-    assert "error" in parsed
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "_wisdom/x.md"
     # The error text comes from the reorganizer's ValueError message.
-    assert "system" in parsed["error"].lower() or "not allowed" in parsed["error"].lower()
+    assert "system" in payload["reason"].lower() or "not allowed" in payload["reason"].lower()

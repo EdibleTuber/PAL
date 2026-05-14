@@ -174,11 +174,11 @@ async def test_create_file_no_wiki(tmp_path):
 # --- MoveFile (must trigger reindex on success) ---
 
 async def test_move_file_happy_path(tmp_path):
-    """reorganizer.move_single called; wiki.git_commit called; reindex triggered; returns JSON."""
+    """reorganizer.move_single called; wiki.git_commit called; reindex triggered; returns canonical envelope."""
     (tmp_path / "Security").mkdir()
     (tmp_path / "Security" / "old.md").write_text("body")
     retrieval = MagicMock()
-    retrieval.trigger_reindex = AsyncMock()
+    retrieval.trigger_reindex = AsyncMock(return_value={"job_id": "j1", "status": "queued", "paths": []})
     wiki = MagicMock()
     wiki.git_commit = MagicMock()
     reorganizer = MagicMock()
@@ -187,8 +187,11 @@ async def test_move_file_happy_path(tmp_path):
         {"src": "Security/old.md", "dst": "IoT/old.md"},
         _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki, reorganizer=reorganizer)),
     )
-    parsed = json.loads(result)
-    assert parsed == {"moved": "Security/old.md -> IoT/old.md", "reindex_queued": True}
+    payload = json.loads(result)
+    assert payload["status"] == "moved"
+    assert payload["path"] == "Security/old.md"
+    assert payload["dst"] == "IoT/old.md"
+    assert payload["reindex"] == {"job_id": "j1", "status": "queued", "paths": []}
     reorganizer.move_single.assert_called_once_with("Security/old.md", "IoT/old.md")
     wiki.git_commit.assert_called_once()
     retrieval.trigger_reindex.assert_awaited_once()
@@ -199,9 +202,10 @@ async def test_move_file_no_reorganizer(tmp_path):
         {"src": "src.md", "dst": "dst.md"},
         _ctx(_Agent(tmp_path, reorganizer=None)),
     )
-    parsed = json.loads(result)
-    assert "error" in parsed
-    assert "reorganizer" in parsed["error"].lower()
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "src.md"
+    assert "reorganizer" in payload["reason"].lower()
 
 
 async def test_move_file_move_single_raises_file_not_found(tmp_path):
@@ -214,9 +218,10 @@ async def test_move_file_move_single_raises_file_not_found(tmp_path):
         {"src": "ghost.md", "dst": "dst.md"},
         _ctx(_Agent(tmp_path, reorganizer=reorganizer)),
     )
-    parsed = json.loads(result)
-    assert "error" in parsed
-    assert "src not found" in parsed["error"]
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "ghost.md"
+    assert "src not found" in payload["reason"]
 
 
 async def test_move_file_move_single_raises_file_exists_error(tmp_path):
@@ -227,9 +232,10 @@ async def test_move_file_move_single_raises_file_exists_error(tmp_path):
         {"src": "src.md", "dst": "dst.md"},
         _ctx(_Agent(tmp_path, reorganizer=reorganizer)),
     )
-    parsed = json.loads(result)
-    assert "error" in parsed
-    assert "dst already exists" in parsed["error"]
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "src.md"
+    assert "dst already exists" in payload["reason"]
 
 
 async def test_move_file_move_single_raises_value_error(tmp_path):
@@ -240,8 +246,10 @@ async def test_move_file_move_single_raises_value_error(tmp_path):
         {"src": "src.md", "dst": "raw/dst.md"},
         _ctx(_Agent(tmp_path, reorganizer=reorganizer)),
     )
-    parsed = json.loads(result)
-    assert "error" in parsed
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == "src.md"
+    assert "invalid path" in payload["reason"]
 
 
 # --- Extra coverage for EditFile ---
@@ -340,8 +348,10 @@ async def test_move_file_empty_args(tmp_path):
         {"src": "", "dst": ""},
         _ctx(_Agent(tmp_path, reorganizer=reorganizer)),
     )
-    parsed = json.loads(result)
-    assert "error" in parsed
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == ""
+    assert "src" in payload["reason"].lower() or "dst" in payload["reason"].lower()
 
 
 # --- DeleteFile (atomic git rm, surfaces reindex failure) ---
@@ -923,3 +933,37 @@ async def test_replace_in_file_no_change_returns_null_reindex(tmp_path):
     payload = json.loads(result)
     assert payload["status"] == "no_change"
     assert payload["reindex"] is None
+
+
+@pytest.mark.asyncio
+async def test_move_file_success_returns_canonical_envelope(tmp_path):
+    """move_file returns {status: 'moved', path: src, dst, reindex}."""
+    from pal.tools.vault import MoveFile
+    (tmp_path / "src.md").write_text("body")
+    reorganizer = MagicMock()
+    reorganizer.move_single = MagicMock()  # success
+    retrieval = MagicMock()
+    server_response = {"job_id": "mv-1", "status": "queued", "paths": [str(tmp_path / "dst.md")]}
+    retrieval.trigger_reindex = AsyncMock(return_value=server_response)
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), reorganizer=reorganizer, retrieval=retrieval)
+    ctx = MagicMock(agent=agent)
+    result = await MoveFile().run({"src": "src.md", "dst": "dst.md"}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "moved"
+    assert payload["path"] == "src.md"
+    assert payload["dst"] == "dst.md"
+    assert payload["reindex"] == server_response
+
+
+@pytest.mark.asyncio
+async def test_move_file_error_uses_canonical_envelope(tmp_path):
+    """move_file's parameter-validation errors use the canonical envelope."""
+    from pal.tools.vault import MoveFile
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), reorganizer=MagicMock())
+    ctx = MagicMock(agent=agent)
+    result = await MoveFile().run({}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    # path is "" because no src was provided
+    assert payload["path"] == ""
+    assert "src" in payload["reason"].lower() or "dst" in payload["reason"].lower()

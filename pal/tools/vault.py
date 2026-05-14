@@ -281,42 +281,39 @@ class MoveFile(Tool):
     requires = ("config",)
 
     async def run(self, args: dict, ctx: "HandlerContext") -> str:
-        reorganizer = getattr(ctx.agent, "reorganizer", None)
-        if reorganizer is None:
-            return json.dumps({"error": "reorganizer not available"})
-
         src = (args.get("src") or "").strip()
         dst = (args.get("dst") or "").strip()
         if not src or not dst:
-            return json.dumps({"error": "src and dst are required"})
+            return json.dumps({"status": "error", "path": "", "reason": "src and dst are required"})
+
+        reorganizer = getattr(ctx.agent, "reorganizer", None)
+        if reorganizer is None:
+            return json.dumps({"status": "error", "path": src, "reason": "reorganizer not available"})
 
         vault = ctx.agent.config.vault_path.resolve()
         resolved_src = _resolve_safe(vault, src)
         if resolved_src is not None and not resolved_src.exists():
-            return format_not_found_with_suggestions(
-                ctx.agent.config.vault_path,
-                src,
-                f"Error: file does not exist: {src}",
-            )
+            base = f"file does not exist: {src}"
+            reason = format_not_found_with_suggestions(ctx.agent.config.vault_path, src, base)
+            return json.dumps({"status": "error", "path": src, "reason": reason})
 
         try:
             reorganizer.move_single(src, dst)
         except (FileNotFoundError, FileExistsError, ValueError) as exc:
-            return json.dumps({"error": str(exc)})
+            return json.dumps({"status": "error", "path": src, "reason": str(exc)})
 
         wiki = getattr(ctx.agent, "wiki", None)
         if wiki is not None:
             wiki.git_commit(f"move: {src} -> {dst}")
 
-        retrieval = getattr(ctx.agent, "retrieval", None)
-        if retrieval is not None:
-            try:
-                absolute_dst = str((ctx.agent.config.vault_path / dst).resolve())
-                await retrieval.trigger_reindex(paths=[absolute_dst])
-            except Exception as exc:
-                logger.warning("reindex trigger failed after move_file: %s", exc)
-
-        return json.dumps({"moved": f"{src} -> {dst}", "reindex_queued": True})
+        absolute_dst = str((ctx.agent.config.vault_path / dst).resolve())
+        reindex = await _maybe_reindex(getattr(ctx.agent, "retrieval", None), [absolute_dst])
+        return json.dumps({
+            "status": "moved",
+            "path": src,
+            "dst": dst,
+            "reindex": reindex,
+        })
 
 
 # ---------------------------------------------------------------------------
