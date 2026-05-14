@@ -352,30 +352,40 @@ class DeleteFile(Tool):
     async def run(self, args: dict, ctx: "HandlerContext") -> str:
         path = args.get("path", "")
         if not path:
-            return "Error: 'path' parameter is required."
+            return json.dumps({"status": "error", "path": "", "reason": "'path' parameter is required."})
 
         if _is_system_path(path):
-            return f"Error: writing to system directories is not allowed: {path}"
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": f"writing to system directories is not allowed: {path}",
+            })
 
         vault = ctx.agent.config.vault_path.resolve()
         resolved = _resolve_safe(vault, path)
         if resolved is None:
-            return f"Error: path escapes outside vault: {path}"
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": f"path escapes outside vault: {path}",
+            })
         if not resolved.exists():
-            return format_not_found_with_suggestions(
-                ctx.agent.config.vault_path,
-                path,
-                f"Error: file does not exist: {path}",
-            )
+            base = f"file does not exist: {path}"
+            reason = format_not_found_with_suggestions(ctx.agent.config.vault_path, path, base)
+            return json.dumps({"status": "error", "path": path, "reason": reason})
 
         wiki = getattr(ctx.agent, "wiki", None)
         if wiki is None:
-            return "Error: write operations are not available (no wiki manager)."
+            return json.dumps({
+                "status": "error",
+                "path": path,
+                "reason": "write operations are not available (no wiki manager).",
+            })
 
         try:
             wiki.git_rm(path)
         except Exception as exc:
-            return f"Error: git rm failed: {exc}"
+            return json.dumps({"status": "error", "path": path, "reason": f"git rm failed: {exc}"})
 
         try:
             wiki.git_commit(f"Delete {path} via chat")
@@ -386,20 +396,8 @@ class DeleteFile(Tool):
                 "warning": f"git commit failed; staged removal in index, manual recovery required: {exc}",
             })
 
-        reindex_status = "ok"
-        retrieval = getattr(ctx.agent, "retrieval", None)
-        if retrieval is not None:
-            try:
-                await retrieval.trigger_reindex(paths=[str(resolved)])
-            except Exception as exc:
-                logger.warning("reindex trigger failed after delete_file: %s", exc)
-                reindex_status = "failed"
-
-        return json.dumps({
-            "status": "deleted",
-            "path": path,
-            "reindex": reindex_status,
-        })
+        reindex = await _maybe_reindex(getattr(ctx.agent, "retrieval", None), [str(resolved)])
+        return json.dumps({"status": "deleted", "path": path, "reindex": reindex})
 
 
 # ---------------------------------------------------------------------------

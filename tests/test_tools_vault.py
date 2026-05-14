@@ -352,7 +352,8 @@ async def test_delete_file_removes_file_via_git_rm_and_commits(tmp_path):
 
     (tmp_path / "old.md").write_text("---\ntitle: Old\n---\n\nbody", encoding="utf-8")
     retrieval = MagicMock()
-    retrieval.trigger_reindex = AsyncMock()
+    server_response = {"job_id": "del-x", "status": "queued", "paths": [str(tmp_path / "old.md")]}
+    retrieval.trigger_reindex = AsyncMock(return_value=server_response)
     wiki = MagicMock()
     wiki.git_rm = MagicMock()
     wiki.git_commit = MagicMock()
@@ -364,7 +365,9 @@ async def test_delete_file_removes_file_via_git_rm_and_commits(tmp_path):
     parsed = json.loads(result)
     assert parsed["status"] == "deleted"
     assert parsed["path"] == "old.md"
-    assert parsed["reindex"] == "ok"
+    assert parsed["reindex"] is not None
+    assert "job_id" in parsed["reindex"]
+    assert parsed["reindex"] == server_response
     wiki.git_rm.assert_called_once_with("old.md")
     wiki.git_commit.assert_called_once()
     retrieval.trigger_reindex.assert_awaited_once()
@@ -385,7 +388,10 @@ async def test_delete_file_refuses_system_dirs(tmp_path):
         {"path": "_wisdom/rule.md"},
         _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
     )
-    assert "system directories" in result.lower()
+    parsed = json.loads(result)
+    assert parsed["status"] == "error"
+    assert parsed["path"] == "_wisdom/rule.md"
+    assert "system directories" in parsed["reason"].lower()
     assert (tmp_path / "_wisdom" / "rule.md").exists()
     wiki.git_rm.assert_not_called()
     retrieval.trigger_reindex.assert_not_awaited()
@@ -404,12 +410,15 @@ async def test_delete_file_refuses_path_escape(tmp_path):
         {"path": "../escape.md"},
         _ctx(_Agent(tmp_path, retrieval=retrieval, wiki=wiki)),
     )
-    assert "escapes outside vault" in result.lower()
+    parsed = json.loads(result)
+    assert parsed["status"] == "error"
+    assert parsed["path"] == "../escape.md"
+    assert "escapes outside vault" in parsed["reason"].lower()
     wiki.git_rm.assert_not_called()
 
 
 async def test_delete_file_surfaces_reindex_failure(tmp_path):
-    """Reindex failure: response sets reindex=failed but file is still deleted."""
+    """Reindex failure: response sets reindex=None but file is still deleted."""
     from pal.tools.vault import DeleteFile
 
     (tmp_path / "x.md").write_text("body", encoding="utf-8")
@@ -425,7 +434,7 @@ async def test_delete_file_surfaces_reindex_failure(tmp_path):
     )
     parsed = json.loads(result)
     assert parsed["status"] == "deleted"
-    assert parsed["reindex"] == "failed"
+    assert parsed["reindex"] is None
     wiki.git_rm.assert_called_once_with("x.md")
     wiki.git_commit.assert_called_once()
 
@@ -787,3 +796,54 @@ async def test_create_file_reindex_null_when_no_client(tmp_path):
     payload = json.loads(result)
     assert payload["status"] == "created"
     assert payload["reindex"] is None
+
+
+@pytest.mark.asyncio
+async def test_delete_file_reindex_passes_through_dict(tmp_path):
+    """delete_file's reindex field is the inference server's response dict, not a string."""
+    from pal.wiki import WikiManager
+    from pal.tools.vault import DeleteFile
+    (tmp_path / "foo.md").write_text("---\ntitle: foo\n---\nbody\n")
+    wiki = WikiManager(tmp_path)
+    wiki.git_init()
+    retrieval = MagicMock()
+    server_response = {"job_id": "del-1", "status": "queued", "paths": [str(tmp_path / "foo.md")]}
+    retrieval.trigger_reindex = AsyncMock(return_value=server_response)
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), wiki=wiki, retrieval=retrieval)
+    ctx = MagicMock(agent=agent)
+    result = await DeleteFile().run({"path": "foo.md"}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "deleted"
+    assert payload["path"] == "foo.md"
+    assert payload["reindex"] == server_response
+
+
+@pytest.mark.asyncio
+async def test_delete_file_reindex_null_on_failure(tmp_path):
+    """delete_file's reindex field is null when trigger_reindex raises."""
+    from pal.wiki import WikiManager
+    from pal.tools.vault import DeleteFile
+    (tmp_path / "foo.md").write_text("---\ntitle: foo\n---\nbody\n")
+    wiki = WikiManager(tmp_path)
+    wiki.git_init()
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock(side_effect=RuntimeError("down"))
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path), wiki=wiki, retrieval=retrieval)
+    ctx = MagicMock(agent=agent)
+    result = await DeleteFile().run({"path": "foo.md"}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "deleted"
+    assert payload["reindex"] is None
+
+
+@pytest.mark.asyncio
+async def test_delete_file_error_uses_canonical_envelope(tmp_path):
+    """delete_file's parameter-validation errors use the canonical envelope."""
+    from pal.tools.vault import DeleteFile
+    agent = MagicMock(config=MagicMock(vault_path=tmp_path))
+    ctx = MagicMock(agent=agent)
+    result = await DeleteFile().run({}, ctx)
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert payload["path"] == ""
+    assert "path" in payload["reason"].lower()
