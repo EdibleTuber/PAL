@@ -511,3 +511,96 @@ async def test_batch_fallback_view_skip_button_sends_skip():
     await skip_button.callback(interaction)
 
     assert sent == [("p1", "skip")]
+
+
+@pytest.mark.asyncio
+async def test_stream_processor_prepends_reasoning_spoiler_to_streamed_answer():
+    """Streamed chunks + ResponseMessage with reasoning produces final_text
+    with the spoiler block prepended and the streamed answer after."""
+    channel = MagicMock()
+    bot = MagicMock()
+    bot.active_proposals = {}
+    client = MagicMock()
+
+    processor = DiscordStreamProcessor(
+        channel=channel,
+        triggerer_id="user-1",
+        bot=bot,
+        client=client,
+    )
+
+    async def stream():
+        yield StreamChunkMessage(token="Hello ")
+        yield StreamChunkMessage(token="world")
+        yield ResponseMessage(text="", reasoning="step 1\nstep 2")
+
+    _, final_text = await processor.run(stream())
+    assert final_text.startswith("_Reasoning (click to expand):_\n||step 1\nstep 2||\n\n")
+    assert final_text.endswith("Hello world")
+
+
+@pytest.mark.asyncio
+async def test_stream_processor_prepends_reasoning_to_msg_text_when_no_chunks():
+    """No streamed chunks: ResponseMessage(text=..., reasoning=...) produces
+    spoiler block + msg.text."""
+    channel = MagicMock()
+    bot = MagicMock()
+    bot.active_proposals = {}
+    client = MagicMock()
+
+    processor = DiscordStreamProcessor(
+        channel=channel,
+        triggerer_id="user-1",
+        bot=bot,
+        client=client,
+    )
+
+    async def stream():
+        yield ResponseMessage(text="answer", reasoning="r")
+
+    _, final_text = await processor.run(stream())
+    assert final_text == "_Reasoning (click to expand):_\n||r||\n\nanswer"
+
+
+@pytest.mark.asyncio
+async def test_stream_processor_no_reasoning_block_when_empty():
+    """Default behavior preserved: reasoning='' produces final_text == answer alone."""
+    channel = MagicMock()
+    bot = MagicMock()
+    bot.active_proposals = {}
+    client = MagicMock()
+
+    processor = DiscordStreamProcessor(
+        channel=channel,
+        triggerer_id="user-1",
+        bot=bot,
+        client=client,
+    )
+
+    async def stream():
+        yield ResponseMessage(text="answer", reasoning="")
+
+    _, final_text = await processor.run(stream())
+    assert final_text == "answer"
+
+
+@pytest.mark.asyncio
+async def test_stream_processor_no_reasoning_block_when_whitespace_only():
+    """Whitespace-only reasoning is treated as empty (pins the .strip() guard)."""
+    channel = MagicMock()
+    bot = MagicMock()
+    bot.active_proposals = {}
+    client = MagicMock()
+
+    processor = DiscordStreamProcessor(
+        channel=channel,
+        triggerer_id="user-1",
+        bot=bot,
+        client=client,
+    )
+
+    async def stream():
+        yield ResponseMessage(text="answer", reasoning="\n\n   \n")
+
+    _, final_text = await processor.run(stream())
+    assert final_text == "answer"

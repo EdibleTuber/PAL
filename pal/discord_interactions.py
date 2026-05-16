@@ -644,6 +644,9 @@ class DiscordStreamProcessor:
                 text_buffer.append(msg.token)
             elif isinstance(msg, ResponseMessage):
                 final_text = "".join(text_buffer) if text_buffer else msg.text
+                reasoning = (msg.reasoning or "").strip()
+                if reasoning:
+                    final_text = f"_Reasoning (click to expand):_\n||{reasoning}||\n\n{final_text}"
                 break
             elif isinstance(msg, ErrorMessage):
                 final_text = f"Error: {msg.error}"
