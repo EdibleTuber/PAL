@@ -1,150 +1,117 @@
 # Discord reasoning rendering for /think
 
 **Date:** 2026-05-14
-**Status:** Design
+**Status:** Design (revised after panel review)
 **Author:** Brainstormed with Claude
 **Audit:** `docs/superpowers/audits/2026-05-11-tool-audit-report.md` (slash-commands category, the `/think` Discord reasoning rendering needs_spec item)
 **Related memory:** `project_reasoning_not_shown_in_discord`
+
+## Revision history
+
+- **v1 (initial):** blockquote format, 20-line cap, module-level helper, 9 tests.
+- **v2 (this version, after 4-reviewer panel):** spoiler-tag format, no cap, inline at call site, 4-5 tests. Drops factually-wrong claim about Discord 400 (the adapter paginates via `split_message`). Drops dishonest "in debug log" truncation marker. Documents real risks (spoiler tag breakage on message split, `||` collision in reasoning content). Explicitly cites the slash-command path that remains uncovered.
 
 ## Problem
 
 PAL emits reasoning content on `ResponseMessage.reasoning` when reasoning mode is active. The CLI renders this content as a dim-italic block prepended to each answer (`pal/cli.py:327-333`). Discord does not. The Discord stream processor at `pal/discord_interactions.py:645-647` reads `msg.text` only and discards `msg.reasoning` entirely.
 
-This was first reported during Phase D close-out (2026-04-30) and tracked in the `project_reasoning_not_shown_in_discord` memory. The user has been living with the gap for several weeks: `/think on` in Discord toggles reasoning mode correctly, the daemon emits the reasoning, but Discord users only see the final answer.
+Reported during Phase D close-out (2026-04-30) and tracked in the `project_reasoning_not_shown_in_discord` memory. The 3-week gap before fixing is itself signal: this is a quality-of-life fix, not a critical path. So v1 should be the smallest viable shape with the lightest visual footprint.
 
-This spec closes the rendering side of that gap. PAL will render `reasoning` whenever it appears, in a Discord-friendly blockquote format, with a length cap to stay within Discord's 2000-character message limit.
+This spec closes the rendering side of that gap. PAL will render `reasoning` whenever it appears, wrapped in a Discord spoiler tag so the answer stays visually primary and the user opts in to read the reasoning by clicking to expand.
 
 ## Goals
 
-1. When `ResponseMessage.reasoning` is non-empty, prepend it to the Discord-rendered final text.
-2. Use a format that distinguishes reasoning from the answer (blockquote + italic header).
-3. Cap the rendered length so a long reasoning block plus a long answer cannot exceed Discord's 2000-character message limit on its own (the rest of the budget is for the answer).
-4. Extract the formatting into a module-level helper that is unit-testable in isolation.
-5. No agent_core changes. No protocol changes. No new dependencies.
+1. When `ResponseMessage.reasoning` is non-empty, prepend it to the Discord-rendered final text wrapped in a spoiler tag.
+2. Use a format that keeps the answer visually primary (spoiler defaults to collapsed) and signals what is hidden (header above the spoiler).
+3. No agent_core changes. No protocol changes. No new dependencies.
+4. Inline the change at the call site (no module-level helper); the formatting is a handful of lines and has exactly one caller.
 
 ## Non-goals
 
-1. **Per-channel show/hide preference** in Discord. The CLI has a process-global `_reasoning_display` (`pal/cli.py:39`) and `/think show` / `/think hide` mutate it. Translating that to Discord requires per-channel state via `conv.overrides["reasoning_display"]`, which is a separate audit needs_spec item that touches agent_core. This spec always renders reasoning when present.
-2. **Streaming reasoning live as it generates.** Discord does not support cheap live edits to messages; reasoning lands as one block at the end. The chat answer itself is also delivered as a single message in PAL's current Discord adapter, so this matches the existing UX.
-3. **Reasoning for slash-command responses.** Slash commands flow through `_run_command` rather than the chat path. The slash-command render path is separate and not currently broken (the CLI handles them; Discord slash-commands are a smaller surface). Defer to a follow-up if needed.
-4. **Changing `/think on` / `/think off` behavior.** The toggle already works; this spec is purely about rendering what the toggle produces.
-5. **Truncation policy beyond a hard line cap.** No word-boundary cleverness or smart summarization. If reasoning exceeds the cap, the tail is dropped and a marker appended.
+1. **Per-channel show/hide preference** in Discord. The CLI has a process-global `_reasoning_display` (`pal/cli.py:39`) and `/think show` / `/think hide` mutate it. Translating that to Discord requires per-channel state via `conv.overrides["reasoning_display"]`, which is a separate audit needs_spec item that touches agent_core. The spoiler default partly mitigates the need; defer the full preference to its own spec.
+2. **Streaming reasoning live as it generates.** The Discord adapter posts each message after the full stream completes (`pal/discord_adapter.py:151-175`); reasoning lands as one block at the end, same as the chat answer.
+3. **Reasoning for slash-command responses.** Slash commands flow through `pal/discord_adapter.py:142-148` (`if parsed[0] == "command":`), which calls `client.command(...)` and reads `resp.text` directly. That path completely bypasses `DiscordStreamProcessor` and is not touched by this spec. Defer to a follow-up if needed.
+4. **Changing `/think on` / `/think off` behavior.** The toggle already works.
+5. **Length cap on reasoning content.** No truncation. Reasoning content from PAL is naturally bounded by the model; if a pathological case shows up where the combined message exceeds 2000 chars, the existing `split_message` adapter paginates. The spoiler tag may break across messages in that case (see Risks below); add a cap then, informed by real data.
 
 ## Render format
 
-When `ResponseMessage.reasoning` is non-empty, prepend this block (before the chat answer, separated by a blank line):
+When `ResponseMessage.reasoning` is non-empty (after stripping), prepend this block to the chat answer:
 
 ```
-> _Reasoning:_
-> First step of PAL's reasoning...
-> Second step...
-> Third step...
+_Reasoning (click to expand):_
+||<reasoning content>||
 
-<final answer goes here>
+<final answer>
 ```
 
 Format details:
-- First line is `> _Reasoning:_` (markdown italic via underscores). Self-identifying header.
-- Each subsequent line is the original reasoning line prefixed with `> ` (two characters: greater-than, space).
-- Empty lines within the reasoning become `> ` (greater-than then space, no content). Preserves intentional paragraph breaks inside the blockquote.
-- One blank line (`\n\n`) separates the reasoning block from the chat answer.
-- The Discord blockquote convention matches PAL's existing chat-derived article banner, so PAL has one visual style for "context distinct from the main content."
+- Header line: `_Reasoning (click to expand):_` (markdown italic via underscores). Sits outside the spoiler so the user knows what they are about to reveal.
+- Spoiler body: the reasoning content verbatim, surrounded by `||` on each side. Newlines within the reasoning are preserved as-is; Discord renders them inside the spoiler.
+- One blank line (`\n\n`) separates the spoiler block from the chat answer.
+- Default Discord rendering: the header is visible italic text; the `||...||` block renders as a clickable dark bar showing "SPOILER" (desktop) or "Tap to reveal" (mobile).
 
-## Length cap
+## Wire-in
 
-Cap the rendered reasoning at **20 lines** (after the `> _Reasoning:_` header). If the input has more lines:
-- Take the first 20 reasoning lines.
-- Append one final blockquote line: `> _... (truncated; full reasoning in debug log)_`
-- Do not also truncate the answer; the answer takes its own share of the 2000-char budget.
-
-Why 20 lines: matches the CLI's cap for slash-command reasoning (`pal/cli.py:329-331`). Average reasoning line is short (15-40 chars), so 20 lines plus header plus truncation marker is roughly 600-1000 chars, leaving 1000+ chars for the answer within Discord's 2000-char limit. If both reasoning and answer are unusually long, Discord will refuse the message with a 400 from the Discord API, which the existing stream processor already handles (no change needed here).
-
-Line count is computed on `reasoning.splitlines()` so trailing newlines do not inflate the count.
-
-## Helper API
-
-New module-level helper in `pal/discord_interactions.py`:
-
-```python
-def _format_reasoning_block(reasoning: str, max_lines: int = 20) -> str:
-    """Render reasoning content as a Discord blockquote.
-
-    Returns a multi-line string starting with `> _Reasoning:_` followed by
-    `> `-prefixed lines. Truncates at `max_lines` lines, appending a
-    truncation marker when cut. Returns an empty string when reasoning
-    is empty or whitespace-only.
-    """
-```
-
-Called from the `ResponseMessage` branch in `DiscordStreamProcessor.run`:
+The change is inline in the `ResponseMessage` branch of `DiscordStreamProcessor.run` at `pal/discord_interactions.py:645-647`:
 
 ```python
 elif isinstance(msg, ResponseMessage):
     final_text = "".join(text_buffer) if text_buffer else msg.text
-    block = _format_reasoning_block(msg.reasoning)
-    if block:
-        final_text = f"{block}\n\n{final_text}"
+    reasoning = (msg.reasoning or "").strip()
+    if reasoning:
+        final_text = f"_Reasoning (click to expand):_\n||{reasoning}||\n\n{final_text}"
     break
 ```
 
-The helper handles the "empty reasoning" case so the caller stays one-liner clean.
-
-## Empty / whitespace input handling
-
-- `reasoning == ""` → helper returns `""`, caller skips the prepend.
-- `reasoning` consists only of whitespace/newlines → helper returns `""` (treats as empty).
-- Single-line reasoning → header + one blockquote line + blank-line separator before answer.
-- Lines containing markdown that could confuse Discord (e.g. lines starting with `#` or `*`) → the `> ` prefix is sufficient; Discord renders the whole line as blockquote content, not as a heading or list inside the quote.
+Four added lines; zero removed. No helper, no separate module, no new imports, no input sanitization. The `or ""` guards against any sender producing `None` instead of `""` (the protocol default is `""`, but cheap insurance).
 
 ## Tests
 
-In `tests/test_discord_interactions.py` (or a new `tests/test_discord_reasoning_render.py` if the existing file is large):
+Add to the existing `tests/test_discord_interactions.py` (follows the established `_stream_processor_*` pattern at line 137+):
 
-- `test_format_reasoning_block_short_text` -- single-line input produces header + one quoted line. Asserts exact output.
-- `test_format_reasoning_block_multi_line` -- three-line input produces header + three quoted lines, no truncation marker.
-- `test_format_reasoning_block_truncates_at_20_lines` -- 30-line input returns header + 20 lines + truncation marker. Total line count is 22.
-- `test_format_reasoning_block_handles_empty_lines` -- input with blank lines between paragraphs produces `> ` (greater-than space) lines for the blank parts, not omitted.
-- `test_format_reasoning_block_empty_string_returns_empty` -- empty input returns empty string.
-- `test_format_reasoning_block_whitespace_only_returns_empty` -- input of `\n\n   \n` returns empty string.
-- `test_format_reasoning_block_preserves_special_chars` -- input containing `*`, `_`, `#`, backticks renders inside the blockquote without being interpreted as Discord markdown structure.
-- `test_discord_processor_prepends_reasoning_to_final_text` -- integration test: a `ResponseMessage` with `reasoning="step 1\nstep 2"` and `text="answer"` produces a `final_text` that starts with the reasoning block and ends with `\n\nanswer`.
-- `test_discord_processor_no_reasoning_block_when_field_empty` -- `ResponseMessage` with `reasoning=""` produces `final_text` equal to the answer alone.
+1. **`test_stream_processor_prepends_reasoning_spoiler_to_streamed_answer`** -- streamed chunks (`text_buffer` non-empty) + `ResponseMessage(text="", reasoning="step 1\nstep 2")` produces `final_text` that starts with the header line, contains the spoiler body, and ends with the streamed answer.
+2. **`test_stream_processor_prepends_reasoning_to_msg_text_when_no_chunks`** -- no `StreamChunkMessage`s + `ResponseMessage(text="answer", reasoning="r")` produces `final_text == "_Reasoning (click to expand):_\n||r||\n\nanswer"`.
+3. **`test_stream_processor_no_reasoning_block_when_empty`** -- `ResponseMessage(text="answer", reasoning="")` produces `final_text == "answer"` (no change from current behavior). Pins the regression-free path.
+4. **`test_stream_processor_no_reasoning_block_when_whitespace_only`** -- `reasoning="\n\n   \n"` is treated as empty. Pins the `.strip()` guard.
+
+Four tests. All integration tests against `DiscordStreamProcessor.run`. No unit tests for an extracted helper because there is no helper.
 
 ## Behavior preservation
 
-- `ResponseMessage.text` rendering is unchanged.
+- `ResponseMessage.text` rendering is unchanged when `reasoning == ""` (the default).
 - `StreamChunkMessage` accumulation is unchanged.
 - `ErrorMessage` handling is unchanged.
 - `ProgressMessage` and proposal-message routing are unchanged.
-- The 2000-char Discord message limit is not enforced inside `_format_reasoning_block`; if the combined block exceeds it, existing Discord-API error handling fires (same behavior as today when a long answer alone exceeds the limit).
 
 ## Migration / back-compat
 
 - No protocol changes; existing callers and stored conversation history are unaffected.
 - No agent_core version bump.
-- No Discord adapter restart required for any other reason (this lands as part of the PAL daemon code).
-- After deploy: every existing chat in `/think on` mode will now show reasoning; chats with `/think off` (default for most channels) are unaffected since `reasoning` is empty there.
+- No Discord adapter restart required for any other reason (this lands as PAL daemon code only).
+- After deploy: every existing chat in `/think on` mode will now show a spoiler block; chats with `/think off` (default for most channels) are unaffected since `reasoning` is empty there.
 
 ## Risks
 
-1. **Reasoning content exceeds Discord's 2000-char limit even with the 20-line cap.** Cap is on line count, not character count. A pathological reasoning with twenty 200-char lines plus answer could exceed the limit. Mitigation: existing error handling at the Discord API layer fires; user sees the message-failed error. Acceptable for v1; if it becomes a real problem, add a char cap to the helper.
-2. **The `> _Reasoning:_` header makes assumptions about Discord's italic rendering.** Discord renders `_text_` as italic in most contexts but inside blockquote some clients may render it literally. The header still reads correctly even if italic does not apply. Acceptable.
-3. **Some lines of reasoning may already start with `>` characters** (e.g. PAL quoting something in its own reasoning). The blockquote prefix becomes `> >`, which Discord renders as a nested blockquote. Acceptable visual nesting; no information loss.
-4. **No per-channel hide.** Users on busy Discord channels who do not want to see reasoning have to either toggle `/think off` (loses reasoning entirely) or move to a different channel. The follow-up spec for per-channel show/hide closes this gap.
+1. **Spoiler tag may break when message is split.** `pal/discord_adapter.py:174` calls `agent_core.adapters.discord_gateway.split_message` if the rendered message exceeds 2000 chars. If a long reasoning + long answer combination triggers a split mid-spoiler, the closing `||` ends up in the second chunk and the spoiler tag becomes malformed. Mitigation: do nothing in v1. Reasoning content is naturally bounded; the case is rare. If it shows up, add a char cap or split the message manually (reasoning as a separate Discord message before the answer).
+2. **Italic header rendering varies on mobile.** Discord desktop and web render `_text_` as italic reliably. Older iOS Discord clients sometimes render the underscores literally. The header still reads correctly either way ("`_Reasoning (click to expand):_`" is still a complete instruction). Acceptable.
+3. **Reasoning content containing `||`.** A `||` sequence inside the reasoning body would prematurely close the spoiler tag and render the rest as plain text. Accepted as a known limitation in v1: LLM-generated reasoning essentially never contains `||`. If real usage shows the pattern, sanitize on a later iteration (the obvious fix has a trailing-pipe edge case that requires more care than this spec wants to spend).
+4. **Spoiler-tag opt-in vs always-visible blockquote.** A spoiler defaults to collapsed; users who do want to see reasoning every time have to click. This is the trade-off for keeping the chat surface clean. If real use shows the click is annoying, the easy follow-up is the per-channel show/hide preference (next audit needs_spec item).
+5. **Slash-command reasoning still hidden.** The `pal/discord_adapter.py:142-148` slash-command path bypasses `DiscordStreamProcessor` and remains unchanged. Documented as non-goal; deferred.
 
 ## Verification
 
-- PAL test suite passes (helper unit tests + integration tests for the stream processor branch).
-- Manual smoke after deploy: in a Discord channel with `/think on`, send a chat message that triggers reasoning. Confirm the reasoning block appears before the answer, formatted as a blockquote.
-- Manual smoke: send the same message with `/think off`. Confirm no reasoning block appears (the field is empty so the helper returns empty).
-- Manual smoke: trigger a long reasoning response (e.g. an architectural question). Confirm truncation marker appears when reasoning exceeds 20 lines.
+- PAL test suite passes (5 new integration tests + no regressions).
+- Manual smoke after deploy: in a Discord channel with `/think on`, send a chat message that triggers reasoning. Confirm the spoiler block appears before the answer; clicking expands the reasoning content.
+- Manual smoke: same message with `/think off`. Confirm no spoiler block appears (the field is empty so the guard short-circuits).
+- Manual smoke (mobile if available): verify spoiler tap-to-reveal works and the italic header renders or at least reads correctly.
 
 ## Out of scope
 
 - Per-channel show/hide preference (next audit needs_spec item).
 - `/think show` / `/think hide` working in Discord (depends on per-channel state).
 - Streaming reasoning live as it generates.
-- Reasoning for slash-command responses (`_run_command` path, separate from chat path).
-- Smart truncation (word boundaries, sentence boundaries).
-- Character-count cap (currently line-count only).
+- Reasoning for slash-command responses (`pal/discord_adapter.py:142-148` path).
+- Length cap on reasoning content.
+- Sending reasoning as a separate Discord message before the answer (fallback option if the spoiler-split risk materializes).
 - Changing `/think on` / `/think off` behavior.
