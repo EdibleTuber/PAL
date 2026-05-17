@@ -19,10 +19,10 @@
 **agent_core repo (`/home/edible/Projects/agent_core/`):**
 - Modify: `agent_core/approval_registry.py` -- add `topics` field to `Proposal` (line 25-49), add `topics` kwarg to `create_proposal` (line 60-135), update `edit` to copy `topics` (line 179-226).
 - Modify: `agent_core/tests/test_approval_registry.py` -- add 2 tests (edit preserves topics; edit topics=None unchanged).
-- Modify: `pyproject.toml` -- version bump (1.2.2 -> 1.3.0).
+- Modify: `pyproject.toml` -- version bump (1.3.0 -> 1.3.1; v1.3.1 was already cut by the parallel Phase 2 MCP workstream, so this is a patch on top).
 
 **PAL repo (`/home/edible/Projects/PAL/`):**
-- Modify: `pyproject.toml` -- agent_core pin bump to v1.3.0.
+- Modify: `pyproject.toml` -- agent_core pin bump to v1.3.1.
 - Modify: `pal/protocol.py` -- add `topics` field to `ResearchProposalMessage` (line 31-36).
 - Modify: `pal/tools/research.py` -- validation expansion, multi-topic creation, dispatch simplification, return shape (lines 43-177).
 - Modify: `pal/researcher.py` -- add `_short_url` helper and per-URL progress emission inside `_fetch_and_save` and `_summarize` (around lines 131-200).
@@ -237,16 +237,16 @@ Expected: all pass (currently 615 + 2 new = 617). If any test fails because it c
 In `/home/edible/Projects/agent_core/pyproject.toml`, change:
 
 ```
-version = "1.2.2"
+version = "1.3.0"
 ```
 
 to:
 
 ```
-version = "1.3.0"
+version = "1.3.1"
 ```
 
-(Minor bump because this is the first additive field on the public `Proposal` dataclass; consumers may want to react.)
+(Patch bump. v1.3.1 was cut by the parallel Phase 2 MCP workstream before this change reached agent_core. Adding `topics` to Proposal is additive and non-breaking, so a patch is appropriate.)
 
 - [ ] **Step 9: Em-dash sweep on the diff**
 
@@ -275,7 +275,7 @@ Bumps to 1.3.0 (minor: additive public dataclass field).
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
-)" && git tag -a v1.3.0 -m "agent_core v1.3.0 -- Proposal.topics field for multi-topic research" && git push origin main && git push origin v1.3.0 2>&1 | tail -5
+)" && git tag -a v1.3.1 -m "agent_core v1.3.1 -- Proposal.topics field for multi-topic research" && git push origin main && git push origin v1.3.1 2>&1 | tail -5
 ```
 
 Expected: commit + tag pushed to origin.
@@ -284,14 +284,14 @@ Expected: commit + tag pushed to origin.
 
 ---
 
-## Task 2: PAL -- bump agent_core pin to v1.3.0
+## Task 2: PAL -- bump agent_core pin to v1.3.1
 
 **Files (all in `/home/edible/Projects/PAL/`):**
 - Modify: `pyproject.toml`
 
 - [ ] **Step 1: Bump the pin**
 
-Read `/home/edible/Projects/PAL/pyproject.toml` and find the agent_core dependency line. It currently pins `@v1.2.1`. Change to `@v1.3.0`.
+Read `/home/edible/Projects/PAL/pyproject.toml` and find the agent_core dependency line. It currently pins `@v1.2.1`. Change to `@v1.3.1`.
 
 - [ ] **Step 2: Reinstall agent_core in PAL's venv**
 
@@ -333,7 +333,7 @@ If not on `main`, switch first. Then:
 
 ```bash
 cd /home/edible/Projects/PAL && git add pyproject.toml && git commit -m "$(cat <<'EOF'
-chore: bump agent_core pin to v1.3.0
+chore: bump agent_core pin to v1.3.1
 
 Picks up the Proposal.topics field needed for the propose_research
 expansion (inline-list multi-topic research with cross-topic URL
