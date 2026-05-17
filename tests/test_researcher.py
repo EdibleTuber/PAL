@@ -231,3 +231,91 @@ def test_parse_topic_file_empty(tmp_path):
     f.write_text("# Empty list\n\nNo bullets here.\n")
     topics = parse_topic_file(f)
     assert topics == []
+
+
+@pytest.mark.asyncio
+async def test_researcher_emits_per_url_fetch_success(tmp_path):
+    """Researcher._fetch_and_save emits 'Fetched: ...' on success."""
+    from unittest.mock import MagicMock, AsyncMock
+    from pal.researcher import Researcher
+
+    captured = []
+    def on_progress(msg):
+        captured.append(msg)
+
+    fetcher = MagicMock()
+    fetcher.fetch = AsyncMock(return_value=MagicMock(
+        text="some content",
+        title="A page",
+        url="https://example.com/page",
+        content_hash="abcd1234abcd",
+        byte_size=12,
+    ))
+    researcher = Researcher(
+        websearch=MagicMock(),
+        fetcher=fetcher,
+        inference=MagicMock(),
+        vault_path=tmp_path,
+        on_progress=on_progress,
+    )
+    await researcher._fetch_and_save("https://example.com/page", "topic-slug")
+    assert any("Fetched:" in m for m in captured), captured
+
+
+@pytest.mark.asyncio
+async def test_researcher_emits_per_url_fetch_failure(tmp_path):
+    """Researcher._fetch_and_save emits 'Fetch failed (...)' on FetchError."""
+    from unittest.mock import MagicMock, AsyncMock
+    from agent_core.utils.fetcher import FetchError
+    from pal.researcher import Researcher
+
+    captured = []
+    def on_progress(msg):
+        captured.append(msg)
+
+    fetcher = MagicMock()
+    fetcher.fetch = AsyncMock(side_effect=FetchError("timeout"))
+    researcher = Researcher(
+        websearch=MagicMock(),
+        fetcher=fetcher,
+        inference=MagicMock(),
+        vault_path=tmp_path,
+        on_progress=on_progress,
+    )
+    await researcher._fetch_and_save("https://example.com/page", "topic-slug")
+    assert any("Fetch failed" in m for m in captured), captured
+
+
+@pytest.mark.asyncio
+async def test_researcher_emits_per_url_summarize_success(tmp_path, monkeypatch):
+    """Researcher._summarize emits 'Summarized: ...' on success."""
+    from unittest.mock import MagicMock, AsyncMock
+    from pathlib import Path
+    from pal.researcher import Researcher, SourceResult
+    from dataclasses import dataclass
+
+    captured = []
+    def on_progress(msg):
+        captured.append(msg)
+
+    # Mock summarize_raw_file at the import path researcher.py uses
+    async def fake_summarize(raw_path, vault_path, inference, max_body_chars):
+        return MagicMock(summary_path=tmp_path / "summary.md")
+
+    monkeypatch.setattr("pal.researcher.summarize_raw_file", fake_summarize)
+
+    researcher = Researcher(
+        websearch=MagicMock(),
+        fetcher=MagicMock(),
+        inference=MagicMock(),
+        vault_path=tmp_path,
+        on_progress=on_progress,
+    )
+    source = SourceResult(
+        url="https://example.com/page",
+        title="page",
+        raw_path=tmp_path / "raw.md",
+        status="ok",
+    )
+    await researcher._summarize(source)
+    assert any("Summarized:" in m for m in captured), captured

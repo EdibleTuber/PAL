@@ -48,6 +48,17 @@ def _url_slug(url: str, max_len: int = 30) -> str:
     return cleaned[:max_len]
 
 
+def _short_url(url: str, max_len: int = 40) -> str:
+    """Compact URL for progress messages: hostname + truncated path."""
+    parsed = urlparse(url)
+    host = parsed.hostname or "unknown"
+    path = parsed.path or ""
+    combined = host + path
+    if len(combined) <= max_len:
+        return combined
+    return combined[: max_len - 3] + "..."
+
+
 @dataclass
 class SourceResult:
     url: str
@@ -133,6 +144,7 @@ class Researcher:
         try:
             fetch_result = await self.fetcher.fetch(url)
         except FetchError as exc:
+            self._progress(f"Fetch failed ({_short_url(url)}): {exc}")
             return SourceResult(
                 url=url,
                 title="",
@@ -140,6 +152,7 @@ class Researcher:
                 error=str(exc),
             )
         except Exception as exc:
+            self._progress(f"Fetch failed ({_short_url(url)}): {exc}")
             return SourceResult(
                 url=url,
                 title="",
@@ -148,6 +161,9 @@ class Researcher:
             )
 
         if not fetch_result.text.strip():
+            self._progress(
+                f"Fetch failed ({_short_url(url)}): trafilatura returned empty content"
+            )
             return SourceResult(
                 url=url,
                 title=fetch_result.title or "",
@@ -174,6 +190,7 @@ class Researcher:
         }
         raw_path.write_text(serialize_frontmatter(meta, fetch_result.text))
 
+        self._progress(f"Fetched: {_short_url(url)}")
         return SourceResult(
             url=url,
             title=fetch_result.title,
@@ -193,6 +210,7 @@ class Researcher:
                 max_body_chars=self.max_body_chars,
             )
             source.summary_path = result.summary_path
+            self._progress(f"Summarized: {_short_url(source.url)}")
         except Exception as exc:
             logger.warning("Summarize failed for %s: %s", source.url, exc)
             source.status = "summarize_failed"
