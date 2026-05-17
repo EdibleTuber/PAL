@@ -33,6 +33,7 @@ class ResearchProposalMessage:
     topic: str
     depth: int
     rationale: str
+    topics: list[str] | None = None
     type: str = "research_proposal"
 
 

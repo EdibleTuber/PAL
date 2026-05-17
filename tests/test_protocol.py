@@ -140,3 +140,28 @@ def test_consolidate_proposal_roundtrip():
     assert decoded.target_title == "Combined"
     assert decoded.rationale == "Merge overlapping notes"
     assert decoded.type == "consolidate_proposal"
+
+
+def test_research_proposal_message_topics_field_default_none():
+    """ResearchProposalMessage.topics defaults to None for single-topic mode."""
+    from pal.protocol import ResearchProposalMessage
+    msg = ResearchProposalMessage(
+        proposal_id="abc",
+        topic="docker networking",
+        depth=3,
+        rationale="test",
+    )
+    assert msg.topics is None
+
+
+def test_research_proposal_message_topics_field_accepts_list():
+    """ResearchProposalMessage.topics carries the list in multi-topic mode."""
+    from pal.protocol import ResearchProposalMessage
+    msg = ResearchProposalMessage(
+        proposal_id="abc",
+        topic="3 topics: a, b, c",
+        depth=3,
+        rationale="test",
+        topics=["a", "b", "c"],
+    )
+    assert msg.topics == ["a", "b", "c"]
