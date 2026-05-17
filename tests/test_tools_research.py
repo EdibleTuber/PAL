@@ -57,11 +57,13 @@ async def test_propose_research_emits_proposal(tmp_path):
     proposal = MagicMock()
     proposal.event = event
     proposal.expires_at = datetime.now(timezone.utc) + timedelta(seconds=300)
+    proposal.topic = "X"
 
     final = MagicMock()
     final.status = "approved"
     final.topic = "X"
     final.depth = 3
+    final.topics = None
 
     approval_registry = MagicMock()
     approval_registry.create_proposal = MagicMock(return_value=proposal_id)
@@ -242,3 +244,71 @@ async def test_propose_research_rejects_topics_all_whitespace():
         ctx,
     )
     assert "Error" in result
+
+
+@pytest.mark.asyncio
+async def test_propose_research_topics_list_populates_proposal_topics():
+    """Multi-topic mode stores the list on the proposal record."""
+    tool = ProposeResearch()
+    ctx = _build_ctx_with_registry()
+    # Pre-approve any created proposal so run() returns instead of blocking
+    ctx.emit = AsyncMock()
+    async def auto_approve_after_emit(msg):
+        ctx.agent.approval_registry.approve(msg.proposal_id)
+    ctx.emit.side_effect = auto_approve_after_emit
+
+    import json
+    result_json = await tool.run(
+        {"topics": ["a", "b", "c"], "rationale": "test"},
+        ctx,
+    )
+    result = json.loads(result_json)
+    assert result["status"] == "approved"
+    assert result["topics"] == ["a", "b", "c"]
+    assert "topic" in result  # human-readable summary
+    proposal = ctx.agent.approval_registry.get(result["proposal_id"])
+    assert proposal.topics == ["a", "b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_propose_research_topics_summary_truncates_after_three():
+    """Topic summary string shows first 3 + '...' for longer lists."""
+    tool = ProposeResearch()
+    ctx = _build_ctx_with_registry()
+    ctx.emit = AsyncMock()
+    async def auto_approve_after_emit(msg):
+        ctx.agent.approval_registry.approve(msg.proposal_id)
+    ctx.emit.side_effect = auto_approve_after_emit
+
+    import json
+    result_json = await tool.run(
+        {"topics": ["a", "b", "c", "d", "e"], "rationale": "test"},
+        ctx,
+    )
+    result = json.loads(result_json)
+    assert "5 topics" in result["topic"]
+    assert "a" in result["topic"]
+    assert "b" in result["topic"]
+    assert "c" in result["topic"]
+    assert "..." in result["topic"]
+
+
+@pytest.mark.asyncio
+async def test_propose_research_return_shape_single_topic_no_topics_key():
+    """Regression: single-topic return shape does NOT include `topics` key."""
+    tool = ProposeResearch()
+    ctx = _build_ctx_with_registry()
+    ctx.emit = AsyncMock()
+    async def auto_approve_after_emit(msg):
+        ctx.agent.approval_registry.approve(msg.proposal_id)
+    ctx.emit.side_effect = auto_approve_after_emit
+
+    import json
+    result_json = await tool.run(
+        {"topic": "docker networking", "rationale": "test"},
+        ctx,
+    )
+    result = json.loads(result_json)
+    assert result["status"] == "approved"
+    assert result["topic"] == "docker networking"
+    assert "topics" not in result

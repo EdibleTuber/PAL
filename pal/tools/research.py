@@ -103,17 +103,32 @@ class ProposeResearch(Tool):
         depth = max(1, min(depth, 10))
 
         ar = ctx.agent.approval_registry
-        proposal_id = ar.create_proposal(topic=topic, depth=depth, rationale=rationale)
+
+        if topics:
+            # Multi-topic mode: build human-readable summary and store list.
+            if len(topics) <= 3:
+                summary = f"{len(topics)} topics: " + ", ".join(topics)
+            else:
+                first_three = ", ".join(topics[:3])
+                summary = f"{len(topics)} topics: {first_three}, ..."
+            proposal_id = ar.create_proposal(
+                topic=summary, depth=depth, rationale=rationale, topics=topics,
+            )
+        else:
+            # Single-topic mode (unchanged).
+            proposal_id = ar.create_proposal(
+                topic=topic, depth=depth, rationale=rationale,
+            )
+
         proposal = ar.get(proposal_id)
         await ctx.emit(ResearchProposalMessage(
             proposal_id=proposal_id,
-            topic=topic,
+            topic=proposal.topic,
             depth=depth,
             rationale=rationale,
+            topics=topics if topics else None,
         ))
-        # Block until the CLI signals a terminal status (or expiry).
-        # Bound the wait by the proposal's own expiry so a disconnected
-        # CLI can't hang this tool coroutine forever.
+        # Block until the user signals a terminal status (or expiry).
         remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
         try:
             await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
@@ -123,7 +138,6 @@ class ProposeResearch(Tool):
         final = ar.get(proposal_id)
         result = {"proposal_id": proposal_id, "status": final.status}
         if final.status == "declined":
-            # If this proposal was edited, the registry links old -> new.
             edited = ar.get_successor(proposal_id)
             if edited is not None:
                 result = {
@@ -132,9 +146,13 @@ class ProposeResearch(Tool):
                     "topic": edited.topic,
                     "depth": edited.depth,
                 }
+                if edited.topics:
+                    result["topics"] = list(edited.topics)
         elif final.status == "approved":
             result["topic"] = final.topic
             result["depth"] = final.depth
+            if final.topics:
+                result["topics"] = list(final.topics)
         return json.dumps(result)
 
 
