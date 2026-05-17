@@ -43,29 +43,35 @@ def _format_research_report(report, vault_path) -> str:
 class ProposeResearch(Tool):
     name = "propose_research"
     description = (
-        "Propose a web research run. Emits a proposal to the user "
-        "and blocks until they approve, decline, or edit it in the "
-        "CLI. Returns a JSON object with the final status and "
-        "proposal_id. Use research_topic to execute an approved "
-        "proposal."
+        "Propose a web research run. Provide either `topic` (single string) "
+        "for one topic, or `topics` (array of strings) for a batch with "
+        "cross-topic URL deduplication. Exactly one is required. Emits a "
+        "proposal to the user and blocks until they approve, decline, or "
+        "edit it. Returns a JSON object with the final status and proposal_id. "
+        "Use research_topic to execute an approved proposal."
     )
     parameters = {
         "type": "object",
         "properties": {
             "topic": {
                 "type": "string",
-                "description": "Topic string to research.",
+                "description": "Single topic string. Use this OR `topics`, not both.",
+            },
+            "topics": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of topics for batch research with cross-topic URL dedup. Use this OR `topic`, not both.",
             },
             "depth": {
                 "type": "integer",
-                "description": "Number of sources to fetch (1-10, default 3).",
+                "description": "Number of sources to fetch per topic (1-10, default 3).",
             },
             "rationale": {
                 "type": "string",
                 "description": "One-line reason shown to the user.",
             },
         },
-        "required": ["topic", "rationale"],
+        "required": ["rationale"],
     }
     requires = ("approval_registry",)
 
@@ -75,12 +81,24 @@ class ProposeResearch(Tool):
         if ctx.agent.approval_registry is None:
             return "Error: research proposals are not available in this session."
 
-        topic = args.get("topic", "").strip()
         rationale = args.get("rationale", "").strip()
-        if not topic:
-            return "Error: 'topic' parameter is required."
         if not rationale:
             return "Error: 'rationale' parameter is required."
+
+        raw_topic = args.get("topic", "")
+        topic = raw_topic.strip() if isinstance(raw_topic, str) else ""
+        raw_topics = args.get("topics")
+        topics: list[str] = []
+        if isinstance(raw_topics, list):
+            topics = [t.strip() for t in raw_topics if isinstance(t, str) and t.strip()]
+
+        if not topic and not topics:
+            return "Error: provide exactly one of 'topic' or 'topics'."
+        if topic and topics:
+            return "Error: provide exactly one of 'topic' or 'topics'."
+        if raw_topics is not None and isinstance(raw_topics, list) and not topics:
+            return "Error: 'topics' must be a non-empty list of non-empty strings."
+
         depth = int(args.get("depth", 3))
         depth = max(1, min(depth, 10))
 

@@ -7,7 +7,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from agent_core.approval_registry import ApprovalRegistry
 from pal.tools.research import ProposeResearch, ResearchTopic
+
+
+def _build_ctx_with_registry():
+    """Build a minimal HandlerContext with an ApprovalRegistry on the agent."""
+    ctx = MagicMock()
+    ctx.agent.approval_registry = ApprovalRegistry(expiry_minutes=15)
+    return ctx
 
 
 @dataclass
@@ -112,8 +120,12 @@ async def test_propose_research_declined_with_edit(tmp_path):
 
 async def test_propose_research_validates_required(tmp_path):
     agent = _Agent(tmp_path, approval_registry=MagicMock())
-    result = await ProposeResearch().run({}, _ctx(agent))
-    assert "topic" in result.lower() and "required" in result.lower()
+    # Missing rationale -> rationale-required error.
+    result = await ProposeResearch().run({"topic": "X"}, _ctx(agent))
+    assert "rationale" in result.lower() and "required" in result.lower()
+    # Missing both topic and topics -> exactly-one-of error.
+    result = await ProposeResearch().run({"rationale": "Y"}, _ctx(agent))
+    assert "topic" in result.lower() and "topics" in result.lower()
 
 
 async def test_propose_research_no_approval_registry(tmp_path):
@@ -188,3 +200,45 @@ async def test_research_topic_requires_managers(tmp_path):
     agent = _Agent(tmp_path, approval_registry=None, researcher=MagicMock())
     result = await ResearchTopic().run({"proposal_id": "p"}, _ctx(agent))
     assert "not available" in result.lower()
+
+
+# --- ProposeResearch topic/topics validation (Task 4) ---
+
+@pytest.mark.asyncio
+async def test_propose_research_rejects_neither_topic_nor_topics():
+    """Validation: at least one of topic/topics required."""
+    tool = ProposeResearch()
+    ctx = _build_ctx_with_registry()
+    result = await tool.run({"rationale": "test"}, ctx)
+    assert "exactly one of 'topic' or 'topics'" in result.lower() or "Error" in result
+
+
+@pytest.mark.asyncio
+async def test_propose_research_rejects_both_topic_and_topics():
+    """Validation: mutually exclusive."""
+    tool = ProposeResearch()
+    ctx = _build_ctx_with_registry()
+    result = await tool.run(
+        {"topic": "docker", "topics": ["a", "b"], "rationale": "test"},
+        ctx,
+    )
+    assert "exactly one of" in result.lower() or "Error" in result
+
+
+@pytest.mark.asyncio
+async def test_propose_research_rejects_empty_topics_list():
+    tool = ProposeResearch()
+    ctx = _build_ctx_with_registry()
+    result = await tool.run({"topics": [], "rationale": "test"}, ctx)
+    assert "Error" in result
+
+
+@pytest.mark.asyncio
+async def test_propose_research_rejects_topics_all_whitespace():
+    tool = ProposeResearch()
+    ctx = _build_ctx_with_registry()
+    result = await tool.run(
+        {"topics": ["", "  ", "\n"], "rationale": "test"},
+        ctx,
+    )
+    assert "Error" in result
