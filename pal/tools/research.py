@@ -203,9 +203,9 @@ class ResearchTopic(Tool):
         ar.consume(proposal_id)
 
         try:
-            report = await ctx.agent.researcher.research_topic(
-                topic=proposal.topic,
-                depth=proposal.depth,
+            topics = proposal.topics if proposal.topics else [proposal.topic]
+            report = await ctx.agent.researcher.research_topics(
+                topics, depth=proposal.depth,
             )
         except Exception as exc:
             return f"Research error: {exc}"

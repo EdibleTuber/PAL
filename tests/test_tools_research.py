@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agent_core.approval_registry import ApprovalRegistry
+from pal.researcher import ResearchReport
 from pal.tools.research import ProposeResearch, ResearchTopic
+
+
+def _empty_report() -> ResearchReport:
+    return ResearchReport()
 
 
 def _build_ctx_with_registry():
@@ -147,6 +152,7 @@ async def test_research_topic_runs_approved_proposal(tmp_path):
     proposal.status = "approved"
     proposal.topic = "X"
     proposal.depth = 3
+    proposal.topics = None
     ar = MagicMock()
     ar.get = MagicMock(return_value=proposal)
     ar.consume = MagicMock()
@@ -158,14 +164,14 @@ async def test_research_topic_runs_approved_proposal(tmp_path):
     report.results = []
 
     researcher = MagicMock()
-    researcher.research_topic = AsyncMock(return_value=report)
+    researcher.research_topics = AsyncMock(return_value=report)
 
     agent = _Agent(tmp_path, approval_registry=ar, researcher=researcher)
     result = await ResearchTopic().run(
         {"proposal_id": "p-1"}, _ctx(agent),
     )
     ar.consume.assert_called_once_with("p-1")
-    researcher.research_topic.assert_awaited_once_with(topic="X", depth=3)
+    researcher.research_topics.assert_awaited_once_with(["X"], depth=3)
     assert "Research complete" in result
     assert "2 summarized" in result and "3 fetched" in result
 
@@ -312,3 +318,58 @@ async def test_propose_research_return_shape_single_topic_no_topics_key():
     assert result["status"] == "approved"
     assert result["topic"] == "docker networking"
     assert "topics" not in result
+
+
+@pytest.mark.asyncio
+async def test_research_topic_batch_calls_research_topics_with_list():
+    """research_topic on a multi-topic proposal passes the full list to Researcher."""
+    from pal.tools.research import ResearchTopic
+    from agent_core.approval_registry import ApprovalRegistry
+
+    reg = ApprovalRegistry(expiry_minutes=15)
+    pid = reg.create_proposal(
+        topic="3 topics: a, b, c",
+        depth=3,
+        rationale="test",
+        topics=["a", "b", "c"],
+    )
+    reg.approve(pid)
+
+    ctx = MagicMock()
+    ctx.agent.approval_registry = reg
+    ctx.agent.researcher = MagicMock()
+    ctx.agent.researcher.research_topics = AsyncMock(return_value=_empty_report())
+    ctx.agent.config = MagicMock()
+    ctx.agent.config.vault_path = Path("/tmp")
+
+    tool = ResearchTopic()
+    await tool.run({"proposal_id": pid}, ctx)
+
+    ctx.agent.researcher.research_topics.assert_awaited_once()
+    call_args = ctx.agent.researcher.research_topics.call_args
+    assert call_args.args[0] == ["a", "b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_research_topic_single_calls_research_topics_with_one_element():
+    """research_topic on a single-topic proposal wraps the topic in a 1-element list."""
+    from pal.tools.research import ResearchTopic
+    from agent_core.approval_registry import ApprovalRegistry
+
+    reg = ApprovalRegistry(expiry_minutes=15)
+    pid = reg.create_proposal(topic="docker networking", depth=3, rationale="test")
+    reg.approve(pid)
+
+    ctx = MagicMock()
+    ctx.agent.approval_registry = reg
+    ctx.agent.researcher = MagicMock()
+    ctx.agent.researcher.research_topics = AsyncMock(return_value=_empty_report())
+    ctx.agent.config = MagicMock()
+    ctx.agent.config.vault_path = Path("/tmp")
+
+    tool = ResearchTopic()
+    await tool.run({"proposal_id": pid}, ctx)
+
+    ctx.agent.researcher.research_topics.assert_awaited_once()
+    call_args = ctx.agent.researcher.research_topics.call_args
+    assert call_args.args[0] == ["docker networking"]
