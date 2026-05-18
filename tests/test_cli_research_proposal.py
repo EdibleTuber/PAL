@@ -84,3 +84,40 @@ def test_format_reorg_proposal_includes_ops_and_preview():
     assert "clean up names and dedupe" in text
     assert "5" in text  # references_preview
     assert "[a]" in text.lower() or "approve" in text.lower()
+
+
+def test_format_research_proposal_renders_topics_list():
+    """CLI prompt shows the full topic list when topics is set."""
+    from pal.cli import format_research_proposal
+    from pal.protocol import ResearchProposalMessage
+
+    msg = ResearchProposalMessage(
+        proposal_id="abc",
+        topic="3 topics: a, b, c",
+        depth=3,
+        rationale="batch test",
+        topics=["docker networking", "k8s ingress", "service mesh"],
+    )
+    prompt = format_research_proposal(msg)
+    assert "docker networking" in prompt
+    assert "k8s ingress" in prompt
+    assert "service mesh" in prompt
+    assert "Depth:     3" in prompt
+    assert "Rationale: batch test" in prompt
+
+
+def test_format_research_proposal_single_topic_unchanged():
+    """Regression: single-topic CLI prompt shows the topic on Topic: line."""
+    from pal.cli import format_research_proposal
+    from pal.protocol import ResearchProposalMessage
+
+    msg = ResearchProposalMessage(
+        proposal_id="abc",
+        topic="docker networking",
+        depth=3,
+        rationale="single",
+    )
+    prompt = format_research_proposal(msg)
+    assert "Topic:     docker networking" in prompt
+    # Multi-topic 'Topics:' header should NOT appear in single mode
+    assert "Topics" not in prompt

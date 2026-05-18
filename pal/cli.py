@@ -67,10 +67,22 @@ def render_splash_commands() -> str:
 
 def format_research_proposal(msg: ResearchProposalMessage) -> str:
     """Render a proposal approval prompt. Pure formatter for testability."""
+    if msg.topics:
+        # Multi-topic: render the full list under a Topics header.
+        # Truncate at 30 topics for terminal scannability; trailer notes the rest.
+        total = len(msg.topics)
+        shown = msg.topics[:30]
+        topic_lines = "\n".join(f"    - {t}" for t in shown)
+        if total > 30:
+            topic_lines += f"\n    ... ({total - 30} more not shown; total {total})"
+        topic_block = f"  Topics ({total}):\n{topic_lines}"
+    else:
+        topic_block = f"  Topic:     {msg.topic}"
+
     return (
         "\n"
         "────────── PAL proposes research ──────────\n"
-        f"  Topic:     {msg.topic}\n"
+        f"{topic_block}\n"
         f"  Depth:     {msg.depth}\n"
         f"  Rationale: {msg.rationale}\n"
         "  [a]pprove  [d]ecline  [e]dit\n"
