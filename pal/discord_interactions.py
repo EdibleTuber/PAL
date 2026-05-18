@@ -65,7 +65,32 @@ def build_research_proposal_embed(
         title="PAL proposes research",
         color=discord.Color.blurple(),
     )
-    embed.add_field(name="Topic", value=msg.topic, inline=False)
+
+    if msg.topics:
+        # Multi-topic: render the full list with truncation.
+        total = len(msg.topics)
+        cap = _DISCORD_FIELD_VALUE_LIMIT - _FIELD_BUDGET_HEADROOM
+        fitted: list[str] = []
+        chars = 0
+        for t in msg.topics:
+            line = f"- {t}"
+            add = len(line) + (1 if fitted else 0)  # +1 for newline separator
+            if chars + add > cap:
+                break
+            fitted.append(line)
+            chars += add
+        dropped = total - len(fitted)
+        topics_text = "\n".join(fitted)
+        if dropped > 0:
+            topics_text += f"\n... ({dropped} more not shown; total {total})"
+        embed.add_field(
+            name=f"Topics ({total})",
+            value=topics_text if topics_text else "(empty)",
+            inline=False,
+        )
+    else:
+        embed.add_field(name="Topic", value=msg.topic, inline=False)
+
     embed.add_field(name="Depth", value=str(msg.depth), inline=True)
     embed.add_field(name="Rationale", value=msg.rationale, inline=False)
 

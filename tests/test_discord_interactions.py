@@ -604,3 +604,62 @@ async def test_stream_processor_no_reasoning_block_when_whitespace_only():
 
     _, final_text = await processor.run(stream())
     assert final_text == "answer"
+
+
+def test_research_embed_renders_topics_list():
+    """Multi-topic proposal embed shows all topics as a bulleted list."""
+    from pal.discord_interactions import build_research_proposal_embed
+    from pal.protocol import ResearchProposalMessage
+
+    msg = ResearchProposalMessage(
+        proposal_id="abc",
+        topic="3 topics: a, b, c",
+        depth=3,
+        rationale="test batch",
+        topics=["docker networking", "k8s ingress", "service mesh"],
+    )
+    embed, _view = build_research_proposal_embed(msg)
+    fields_text = "\n".join(f.value for f in embed.fields)
+    assert "docker networking" in fields_text
+    assert "k8s ingress" in fields_text
+    assert "service mesh" in fields_text
+
+
+def test_research_embed_truncates_long_topic_list():
+    """A 50-topic proposal embed stays within Discord's 4096-char limit
+    and includes a truncation trailer."""
+    from pal.discord_interactions import build_research_proposal_embed
+    from pal.protocol import ResearchProposalMessage
+
+    # Long topic names to ensure the per-field cap actually triggers truncation.
+    topics = [f"topic-{i:02d}-" + "x" * 30 for i in range(50)]
+    msg = ResearchProposalMessage(
+        proposal_id="abc",
+        topic=f"50 topics: topic-00, topic-01, topic-02, ...",
+        depth=3,
+        rationale="big batch",
+        topics=topics,
+    )
+    embed, _view = build_research_proposal_embed(msg)
+    total_chars = sum(len(f.value) + len(f.name) for f in embed.fields) + len(embed.title or "")
+    assert total_chars < 4000  # well under Discord's 4096 limit
+    fields_text = "\n".join(f.value for f in embed.fields)
+    assert "more not shown" in fields_text or "+" in fields_text  # truncation trailer
+    assert "50" in fields_text  # total count preserved
+
+
+def test_research_embed_single_topic_unchanged():
+    """Regression pin: single-topic proposal embed shows topic only, no topics field."""
+    from pal.discord_interactions import build_research_proposal_embed
+    from pal.protocol import ResearchProposalMessage
+
+    msg = ResearchProposalMessage(
+        proposal_id="abc",
+        topic="docker networking",
+        depth=3,
+        rationale="single",
+    )
+    embed, _view = build_research_proposal_embed(msg)
+    fields_text = "\n".join(f.value for f in embed.fields)
+    assert "docker networking" in fields_text
+    assert "Topics" not in [f.name for f in embed.fields]  # no Topics field
