@@ -1,8 +1,10 @@
 """Compile raw summary files into wiki articles.
 
-Used by the compile_summary tool. find_existing_article identifies merge
-targets via retrieval-index lookup + model confirmation; merges append to
-the article's timeline while rewriting the compiled-truth section.
+Used by the compile_summary tool (chat-driven compile path), the
+propose_promote_synthesis -> compile_chat_synthesis flow, and the reorg
+merge_into_existing path. find_existing_article identifies merge targets
+via retrieval-index lookup + model confirmation; merges append to the
+article's timeline while rewriting the compiled-truth section.
 """
 import hashlib
 import logging
