@@ -100,9 +100,6 @@ def test_base_prompt_describes_search_vault_json_shape():
 def test_base_prompt_does_not_mention_search_web_as_llm_tool():
     """search_web is disabled from PAL's LLM tool surface (Task 4).
     The prompt must not advertise it as a callable tool.
-
-    Note: the /search-web slash command may still appear via slash-command
-    help registration (separate surface); that's outside this test.
     """
     import re
     pattern = r"\bsearch_web\b"

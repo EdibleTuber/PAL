@@ -17,8 +17,7 @@ def test_help_would_include_all_registered_names():
     all_names = pal_names | builtin_names
 
     # Key PAL commands
-    for name in ("read", "search", "note", "compile", "research", "lint",
-                 "fetch", "summarize", "import", "learn"):
+    for name in ("lint", "import", "learn"):
         assert name in all_names, f"/{name} not in combined command set"
 
     # Key framework commands that should be present

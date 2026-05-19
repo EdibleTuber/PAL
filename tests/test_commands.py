@@ -2,20 +2,17 @@
 from agent_core.commands.base import Command
 
 from pal.commands import (
-    Compile, CompileBatch, Fetch, Get, Import, Learn, Lint, Note, PALModel,
-    Profile, Read, Research, Scratch, Search, SearchWeb, Status, Summarize, Wisdom,
+    Import, Learn, Lint, PALModel, Profile, Scratch, Status, Wisdom,
 )
 
 
 ALL_COMMANDS = [
-    Read, Search, Get, Note, Lint, SearchWeb, Fetch, Summarize,
-    Compile, CompileBatch, Import, Learn, Research,
+    Lint, Import, Learn,
     Status, Profile, Wisdom, Scratch, PALModel,
 ]
 
 EXPECTED_NAMES = {
-    "read", "search", "get", "note", "lint", "search-web", "fetch", "summarize",
-    "compile", "compile-batch", "import", "learn", "research",
+    "lint", "import", "learn",
     "status", "profile", "wisdom", "scratch", "model",
 }
 
@@ -36,22 +33,6 @@ def test_expected_command_names_present():
     names = {cls.name for cls in ALL_COMMANDS}
     missing = EXPECTED_NAMES - names
     assert not missing, f"missing commands in pal.commands: {missing}"
-
-
-def test_read_metadata():
-    assert Read.name == "read"
-    assert Read.args == "<title>"
-    assert "wiki" in Read.description.lower() or "read" in Read.description.lower()
-
-
-def test_compile_metadata():
-    assert Compile.name == "compile"
-    assert Compile.args == "<t>"
-
-
-def test_research_metadata():
-    assert Research.name == "research"
-    assert Research.args == "<t>"
 
 
 def test_requires_are_tuples_of_strings():

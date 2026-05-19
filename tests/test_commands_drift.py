@@ -7,19 +7,15 @@ pal.commands package exports them all.
 """
 from pal.agent import PALAgent
 from pal.commands import (
-    Compile, CompileBatch, Fetch, Get, Import, Learn, Lint, Note, PALModel,
-    Profile, Read, Research, Scratch, Search, SearchWeb, Status, Summarize, Wisdom,
+    Import, Learn, Lint, PALModel, Profile, Scratch, Status, Wisdom,
 )
 
 EXPECTED_PAL_COMMANDS = {
-    Compile, CompileBatch, Fetch, Get, Import, Learn, Lint, Note, PALModel,
-    Profile, Read, Research, Scratch, Search, SearchWeb, Status, Summarize, Wisdom,
+    Import, Learn, Lint, PALModel, Profile, Scratch, Status, Wisdom,
 }
 
 EXPECTED_NAMES = {
-    "compile", "compile-batch", "fetch", "get", "import", "learn", "lint",
-    "note", "model", "profile", "read", "research", "scratch", "search",
-    "search-web", "status", "summarize", "wisdom",
+    "import", "learn", "lint", "model", "profile", "scratch", "status", "wisdom",
 }
 
 

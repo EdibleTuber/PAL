@@ -1,4 +1,4 @@
-"""Integration tests for /search and /get slash commands via the daemon."""
+"""Integration tests for retrieval-aware slash commands via the daemon."""
 import asyncio
 
 import pytest
@@ -32,56 +32,6 @@ async def retrieval_daemon(socket_path, mock_inference_server, tmp_path):
         await task
     except (asyncio.CancelledError, Exception):
         pass
-
-
-@pytest.mark.asyncio
-async def test_search_command_returns_results(retrieval_daemon, socket_path):
-    """/search query returns ranked results."""
-    client = PalClient(socket_path)
-    await client.connect()
-
-    resp = await client.command("search", "quantum computing")
-    assert "doc-0" in resp.text
-    assert "Summary for quantum computing" in resp.text
-
-    await client.close()
-
-
-@pytest.mark.asyncio
-async def test_search_command_empty_query(retrieval_daemon, socket_path):
-    """/search with no args returns usage error."""
-    client = PalClient(socket_path)
-    await client.connect()
-
-    with pytest.raises(RuntimeError, match="Usage"):
-        await client.command("search", "")
-
-    await client.close()
-
-
-@pytest.mark.asyncio
-async def test_get_command_returns_document(retrieval_daemon, socket_path):
-    """/get <doc_id> returns full document content."""
-    client = PalClient(socket_path)
-    await client.connect()
-
-    resp = await client.command("get", "Projects/alpha.md")
-    assert "Full content" in resp.text
-    assert "Projects/alpha.md" in resp.text
-
-    await client.close()
-
-
-@pytest.mark.asyncio
-async def test_get_command_document_not_found(retrieval_daemon, socket_path):
-    """/get with a missing doc_id returns an error."""
-    client = PalClient(socket_path)
-    await client.connect()
-
-    with pytest.raises(RuntimeError, match="not found"):
-        await client.command("get", "missing")
-
-    await client.close()
 
 
 @pytest.mark.asyncio

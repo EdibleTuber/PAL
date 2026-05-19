@@ -7,7 +7,6 @@ from agent_core.client import DaemonConnection as PalClient
 from pal.config import Config
 
 from tests.conftest import make_pal_agent, start_pal_daemon
-from agent_core.protocol import ResponseMessage
 from pal.wiki import WikiManager
 
 
@@ -41,35 +40,6 @@ async def wiki_daemon(socket_path, mock_inference_server, vault_path):
 
 
 @pytest.mark.asyncio
-async def test_note_command_creates_article(wiki_daemon, socket_path, vault_path):
-    """The /note command creates a wiki article via inference."""
-    client = PalClient(socket_path)
-    await client.connect()
-
-    resp = await client.command("note", "My Test Topic")
-    assert "Created article:" in resp.text
-
-    await client.close()
-
-
-@pytest.mark.asyncio
-async def test_read_command(wiki_daemon, socket_path, vault_path):
-    """/read returns an article's content."""
-    client = PalClient(socket_path)
-    await client.connect()
-
-    # Create an article first via the wiki manager directly
-    wm = WikiManager(vault_path)
-    wm.init_vault()
-    wm.write_article(path="test.md", title="Test", body="# Test\n\nHello world.\n")
-
-    resp = await client.command("read", "test.md")
-    assert "Hello world." in resp.text
-
-    await client.close()
-
-
-@pytest.mark.asyncio
 async def test_lint_command(wiki_daemon, socket_path, vault_path):
     """/lint reports vault health."""
     client = PalClient(socket_path)
@@ -98,27 +68,6 @@ async def test_status_command_includes_vault(wiki_daemon, socket_path, vault_pat
 
     resp = await client.command("status")
     assert "Vault:" in resp.text or "vault" in resp.text.lower()
-
-    await client.close()
-
-
-@pytest.mark.asyncio
-async def test_full_wiki_workflow(wiki_daemon, socket_path, vault_path):
-    """Full workflow: create article, read it back, lint, check status."""
-    client = PalClient(socket_path)
-    await client.connect()
-
-    # 1. Create an article via /note
-    resp = await client.command("note", "Test Topic")
-    assert "Created article:" in resp.text
-
-    # 2. Check status shows the vault
-    resp = await client.command("status")
-    assert "vault" in resp.text.lower()
-
-    # 3. Lint should pass on a well-formed vault
-    resp = await client.command("lint")
-    assert resp.text
 
     await client.close()
 
