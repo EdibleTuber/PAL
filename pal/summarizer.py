@@ -1,7 +1,8 @@
-"""Reusable summarize logic -- sanitize, boundary-wrap, LLM summarize.
+"""Summarize a raw fetched source file into a wiki-ready summary.
 
-Extracted from daemon._handle_summarize so both /summarize and /research
-can share the same pipeline.
+Used by Researcher during research_topic execution. The model is asked
+to produce a TITLE: line plus a body; on parse failure the path stem is
+used as the title and the raw text is preserved.
 """
 import logging
 from dataclasses import dataclass

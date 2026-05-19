@@ -1,7 +1,8 @@
-"""Compiler -- promote raw summaries into grounded wiki articles.
+"""Compile raw summary files into wiki articles.
 
-Extracted from pal.daemon so both the /compile slash command and the
-chat compile tools call the same implementation.
+Used by the compile_summary tool. find_existing_article identifies merge
+targets via retrieval-index lookup + model confirmation; merges append to
+the article's timeline while rewriting the compiled-truth section.
 """
 import hashlib
 import logging

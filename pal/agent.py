@@ -29,10 +29,8 @@ from agent_core.protocol import (
 
 from pal.config import PALConfig
 from pal.commands import (
-    Compile as CmdCompile,
-    CompileBatch as CmdCompileBatch,
-    Fetch, Get, Import, Learn, Lint, Note, PALModel,
-    Profile, Read, Research, Scratch, Search, SearchWeb, Status, Summarize, Wisdom,
+    Import, Learn, Lint, PALModel,
+    Profile, Scratch, Status, Wisdom,
 )
 from pal.tools import (
     AddLearning,
@@ -148,8 +146,7 @@ class PALAgent(Agent):
     # PAL-specific commands registered here override any builtin of the same
     # name (status, profile, wisdom, scratch, model).
     commands = [
-        Read, Search, Get, Note, Lint, SearchWeb, Fetch, Summarize,
-        CmdCompile, CmdCompileBatch, Import, Learn, Research,
+        Lint, Import, Learn,
         Status, Profile, Wisdom, Scratch, PALModel,
     ]
     # Disabled LLM-facing builtin tools in PAL.
@@ -160,9 +157,7 @@ class PALAgent(Agent):
     #     allowlist filter; the user prefers propose_research for web work.
     #     See docs/superpowers/specs/2026-05-12-search-vault-json-result-format-design.md.
     # agent_core's SearchWeb/FetchUrl classes stay intact (future agents may
-    # want them); PAL just stops registering them. The /search-web slash
-    # command (separate user-facing surface in pal/commands/domain.py) is
-    # unaffected.
+    # want them); PAL just stops registering them.
     disabled_builtins: frozenset[str] = frozenset({"fetch_url", "search_web"})
 
     def setup(self) -> None:
