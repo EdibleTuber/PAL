@@ -83,7 +83,7 @@ you> what's in my vault?
 raw/notes/mitmproxy-cert-pinning.md
 ```
 
-That's it. From here, explore `/help` for commands, `/research <topic>` for web research, or just keep chatting and let PAL use tools as it sees fit.
+That's it. From here, explore `/help` for commands, or just chat with PAL. Ask it to research a topic, edit a note, or consolidate articles -- it'll use tools as needed and ask for approval before web fetches or wiki writes.
 
 **Discord (optional).** If you want mobile access, set `PAL_DISCORD_TOKEN` and `PAL_DISCORD_ALLOWED_USERS` and run `pal-discord` in a third terminal. Each Discord channel keeps its own conversation and scratchpad — see [Per-Channel Context](#per-channel-context) below.
 
@@ -201,23 +201,35 @@ python -m pal.discord_main
 
 ### Chat
 
-Type naturally. PAL streams responses with live markdown rendering. During conversation, it can use tools to read, search, edit, and create files in your vault.
+Type naturally. PAL streams responses with live markdown rendering and uses tools to read, search, edit, and write your vault.
+
+Web fetches and most vault writes go through a consent-gated proposal flow. When PAL wants to research a topic or merge articles, it sends an approval prompt; you review and click approve, decline, or edit.
+
+```
+you> research the topics in raw/notes/queue.md
+  [reading raw/notes/queue.md ...]
+  [proposes research with 5 topics]
+
+[Approve] [Decline] [Edit]
+
+you> approve
+  [Fetched: example.com/page-1 ...]
+  [Summarized: example.com/page-1 ...]
+  ...
+  [5 summaries staged in raw/summaries/]
+
+you> compile those into the wiki
+  [proposes compile-batch with 5 summaries]
+
+[Approve] [Decline] [Edit]
+```
+
+Single-source operations (a single research, a single compile) follow the same propose/approve pattern. The full set of tools PAL has during a chat turn is in [Chat Tools](#chat-tools) below.
 
 ### Slash Commands
 
 | Command | Description |
 |---------|-------------|
-| `/note <topic>` | Generate and save a wiki article |
-| `/read <path>` | Read a vault article |
-| `/search <query>` | Semantic search across the vault |
-| `/get <title>` | Fetch article by exact title |
-| `/search-web <query>` | Web search via SearxNG |
-| `/fetch <url>` | Fetch a URL into raw/ for processing |
-| `/research <topic or file>` | Search, fetch, and summarize multiple sources on a topic (single topic or a markdown list of topics). Add `deep` for more sources, `--verbose` for per-URL progress. |
-| `/import <path>` | Import a local document (PDF, DOCX, etc.) |
-| `/summarize <path>` | Summarize fetched content |
-| `/compile <path>` | Compile a summary into a wiki article |
-| `/compile-batch` | Compile every summary in `raw/summaries/` in one pass |
 | `/scratch <text>` | Append a timestamped note to this channel's scratchpad (see [Per-Channel Context](#per-channel-context)) |
 | `/learn` | Extract learnings from the conversation |
 | `/learnings` | List saved learnings |
@@ -228,6 +240,7 @@ Type naturally. PAL streams responses with live markdown rendering. During conve
 | `/lint` | Run a vault health check |
 | `/model [name\|list\|default]` | Show, switch, list, or reset the active model. A change applies to every subsequent inference call (chat, research, summarize, compile, note, learn). |
 | `/think [on\|off\|auto\|show\|hide]` | Control reasoning output for the current session |
+| `/context` | Show context budget: last-turn tokens + component byte sizes |
 | `/status` | Show active model, config default, server, and vault info |
 | `/help` | Show all commands |
 | `/quit` | End the session |
@@ -358,25 +371,6 @@ The manager routes `/v1/chat/completions` to whichever slot has the requested mo
 **Outage behavior.** If the batch slot returns `batch_unavailable`, user-facing callers (categorizer, PDF TOC detection) surface a `BatchFallbackProposal` with retry / run-on-main / skip options. Background callers (learning scanner) log and skip silently.
 
 **Model management.** `/model --target batch <name>` swaps the batch slot without disturbing main. `/model` shows both slots' currently loaded models.
-
-## Web Research Pipeline
-
-PAL can research topics from the web with a controlled pipeline. Two entry points exist depending on scope:
-
-**Single URL (granular control):**
-
-1. `/search-web <topic>` searches via a local SearxNG instance, filtered through a domain allowlist.
-2. `/fetch <url>` downloads content into `raw/web/` with prompt injection defenses (GUID-boundary wrapping, content sanitization).
-3. `/summarize <path>` produces a cleaned summary in `raw/summaries/`.
-4. `/compile <path>` turns the summary into a grounded wiki article.
-
-**Topic-level batch research:**
-
-1. `/research <topic>` searches SearxNG for the topic, fetches the top results, summarizes each. Add `deep` for more sources.
-2. `/research path/to/topics.md` accepts a markdown bullet list of topics and processes them as a batch. Query refinement kicks in automatically when initial results are thin.
-3. `/compile-batch` compiles every summary in `raw/summaries/` in one pass, with topic matching so multiple sources on the same subject merge into a single article.
-
-Both pipelines end with articles in the compiled truth + timeline format. The review gate before compilation is preserved: summaries sit in `raw/summaries/` until you explicitly compile them.
 
 ## Article Format
 
