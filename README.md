@@ -238,7 +238,7 @@ Single-source operations (a single research, a single compile) follow the same p
 | `/profile [set]` | View or update your profile |
 | `/wisdom` | List, add, or remove wisdom entries |
 | `/lint` | Run a vault health check |
-| `/model [name\|list\|default]` | Show, switch, list, or reset the active model. A change applies to every subsequent inference call (chat, research, summarize, compile, note, learn). |
+| `/model [name\|list\|default]` | Show, switch, list, or reset the active model. A change applies to every subsequent inference call (chat, research summaries, article compilation, background tasks). |
 | `/think [on\|off\|auto\|show\|hide]` | Control reasoning output for the current session |
 | `/context` | Show context budget: last-turn tokens + component byte sizes |
 | `/status` | Show active model, config default, server, and vault info |

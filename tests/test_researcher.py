@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch, call
 
 import pytest
 
-from pal.researcher import Researcher, ResearchReport, ResearchResult, SourceResult, parse_topic_file
+from pal.researcher import Researcher, ResearchReport, ResearchResult, SourceResult
 from agent_core.websearch import SearchResult
 from agent_core.utils.fetcher import FetchResult, FetchError
 
@@ -202,35 +202,6 @@ async def test_research_cross_topic_dedup(mock_websearch, mock_fetcher, mock_inf
     fetched_urls = [c.args[0] for c in mock_fetcher.fetch.call_args_list]
     assert fetched_urls.count("https://shared.com/page") == 1
     assert fetched_urls.count("https://unique.com/page") == 1
-
-
-def test_parse_topic_file_extracts_bullets(tmp_path):
-    f = tmp_path / "topics.md"
-    f.write_text(
-        "# Research Queue\n\n"
-        "- Python asyncio\n"
-        "- FAISS indexing strategies\n"
-        "- Retrieval-Augmented Generation\n"
-        "\n"
-        "## Notes\n"
-        "Some text that is not a topic.\n"
-    )
-    topics = parse_topic_file(f)
-    assert topics == ["Python asyncio", "FAISS indexing strategies", "Retrieval-Augmented Generation"]
-
-
-def test_parse_topic_file_skips_empty_bullets(tmp_path):
-    f = tmp_path / "topics.md"
-    f.write_text("- Python asyncio\n-\n- \n- FAISS\n")
-    topics = parse_topic_file(f)
-    assert topics == ["Python asyncio", "FAISS"]
-
-
-def test_parse_topic_file_empty(tmp_path):
-    f = tmp_path / "topics.md"
-    f.write_text("# Empty list\n\nNo bullets here.\n")
-    topics = parse_topic_file(f)
-    assert topics == []
 
 
 @pytest.mark.asyncio

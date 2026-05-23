@@ -22,18 +22,6 @@ logger = logging.getLogger(__name__)
 _REFINEMENT_SUFFIXES = ["tutorial", "documentation", "guide"]
 
 
-def parse_topic_file(path: Path) -> list[str]:
-    """Parse a markdown file, return top-level bullet items as topic strings."""
-    topics = []
-    for line in path.read_text().splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- "):
-            topic = stripped[2:].strip()
-            if topic:
-                topics.append(topic)
-    return topics
-
-
 def _slugify(text: str, max_len: int = 30) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug[:max_len]
