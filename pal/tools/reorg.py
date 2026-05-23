@@ -41,8 +41,20 @@ class ProposeReorg(Tool):
                             "type": "string",
                             "enum": ["move", "merge"],
                         },
-                        "src": {"type": "string"},
-                        "dst": {"type": "string"},
+                        "src": {
+                            "type": "string",
+                            "description": (
+                                "Vault-relative source path. Must exist. Call "
+                                "search_vault first if the exact path is uncertain."
+                            ),
+                        },
+                        "dst": {
+                            "type": "string",
+                            "description": (
+                                "Vault-relative destination path. For 'move': must "
+                                "not exist. For 'merge': must already exist."
+                            ),
+                        },
                     },
                     "required": ["type", "src", "dst"],
                 },

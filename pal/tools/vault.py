@@ -79,8 +79,8 @@ class EditFile(Tool):
             "path": {
                 "type": "string",
                 "description": (
-                    "File path relative to vault root (e.g. 'Research/quantum.md'). "
-                    "Must already exist."
+                    "Vault-relative path to existing file (e.g. 'Research/quantum.md'). "
+                    "Call search_vault first if the exact path is uncertain."
                 ),
             },
             "content": {
@@ -162,8 +162,8 @@ class CreateFile(Tool):
             "path": {
                 "type": "string",
                 "description": (
-                    "Path relative to vault root. Must begin with 'raw/' "
-                    "(e.g. 'raw/notes/my-note.md'). Must not already exist."
+                    "Vault-relative path under raw/ (e.g. 'raw/notes/my-note.md'). "
+                    "Must not already exist."
                 ),
             },
             "title": {
@@ -267,12 +267,15 @@ class MoveFile(Tool):
         "properties": {
             "src": {
                 "type": "string",
-                "description": "Current path (relative to vault root).",
+                "description": (
+                    "Vault-relative path to existing file (e.g. 'Security/foo.md'). "
+                    "Call search_vault first if the exact path is uncertain."
+                ),
             },
             "dst": {
                 "type": "string",
                 "description": (
-                    "Destination path (relative to vault root). Must not exist."
+                    "Vault-relative destination path (e.g. 'IoT/foo.md'). Must not exist."
                 ),
             },
         },
@@ -337,8 +340,8 @@ class DeleteFile(Tool):
             "path": {
                 "type": "string",
                 "description": (
-                    "Path relative to vault root (e.g. 'Hardware/old-article.md'). "
-                    "Must already exist. Must not be in a system directory."
+                    "Vault-relative path to existing file (e.g. 'Hardware/old-article.md'). "
+                    "Call search_vault first if the exact path is uncertain."
                 ),
             },
         },
@@ -420,8 +423,8 @@ class ReplaceInFile(Tool):
             "path": {
                 "type": "string",
                 "description": (
-                    "Path relative to vault root. Must already exist. Must not be in "
-                    "a system directory."
+                    "Vault-relative path to existing file (e.g. 'Research/quantum.md'). "
+                    "Call search_vault first if the exact path is uncertain."
                 ),
             },
             "old_string": {

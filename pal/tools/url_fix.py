@@ -26,7 +26,11 @@ class ProposeUrlFix(Tool):
         "properties": {
             "article_path": {
                 "type": "string",
-                "description": "Vault-relative path to the article with empty sources (e.g. Hardware/arm-architecture.md).",
+                "description": (
+                    "Vault-relative path to the article (e.g. 'Hardware/arm-architecture.md'). "
+                    "Call search_vault first if the exact path is uncertain. The article's "
+                    "sources entries must be all empty."
+                ),
             },
             "proposed_url": {
                 "type": "string",
@@ -127,7 +131,10 @@ class UrlFix(Tool):
             },
             "article_path": {
                 "type": "string",
-                "description": "Path of the article to fix, relative to the vault.",
+                "description": (
+                    "Vault-relative path to the article approved by propose_url_fix "
+                    "(e.g. 'Hardware/arm-architecture.md')."
+                ),
             },
             "proposed_url": {
                 "type": "string",

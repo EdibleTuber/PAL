@@ -26,7 +26,10 @@ class CompileSummary(Tool):
         "properties": {
             "summary_path": {
                 "type": "string",
-                "description": "Relative path under raw/summaries/ (e.g. 'raw/summaries/foo.md').",
+                "description": (
+                    "Vault-relative path under raw/summaries/ (e.g. 'raw/summaries/foo.md'). "
+                    "Use ls raw/summaries/ to find the exact path; do not guess slug formats."
+                ),
             },
         },
         "required": ["summary_path"],
