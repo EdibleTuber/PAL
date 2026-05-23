@@ -5,11 +5,23 @@
 Content enters the vault through three paths: direct creation, web fetch pipeline, and document import. All paths end with the article indexed and git-committed.
 
 ```
-Direct Creation (/note)
-  User: /note <topic>
+Direct Creation (chat-derived synthesis)
+  User chats with PAL about a topic
     |
     v
-  Daemon builds prompt --> inference server (chat completion)
+  PAL suggests: "Want me to promote this thread about <topic> into the wiki?"
+    |
+    v
+  User: yes
+    |
+    v
+  Chat model calls propose_promote_synthesis(title, note_path, rationale)
+    |
+    v
+  [Approve / Decline / Edit prompt]
+    |
+    v (on approve)
+  Daemon reads raw note --> inference server (compile prompt)
     |
     v
   Categorizer scans vault dirs --> picks category
@@ -24,117 +36,98 @@ Direct Creation (/note)
   git commit
 
 
-Web Fetch Pipeline (/fetch --> /summarize --> /compile)
+Web Research Pipeline (chat-driven, consent-gated)
 
-  User: /fetch <url>
+  User chats: "research <topic>" or "research these topics: a, b, c"
     |
     v
-  AllowlistManager.is_allowed() -- domain check against _config/allowlist.md
+  Chat model calls propose_research(topic=... or topics=[...], rationale=...)
+    |
+    v
+  [Approve / Decline / Edit prompt]
+    |
+    v (on approve)
+  Chat model calls research_topic(proposal_id)
+    |
+    v
+  Researcher._search_with_refinement()
+    |
+    v
+  WebSearchClient --> SearxNG /search (allowlist-filtered)
+    |
+    |  if thin results, retry with "{topic} tutorial",
+    |  "{topic} documentation", "{topic} guide"
+    v
+  Top N unique URLs (default 3, deep mode up to 10)
     |
     v
   URLFetcher.fetch() -- HTTP GET with prompt injection defenses
     |                    (GUID boundaries, sanitization, size cap)
+    |                    cross-topic dedup: skip URLs already fetched in this batch
     v
-  raw/web/{slug}.md -- quarantine zone, untrusted content
-    |
-    |  User: /summarize <raw-path>
-    v
-  Daemon reads raw file --> inference server (summarize prompt)
+  raw/web/{topic-slug}-{source-slug}-{hash8}.md -- quarantine zone, untrusted content
     |
     v
-  raw/summaries/{slug}.md -- sanitized summary
-    |
-    |  User: /compile <summary-path>
-    v
-  Daemon reads summary
+  summarize_raw_file --> inference server (summarize prompt)
     |
     v
-  Categorizer --> picks target category
-    |
-    v
-  find_existing_article() -- does a sibling article already cover this topic?
-    |                         (index lookup + model confirmation)
-    |
-    +-- no match: first compile --> inference server (compile prompt)
-    |               |
-    |               v
-    |             new Article with single timeline entry
-    |
-    +-- match found: merge compile --> inference server (merge prompt
-                    |                   with existing compiled truth +
-                    |                   new source material)
-                    v
-                  existing Article rewritten compiled truth + new
-                  timeline entry appended (created date preserved)
-    |
-    v
-  Article serialized with <!-- TIMELINE --> marker separating
-    compiled truth from append-only timeline entries
-    |
-    v
-  WikiManager writes to {category}/{slug}.md
-    |
-    v
-  WikiManager.rebuild_index() --> _index.md updated
-    |
-    v
-  archive_raw_files() -- moves raw + summary to raw/archived/
-    |
-    v
-  git commit
-
-
-Batch Research and Compilation (/research --> /compile-batch)
-
-  User: /research <topic or path/to/topics.md>
-    |
-    v
-  If path: parse_topic_file() extracts bullet items as topics
-  If topic: wrap as single-item list
-    |
-    v
-  For each topic:
-    Researcher._search_with_refinement()
-      |
-      v
-    WebSearchClient --> SearxNG /search
-      |
-      |  if thin results, retry with "{topic} tutorial",
-      |  "{topic} documentation", "{topic} guide"
-      v
-    Top N unique URLs (default 3, deep mode up to 10)
-      |
-      v
-    Researcher fetches each URL concurrently (asyncio.gather)
-      |
-      |  cross-topic dedup: skip URLs already fetched in this batch
-      v
-    For each fetch: raw/web/{topic-slug}-{source-slug}-{hash8}.md
-      |
-      v
-    Researcher summarizes each raw file
-      |
-      v
-    raw/summaries/{topic-slug}-{source-slug}-{hash8}.md
+  raw/summaries/{topic-slug}-{source-slug}-{hash8}.md -- sanitized summary
     |
     v
   Report: topic/source counts, flagged topics with no usable results.
-  Review gate: summaries stay in raw/summaries/ until explicit compile.
+  Review gate: summaries stay in raw/summaries/ until explicit compile proposal.
 
 
-  User: /compile-batch
+  User chats: "compile those into the wiki"
     |
     v
-  List all summaries in raw/summaries/
+  Chat model calls propose_compile_batch(summary_paths=[...])
+    (or propose_compile(summary_path=...) for a single summary)
+    |
+    v
+  [Approve / Decline / Edit prompt]
+    |
+    v (on approve)
+  compile_batch tool lists summaries (or uses the provided list)
     |
     v
   For each summary, sequentially:
-    Daemon._compile_one() -- same flow as /compile above
+    Daemon reads summary
       |
-      |  includes topic match, so multiple sources on the same
-      |  topic produce ONE article with multiple timeline entries
       v
-    Save / merge / archive / git commit
+    Categorizer --> picks target category
+      |
+      v
+    find_existing_article() -- does a sibling article already cover this topic?
+      |                         (index lookup + model confirmation)
+      |
+      +-- no match: first compile --> inference server (compile prompt)
+      |               |
+      |               v
+      |             new Article with single timeline entry
+      |
+      +-- match found: merge compile --> inference server (merge prompt
+                      |                   with existing compiled truth +
+                      |                   new source material)
+                      v
+                    existing Article rewritten compiled truth + new
+                    timeline entry appended (created date preserved)
+      |
+      v
+    Article serialized with <!-- TIMELINE --> marker separating
+      compiled truth from append-only timeline entries
+      |
+      v
+    WikiManager writes to {category}/{slug}.md
+      |
+      v
+    WikiManager.rebuild_index() --> _index.md updated
+      |
+      v
+    archive_raw_files() -- moves raw + summary to raw/archived/
+      |
+      v
+    git commit
     |
     v
   Final report: new articles, merged-into-existing,
@@ -233,7 +226,7 @@ Agent decides which tool to call
     *.md
     ratings.md           Append-only rating log
   _config/
-    allowlist.md         Domain allowlist for /fetch
+    allowlist.md         Domain allowlist for web fetches (research_topic)
   raw/
     web/                 Fetched URL content (quarantine)
     summaries/           Sanitized summaries of raw content

@@ -25,7 +25,7 @@ System directories (underscore-prefixed like `_wisdom/`, `_profile/`, `_channels
 
 ## Web Fetch
 
-- Domain allowlist (`_config/allowlist.md`) gates both `/search-web` results and `/fetch` targets
+- Domain allowlist (`_config/allowlist.md`) gates web fetches in the chat-driven research pipeline (`propose_research` / `research_topic`)
 - Only `http` and `https` schemes are accepted
 - Redirects are not followed (prevents SSRF via open redirects to internal hosts)
 - Content-Type is validated and response size is capped (`PAL_FETCH_MAX_BYTES`)

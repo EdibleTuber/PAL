@@ -46,7 +46,7 @@ The **timeline** below is append-only. Each entry is self-contained with its own
 
 | Field | Purpose |
 |-------|---------|
-| `title` | Display title; used by `/read` and the search index |
+| `title` | Display title; used by the chat read path (`cat` tool) and the search index |
 | `sources` | List of source entries (url, hash, added timestamp) |
 | `tags` | Optional; derived during categorization or added manually |
 | `created` / `updated` | ISO 8601 timestamps managed by `WikiManager` |

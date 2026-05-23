@@ -1,6 +1,6 @@
 # SearxNG Setup for PAL
 
-PAL's `/search-web` command requires a running SearxNG instance. SearxNG is a self-hosted meta-search engine that aggregates results from multiple sources without tracking.
+PAL's chat-driven research path (`propose_research` / `research_topic`) requires a running SearxNG instance for web search. SearxNG is a self-hosted meta-search engine that aggregates results from multiple sources without tracking.
 
 ## Recommended: Docker on the inference server
 

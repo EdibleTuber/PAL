@@ -81,11 +81,11 @@ Compiled wiki articles use a two-zone structural convention:
 
 Frontmatter tracks a `sources` list as a machine-readable index of everything that has fed the article.
 
-The merge-on-compile behavior is the payoff: when `/compile` runs on a summary that matches an existing article (detected by a lightweight index lookup plus model confirmation), the compiled truth is rewritten to incorporate the new source material while the timeline gains a new entry. The original created timestamp is preserved; `updated` and `compiled_at` advance. Timeline entries are self-contained, so raw files can age out of `raw/archived/` without breaking the provenance chain.
+The merge-on-compile behavior is the payoff: when `compile_summary` runs on a summary that matches an existing article (detected by a lightweight index lookup plus model confirmation), the compiled truth is rewritten to incorporate the new source material while the timeline gains a new entry. The original created timestamp is preserved; `updated` and `compiled_at` advance. Timeline entries are self-contained, so raw files can age out of `raw/archived/` without breaking the provenance chain.
 
 ## Research Mode
 
-`/research <topic>` is the consolidated entry point for topic-level research. It searches SearxNG, fetches the top results, summarizes each, and drops summaries into `raw/summaries/` for review. A markdown bullet list of topics can be passed instead of a single topic, turning it into a batch job. `/compile-batch` then processes every summary in one pass, with topic matching producing one merged article per subject rather than one article per source.
+The chat model invokes `propose_research` for topic-level research. Single-topic mode accepts a string; batch mode accepts a `topics: list[str]` with cross-topic URL deduplication. Approval is consent-gated; after approve, `research_topic` runs the SearxNG search + per-URL fetch + per-source summarize pipeline. Summaries land in `raw/summaries/` for review. Chat then proposes compilation via `propose_compile_batch` for batches or `compile_summary` for single articles.
 
 ## Retrieval
 
@@ -121,20 +121,14 @@ This is the persistent personal context layer that makes the oracle coherent acr
 
 ## Web Research Pipeline
 
-Controlled ingestion for untrusted external content. Two entry points:
+Controlled ingestion for untrusted external content. The chat model drives it through proposal-gated tools:
 
-Granular (single URL, full control):
-1. `/search-web` via local SearxNG, filtered by domain allowlist
-2. `/fetch` downloads into `raw/web/` with full prompt injection defenses
-3. `/summarize` produces a cleaned summary in `raw/summaries/`
-4. `/compile` turns the summary into a grounded wiki article
+1. `propose_research(topic=...)` for single topic OR `propose_research(topics=[...])` for batch with cross-topic URL dedup. Blocks until user approves.
+2. After approve, `research_topic(proposal_id)` runs the SearxNG-filtered fetch + summarize pipeline. Per-URL progress events stream live.
+3. Summaries land in `raw/summaries/` for review.
+4. Chat then proposes compilation via `propose_compile_batch(summary_paths=...)` for batches or `compile_summary(summary_path=...)` for single articles. Both go through the propose/approve cycle.
 
-Consolidated (topic or batch):
-1. `/research <topic>` runs the search and per-URL fetch + summarize pipeline end to end. Query refinement handles thin results.
-2. `/research path/to/topics.md` accepts a markdown bullet list and processes every topic as a batch with cross-topic URL deduplication.
-3. `/compile-batch` processes every summary in `raw/summaries/` in one pass, with topic matching merging multiple sources about the same subject into a single article with multiple timeline entries.
-
-Untrusted content stays quarantined until it has passed through the full sanitization and compilation pipeline. A review gate sits between `raw/summaries/` and `/compile`, so no wiki writes happen without explicit user action.
+Untrusted content stays quarantined until it has passed through the full sanitization and compilation pipeline. The review gate sits between `raw/summaries/` and any compile proposal, so no wiki writes happen without explicit user action.
 
 ## Proactive Behavior
 
