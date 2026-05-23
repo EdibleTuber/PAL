@@ -48,7 +48,7 @@ class ProposeCompileBatch(Tool):
     description = (
         "Propose compiling multiple raw summaries into wiki "
         "articles. Blocks until the user approves, declines, "
-        "or edits in the CLI. Use for multi-summary promotion. "
+        "or edits via the approval prompt. Use for multi-summary promotion. "
         "After approval, immediately call compile_batch with "
         "the returned proposal_id."
     )

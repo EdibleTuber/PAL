@@ -326,8 +326,8 @@ class DeleteFile(Tool):
     name = "delete_file"
     description = (
         "Delete a vault file. Stages the removal atomically via git rm and commits. "
-        "Recoverable from git history with `git revert`. Refuses underscore-prefixed "
-        "system directories (_wisdom, _learning, _config, _channels, _profile). "
+        "Recoverable from git history with `git revert`. Refuses paths in "
+        "`_`-prefixed system directories. "
         "Triggers reindex to remove the file from the embedding store. Reports if "
         "reindex fails so the caller knows the embedding store is temporarily stale."
     )
