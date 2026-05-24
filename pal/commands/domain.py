@@ -360,8 +360,9 @@ class Learn(Command):
             {"role": "user", "content": prompt},
         ]
 
+        inference = ctx.agent.batch_inference or ctx.agent.inference
         try:
-            completion = await ctx.agent.inference.complete(api_messages, reasoning="off")
+            completion = await inference.complete(api_messages, reasoning="off")
             result = completion.content or ""
         except Exception as exc:
             logger.exception("Learn inference failed: %s", exc)

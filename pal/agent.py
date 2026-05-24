@@ -236,7 +236,7 @@ class PALAgent(Agent):
         self.researcher = Researcher(
             websearch=self.websearch,
             fetcher=self.fetcher,
-            inference=self.inference,
+            inference=effective_batch,
             vault_path=config.vault_path,
             on_progress=None,
             max_body_chars=config.max_inference_body_chars,
@@ -253,7 +253,7 @@ class PALAgent(Agent):
         self.compiler = Compiler(
             vault_path=config.vault_path,
             wiki=self.wiki,
-            inference=self.inference,
+            inference=effective_batch,
             categorizer=self.categorizer,
             prompt_builder=_prompt_adapter,
             retrieval=self.retrieval,
@@ -272,7 +272,7 @@ class PALAgent(Agent):
         self.consolidator = Consolidator(
             vault_path=config.vault_path,
             wiki=self.wiki,
-            inference=self.inference,
+            inference=effective_batch,
             prompt_builder=_prompt_adapter,
             retrieval=self.retrieval,
             max_body_chars=config.max_inference_body_chars,
