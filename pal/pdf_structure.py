@@ -291,13 +291,29 @@ async def detect_from_llm_toc(doc, inference) -> list[ChapterBoundary] | None:
     first_bracket = content.find("[")
     last_bracket = content.rfind("]")
     if first_bracket == -1 or last_bracket == -1 or last_bracket < first_bracket:
+        logger.warning(
+            "LLM-TOC detection: no JSON array brackets found in response; "
+            "falling back to single-file. Response snippet: %r",
+            content[:200],
+        )
         return None
     try:
         entries = _json.loads(content[first_bracket : last_bracket + 1])
-    except _json.JSONDecodeError:
+    except _json.JSONDecodeError as exc:
+        logger.warning(
+            "LLM-TOC detection: JSON parse failed (%s); falling back to single-file. "
+            "Response snippet: %r",
+            exc,
+            content[:200],
+        )
         return None
 
     if not isinstance(entries, list) or len(entries) < 2:
+        logger.warning(
+            "LLM-TOC detection: entries not a list or fewer than 2 (got %r); "
+            "falling back to single-file.",
+            type(entries).__name__ if not isinstance(entries, list) else f"list[{len(entries)}]",
+        )
         return None
 
     boundaries: list[ChapterBoundary] = []

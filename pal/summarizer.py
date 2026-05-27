@@ -83,8 +83,10 @@ async def summarize_raw_file(
 
     if not parsed_title or not parsed_title.strip():
         logger.warning(
-            "Summarizer response missing TITLE prefix for %s; falling back to raw_stem",
+            "Summarizer response missing TITLE prefix for %s; falling back to raw_stem. "
+            "Response snippet: %r",
             raw_path,
+            raw_response.strip()[:200],
         )
         clean_title = raw_path.stem
     else:

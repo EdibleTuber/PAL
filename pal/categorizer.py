@@ -46,28 +46,36 @@ def parse_category_response(response: str) -> str:
 
     Returns the directory path, or FALLBACK_DIRECTORY if invalid.
     """
+    snippet = response.strip()[:200] if response else "<empty>"
+
     # Only consider the first line -- a valid directory has no newlines
     first_line = response.strip().splitlines()[0] if response.strip() else ""
     category = first_line.strip().strip("/")
 
     if not category:
+        logger.warning("categorizer fallback (empty response): %r", snippet)
         return FALLBACK_DIRECTORY
 
     # Reject anything suspiciously long (directory names should be short)
     if len(category) > 64:
+        logger.warning("categorizer fallback (response too long): %r", snippet)
         return FALLBACK_DIRECTORY
 
     # Reject paths containing spaces (not a valid directory path)
     if " " in category:
+        logger.warning("categorizer fallback (contains space): %r", snippet)
         return FALLBACK_DIRECTORY
 
     if category.startswith("_"):
+        logger.warning("categorizer fallback (system dir): %r", snippet)
         return FALLBACK_DIRECTORY
 
     if category == "raw" or category.startswith("raw/"):
+        logger.warning("categorizer fallback (raw/ dir): %r", snippet)
         return FALLBACK_DIRECTORY
 
     if ".." in category.split("/"):
+        logger.warning("categorizer fallback (path traversal): %r", snippet)
         return FALLBACK_DIRECTORY
 
     return category
@@ -108,7 +116,17 @@ class Categorizer:
 
         try:
             result = await self.inference.complete(messages)
-            return self._parse_category(result)
+            category = self._parse_category(result)
+            # Surface when the model mints a directory not in the existing list.
+            # This is the dominant vault-entropy source: small models invent near-
+            # duplicate siblings (Research vs research vs LLMs vs llm-research).
+            existing = self._list_directories(vault_path)
+            if category != FALLBACK_DIRECTORY and category not in existing:
+                logger.warning(
+                    "categorizer minted new directory %r (existing: %r)",
+                    category, existing,
+                )
+            return category
         except BatchUnavailableError:
             return await self._handle_batch_unavailable(
                 messages,

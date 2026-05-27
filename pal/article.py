@@ -6,6 +6,7 @@ Every compiled wiki article has two zones separated by a marker:
 
 The model writes compiled truth prose. Code builds timeline entries.
 """
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -13,6 +14,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from agent_core.utils.frontmatter import parse_frontmatter, serialize_frontmatter
+
+logger = logging.getLogger(__name__)
 
 TIMELINE_MARKER = "<!-- TIMELINE -->"
 
@@ -251,9 +254,18 @@ async def find_existing_article(
         result = await inference.complete(messages, reasoning="off")
         response = (result.content or "").strip()
     except Exception:
+        logger.warning("find_existing_article: inference call failed; returning no-match")
         return None
 
-    if not response or response.upper() == "NONE":
+    if not response:
+        logger.warning(
+            "find_existing_article: empty response (category=%s, candidates=%d); "
+            "treating as no-match",
+            category, len(category_articles),
+        )
+        return None
+
+    if response.upper() == "NONE":
         return None
 
     response_clean = response.strip().strip("'\"")
@@ -262,6 +274,15 @@ async def find_existing_article(
         if filename == response_clean or filename.replace(".md", "") == response_clean.replace(".md", ""):
             return a
 
+    # Response was non-empty, non-NONE, but didn't match any candidate.
+    # The caller will create a new article; this may silently duplicate
+    # a topic if the model hallucinated a near-miss filename.
+    logger.warning(
+        "find_existing_article: unrecognized filename %r (candidates: %r); "
+        "caller will treat as no-match",
+        response_clean,
+        [a["path"].split("/")[-1] for a in category_articles],
+    )
     return None
 
 
