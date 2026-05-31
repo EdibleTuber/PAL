@@ -22,6 +22,23 @@ Done. I've reorganized the article with sections for...
 
 Every write is git-committed automatically, so you can always review or revert changes.
 
+During a turn, the model loops over tools until it has an answer. Vault reads feed
+straight back; vault writes are git-committed (and trigger a reindex); web fetches
+and wiki promotions are **consent-gated** — PAL proposes and waits for your approval.
+
+```mermaid
+flowchart TD
+    U["you (CLI / Discord)"] --> D["daemon → handle_chat"]
+    D --> M["model"]
+    M --> Q{"tool call?"}
+    Q -->|"no"| ANS["stream the answer"] --> U
+    Q -->|"vault read"| R["read_file · list_directory<br/>search_content · search_vault"] --> M
+    Q -->|"vault write"| W["edit_file · create_file · move_file"] --> GC["git commit + reindex"] --> M
+    Q -->|"web / wiki promotion"| P["propose_* (consent-gated)"] --> AP{"you approve?"}
+    AP -->|"yes"| EX["execute → git commit + reindex"] --> M
+    AP -->|"no"| M
+```
+
 ## Quickstart
 
 A 5-minute path from zero to a working PAL CLI. Assumes you have Python 3.12+ and git.
@@ -102,6 +119,22 @@ Discord (pal-discord)  --unix socket--+
 - **Discord**: bot that bridges Discord DMs and mentions to the daemon for mobile access
 - **Daemon**: always-on process that manages conversations, tools, and the vault
 - **Inference Server**: any OpenAI-compatible local LLM. Tested with `gemma-4-26b-a4b-it-q4_k_m` and `Qwen3.5-35B-A3B-Q4_K_M`. Model choice is configurable via `PAL_MODEL` or switched at runtime with `/model`.
+
+The same topology, including retrieval and the git safety net:
+
+```mermaid
+flowchart LR
+    CLI["pal — CLI REPL"] -->|"unix socket"| D["pal-daemon"]
+    DISC["pal-discord — bot"] -->|"unix socket"| D
+    D -->|"HTTP / OpenAI-compatible"| INF["inference server"]
+    D -->|"semantic search / reindex"| RAG[("retrieval index")]
+    D <-->|"read / write"| V[("~/vault — Obsidian wiki")]
+    V -->|"auto git commit on every write"| GIT[("git history")]
+```
+
+PAL is built on [`agent_core`](https://github.com/EdibleTuber/agent_core), the
+shared library that provides the daemon runtime, inference/retrieval clients,
+tool/command registries, and worker layer (PARE is the second consumer).
 
 ## Security
 
@@ -309,6 +342,25 @@ Write tools are restricted to non-system directories and every write is git-comm
 
 Write tools (`compile_summary`, `compile_batch`, `consolidate`, `reorg`, `create_file`, `edit_file`, `move_file`) automatically trigger an incremental reindex on the inference server after success. The tool result includes a `reindex` field with a `job_id` and current status; the new content is typically searchable within a second or two without any further action. For mid-turn cases that require certainty, `wait_for_reindex` polls until the job completes.
 
+#### Research pipeline
+
+The signature consent-gated flow: PAL proposes a research run, and only after you
+approve does it touch the network. Fetched pages are quarantined and sanitized
+before they ever reach the model, then distilled into a wiki article.
+
+```mermaid
+flowchart LR
+    PR["propose_research"] --> AP{"you approve?"}
+    AP -->|"no"| X["dropped"]
+    AP -->|"yes"| RT["research_topic"]
+    RT --> SW["search_web (SearxNG)"]
+    SW --> FE["fetch URLs<br/>(allowlist + injection sanitization)"]
+    FE --> Q[("raw/web/ — quarantine")]
+    Q --> SU["summarize → raw/summaries/"]
+    SU --> CO["compile_summary → Research/ article"]
+    CO --> GC["git commit + reindex"]
+```
+
 ## Vault Structure
 
 ```
@@ -338,6 +390,16 @@ PAL learns from conversations over time:
 2. **Wisdom** entries are promoted from learnings via `/promote` and stored in `_wisdom/`. Active wisdom is injected into the system prompt on every chat turn.
 3. **Profile** facts about the user are stored in `_profile/` and also injected into every prompt.
 4. **Ratings** via `/rate` help surface the most useful learnings for promotion.
+
+```mermaid
+flowchart LR
+    C["conversation"] --> SC["post-turn scanner · /learn"]
+    SC --> L[("_learning/ — extracted lessons")]
+    L -->|"/rate surfaces the useful ones"| PM["/promote"]
+    PM --> W[("_wisdom/ — active")]
+    PROF[("_profile/ — user facts")] --> SP["system prompt<br/>(injected every turn)"]
+    W --> SP
+```
 
 ## Per-Channel Context
 
