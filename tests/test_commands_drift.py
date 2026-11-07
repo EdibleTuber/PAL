@@ -7,15 +7,15 @@ pal.commands package exports them all.
 """
 from pal.agent import PALAgent
 from pal.commands import (
-    Import, Learn, Lint, PALModel, Profile, Scratch, Status, Wisdom,
+    Import, Learn, Lint, Profile, Scratch, Status, Wisdom,
 )
 
 EXPECTED_PAL_COMMANDS = {
-    Import, Learn, Lint, PALModel, Profile, Scratch, Status, Wisdom,
+    Import, Learn, Lint, Profile, Scratch, Status, Wisdom,
 }
 
 EXPECTED_NAMES = {
-    "import", "learn", "lint", "model", "profile", "scratch", "status", "wisdom",
+    "import", "learn", "lint", "profile", "scratch", "status", "wisdom",
 }
 
 
