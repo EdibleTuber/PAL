@@ -29,8 +29,7 @@ from agent_core.protocol import (
 
 from pal.config import PALConfig
 from pal.commands import (
-    Import, Learn, Lint, PALModel,
-    Profile, Scratch, Status, Wisdom,
+    Import, Learn, Lint, Profile, Scratch, Status, Wisdom,
 )
 from pal.tools import (
     AddLearning,
@@ -144,10 +143,10 @@ class PALAgent(Agent):
     # Phase F PR5: PAL-specific command subclasses. The framework's
     # BUILTIN_COMMANDS are unioned in automatically by _attach_registries;
     # PAL-specific commands registered here override any builtin of the same
-    # name (status, profile, wisdom, scratch, model).
+    # name (status, profile, wisdom, scratch).
     commands = [
         Lint, Import, Learn,
-        Status, Profile, Wisdom, Scratch, PALModel,
+        Status, Profile, Wisdom, Scratch,
     ]
     # Disabled LLM-facing builtin tools in PAL.
     #   fetch_url: all web fetching goes through the consent-gated research
@@ -206,6 +205,7 @@ class PALAgent(Agent):
                 base_url=config.batch_inference_url,
                 model=config.batch_model,
                 is_batch=True,
+                token=config.manager_token,
             )
         else:
             self.batch_inference = None
@@ -606,85 +606,3 @@ class PALAgent(Agent):
         """Phase F PR5: framework registry handles all commands."""
         async for out in self.command_registry.dispatch(msg.name, msg.args, ctx):
             yield out
-
-
-    async def _get_manager_status(self) -> dict:
-        """Fetch /status from the manager. Returns empty dict on error."""
-        import httpx
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as c:
-                resp = await c.get(f"{self.config.inference_url}/status")
-                resp.raise_for_status()
-                return resp.json()
-        except Exception as exc:
-            logger.warning("manager /status fetch failed: %s", exc)
-            return {}
-
-    async def _model_status_text(self) -> str:
-        """Render the /model status text showing main (and batch when
-        enabled) slots with their loaded model and health."""
-        status = await self._get_manager_status()
-        slots = status.get("slots", {})
-        lines = ["Loaded models:"]
-        # Always show main
-        main = slots.get("main")
-        if main is not None:
-            loaded = main.get("loaded_model", "?")
-            healthy = main.get("healthy", False)
-            marker = "healthy" if healthy else "UNHEALTHY"
-            lines.append(f"  main: {loaded} ({marker})")
-        else:
-            # Fallback: manager doesn't yet expose slots (pre-Phase B server)
-            lines.append(f"  main: {self.config.model}")
-        # Show batch only when enabled
-        if self.config.batch_enabled:
-            batch = slots.get("batch")
-            if batch is not None:
-                loaded = batch.get("loaded_model", "?")
-                healthy = batch.get("healthy", False)
-                marker = "healthy" if healthy else "UNHEALTHY"
-                lines.append(f"  batch: {loaded} ({marker})")
-            else:
-                lines.append(f"  batch: {self.config.batch_model} (slot info unavailable)")
-        return "\n".join(lines)
-
-    async def _dispatch_model_command(self, args: str) -> str:
-        """Parse /model args and dispatch.
-
-        Supports:
-          - empty -> show status (PB-14)
-          - <name> -> swap main
-          - --target <slot> <name> -> swap that slot
-
-        Returns a text response to include in the ResponseMessage.
-        """
-        parts = args.strip().split()
-        if not parts:
-            return await self._model_status_text()
-        target = "main"
-        if parts[0] == "--target":
-            if len(parts) < 3:
-                return "Usage: /model [--target main|batch] <model-name>"
-            target = parts[1]
-            model_name = " ".join(parts[2:])
-            if target not in ("main", "batch"):
-                return f"Unknown target: {target}. Use main or batch."
-        else:
-            model_name = " ".join(parts)
-        try:
-            await self._request_model_swap(model_name, target=target)
-        except Exception as exc:
-            return f"Swap failed: {exc}"
-        return f"Requested swap: {target} -> {model_name}"
-
-    async def _request_model_swap(self, model: str, target: str = "main") -> dict:
-        """POST to the manager's swap endpoint with the target slot."""
-        import httpx
-        async with httpx.AsyncClient(timeout=120.0) as c:
-            resp = await c.post(
-                f"{self.config.inference_url}/swap",
-                json={"model": model, "target": target},
-            )
-            resp.raise_for_status()
-            return resp.json()
-
