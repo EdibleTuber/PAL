@@ -2,6 +2,8 @@
 import os
 from pathlib import Path
 
+from agent_core.config import BaseConfig
+
 from pal.config import Config, load_config
 
 
@@ -11,7 +13,7 @@ def test_default_config(monkeypatch):
     for key in ["PAL_INFERENCE_URL", "PAL_MODEL", "PAL_SOCKET_PATH", "PAL_HISTORY_DEPTH", "PAL_VAULT_PATH"]:
         monkeypatch.delenv(key, raising=False)
     cfg = load_config()
-    assert cfg.inference_url == "http://192.168.1.14:11434"
+    assert cfg.inference_url == BaseConfig().inference_url
     assert cfg.model == "Qwen3.5-35B-A3B-Q4_K_M"
     assert cfg.socket_path == Path("/run/user") / str(os.getuid()) / "pal.sock"
     assert cfg.history_depth == 50
@@ -37,8 +39,13 @@ def test_load_config_defaults_without_env(monkeypatch):
     for key in ["PAL_INFERENCE_URL", "PAL_MODEL", "PAL_SOCKET_PATH", "PAL_HISTORY_DEPTH", "PAL_VAULT_PATH"]:
         monkeypatch.delenv(key, raising=False)
     cfg = load_config()
-    assert cfg.inference_url == "http://192.168.1.14:11434"
+    assert cfg.inference_url == BaseConfig().inference_url
     assert cfg.model == "Qwen3.5-35B-A3B-Q4_K_M"
+
+
+def test_load_config_reads_the_manager_token(monkeypatch):
+    monkeypatch.setenv("PAL_MANAGER_TOKEN", "tok-env")
+    assert load_config().manager_token == "tok-env"
 
 
 def test_default_config_has_collection_id():
@@ -89,7 +96,7 @@ def test_load_config_web_settings_from_env(monkeypatch):
 def test_config_default_batch_disabled():
     cfg = Config()
     assert cfg.batch_enabled is False
-    assert cfg.batch_inference_url == "http://192.168.1.14:11434"
+    assert cfg.batch_inference_url == BaseConfig().batch_inference_url
     assert cfg.batch_model == cfg.model
 
 

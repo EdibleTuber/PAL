@@ -391,9 +391,11 @@ def make_pal_agent(cfg: Config) -> PALAgent:
     )
     agent.inference = InferenceClient(
         base_url=cfg.inference_url, model=cfg.model,
+        token=cfg.manager_token,
     )
     agent.retrieval = RetrievalClient(
         base_url=cfg.inference_url, collection_id=cfg.collection_id,
+        token=cfg.manager_token,
     )
     agent.websearch = WebSearchClient(base_url=cfg.searxng_url)
     # Phase F: _attach_registries requires fetcher to be present (FetchUrl.requires).

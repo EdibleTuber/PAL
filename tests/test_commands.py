@@ -2,18 +2,18 @@
 from agent_core.commands.base import Command
 
 from pal.commands import (
-    Import, Learn, Lint, PALModel, Profile, Scratch, Status, Wisdom,
+    Import, Learn, Lint, Profile, Scratch, Status, Wisdom,
 )
 
 
 ALL_COMMANDS = [
     Lint, Import, Learn,
-    Status, Profile, Wisdom, Scratch, PALModel,
+    Status, Profile, Wisdom, Scratch,
 ]
 
 EXPECTED_NAMES = {
     "lint", "import", "learn",
-    "status", "profile", "wisdom", "scratch", "model",
+    "status", "profile", "wisdom", "scratch",
 }
 
 
