@@ -567,51 +567,6 @@ class Scratch(Command):
         )
 
 
-class PALModel(Command):
-    """PAL-specific /model: HTTP calls to inference server, dual-slot, list/default."""
-    name = "model"
-    args = "[name]"
-    description = "Show or switch the active model"
-    requires = ("inference", "config")
-
-    async def run(self, raw_args: str, ctx) -> AsyncIterator:
-        import httpx
-
-        writer = ctx.writer
-        arg = raw_args.strip()
-
-        if arg == "list":
-            try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    r = await client.get(f"{ctx.agent.inference.base_url}/v1/models")
-                    r.raise_for_status()
-                data = r.json()
-                names = [m["id"] for m in data.get("data", [])]
-                if names:
-                    lines = ["Available models:"]
-                    for i, name in enumerate(names, 1):
-                        marker = " (active)" if name == ctx.agent.inference.default_model else ""
-                        lines.append(f"  {i}. {name}{marker}")
-                    yield ResponseMessage(text="\n".join(lines), command="model")
-                else:
-                    yield ResponseMessage(text="No models available.", command="model")
-            except Exception as exc:
-                logger.warning("Failed to list models: %s", exc)
-                yield ErrorMessage(error=f"Could not reach inference server: {exc}")
-            return
-
-        if arg == "default":
-            ctx.agent.inference.default_model = ctx.agent.config.model
-            yield ResponseMessage(
-                text=f"Model reset to config default: {ctx.agent.inference.default_model}",
-                command="model",
-            )
-            return
-
-        text = await ctx.agent._dispatch_model_command(arg)
-        yield ResponseMessage(text=text, command="model")
-
-
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------

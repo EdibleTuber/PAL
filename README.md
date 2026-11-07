@@ -164,7 +164,8 @@ All settings use environment variables with a `PAL_` prefix. Defaults assume a l
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PAL_INFERENCE_URL` | `http://192.168.1.14:11434` | Inference server URL |
+| `PAL_INFERENCE_URL` | `http://127.0.0.1:11434` | Inference server URL |
+| `PAL_MANAGER_TOKEN` | - | Bearer token the manager requires on every request |
 | `PAL_MODEL` | `Qwen3.5-35B-A3B-Q4_K_M` | Model name |
 | `PAL_VAULT_PATH` | `~/vault` | Path to the Obsidian vault |
 | `PAL_SOCKET_PATH` | `$XDG_RUNTIME_DIR/pal.sock` | Unix socket path |
@@ -192,7 +193,7 @@ All settings use environment variables with a `PAL_` prefix. Defaults assume a l
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PAL_BATCH_ENABLED` | `false` | Enable batch slot for background workloads |
-| `PAL_BATCH_INFERENCE_URL` | `http://192.168.1.14:11434` | Manager URL for the batch slot (usually same as main) |
+| `PAL_BATCH_INFERENCE_URL` | `http://127.0.0.1:11434` | Manager URL for the batch slot (usually same as main) |
 | `PAL_BATCH_MODEL` | `gemma-4-E4B-it-Q4_K_M` | Default model for the batch slot |
 
 **Discord:**
@@ -422,7 +423,7 @@ The scratchpad is capped at `PAL_SCRATCHPAD_MAX_BYTES` (default 2 KB) to keep it
 
 PAL can route latency-tolerant background workloads (categorize, learning scanner, PDF TOC detection) to a second inference slot, keeping the chat GPU undisturbed.
 
-**How it works.** The inference server exposes two slots via one manager endpoint (default `http://192.168.1.14:11434`):
+**How it works.** The inference server exposes two slots via one manager endpoint (default `http://127.0.0.1:11434`):
 - `main`: Tesla P40 / CUDA, runs the chat model.
 - `batch`: AMD Vega iGPU / Vulkan, runs a small fast model (default Gemma 4 E4B IT Q4_K_M).
 

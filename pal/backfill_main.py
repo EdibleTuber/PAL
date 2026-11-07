@@ -55,6 +55,7 @@ def main() -> None:
     inference = InferenceClient(
         base_url=config.inference_url,
         model=config.model,
+        token=config.manager_token,
     )
 
     async def run() -> None:

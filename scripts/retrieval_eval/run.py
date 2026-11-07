@@ -58,7 +58,11 @@ async def main() -> None:
         raise SystemExit(f"No queries found in {QUERIES_FILE}")
 
     print(f"Running {len(queries)} queries against {BASE_URL}/collections/{COLLECTION_ID}/search ...")
-    client = RetrievalClient(base_url=BASE_URL, collection_id=COLLECTION_ID)
+    client = RetrievalClient(
+        base_url=BASE_URL,
+        collection_id=COLLECTION_ID,
+        token=os.environ.get("PAL_MANAGER_TOKEN") or None,
+    )
 
     blocks = [
         "# Retrieval Evaluation Results",
