@@ -25,8 +25,18 @@ This file is the handoff state for a fresh session.
   in background at 00:04 (166 passes, est. 40–90 min).
   Log: `/tmp/opencode/pal-audit-run.log` (kept/rejected lines are the
   `name: N kept, M rejected` lines). Output: `docs/audit/qwen/out/`.
-- Status: IN PROGRESS (update on completion: kept/rejected totals, any
-  `.FAILED` files to re-run with `--passes <p> --files <name>`).
+- ~01:05:54: original runner process died mid-p6 (hard kill, no kernel or
+  manager log entries; died around a session idle/resume cycle — suspected
+  session process-group cleanup). 164 of 165 per-file passes had completed;
+  `p5_claims__pal_prompts_system` had FAILED earlier (finish_reason=length at
+  the 16k cap — system.py is claim-dense).
+  NOTE for future status checks: `pgrep -f run_inventory` self-matches the
+  probing shell; check the log mtime or `ps -o etime -p <pid>` instead.
+- 01:21: re-run launched, detached from the session
+  (`setsid nohup stdbuf -oL -eL ... --passes p6_config_surface p5_claims
+  --files system.py --max-tokens 32768`), appending to the same log.
+- Status: RE-RUN IN PROGRESS (p6 first, then p5 on system.py at 32k cap).
+  On completion: tally kept/rejected over all 166, confirm no `.FAILED`.
 
 ## Synthesis steps (for the fresh session)
 
