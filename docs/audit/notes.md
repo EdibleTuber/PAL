@@ -32,11 +32,19 @@ This file is the handoff state for a fresh session.
   the 16k cap — system.py is claim-dense).
   NOTE for future status checks: `pgrep -f run_inventory` self-matches the
   probing shell; check the log mtime or `ps -o etime -p <pid>` instead.
-- 01:21: re-run launched, detached from the session
-  (`setsid nohup stdbuf -oL -eL ... --passes p6_config_surface p5_claims
-  --files system.py --max-tokens 32768`), appending to the same log.
-- Status: RE-RUN IN PROGRESS (p6 first, then p5 on system.py at 32k cap).
-  On completion: tally kept/rejected over all 166, confirm no `.FAILED`.
+- 01:21: re-run launched, detached from the session (setsid nohup stdbuf),
+  appending to the same log. Finished 03:32: p5_claims__pal_prompts_system
+  OK (30 kept, 5 rejected at the 32k cap); p6_config_surface FAILED AGAIN —
+  finish_reason=length at 32k (93,231 chars). The full 10-file config
+  surface simply exceeds any sane output cap.
+- Fix (commit bee5231): runner gained `--p6-files` / `--p6-name` so p6 can
+  run in subsets. Launched 04:11, detached: p6a_code (pal/config.py +
+  agent_core config from the deployed venv) then p6b_units_env (4 repo
+  units + /etc/pal/discord.env + 3 host units), both at 32k cap. Per-subset
+  summaries; merge them by hand at synthesis (noted in findings.md). The
+  log ends with a `P6 SPLIT RUNS COMPLETE` line when both are done.
+- Status: P6 SPLIT IN PROGRESS. Everything else (165 passes) is complete.
+  On completion: tally kept/rejected, confirm no `.FAILED`, then synthesis.
 
 ## Synthesis steps (for the fresh session)
 
