@@ -21,7 +21,8 @@ This file is the handoff state for a fresh session.
 
 ## Run log
 
-- 2026-11-09: tooling landed (docs/audit/qwen/), run started in background.
+- 2026-11-09: tooling landed (docs/audit/qwen/, commit a680d7e), run started
+  in background at 00:04 (166 passes, est. 40–90 min).
   Log: `/tmp/opencode/pal-audit-run.log` (kept/rejected lines are the
   `name: N kept, M rejected` lines). Output: `docs/audit/qwen/out/`.
 - Status: IN PROGRESS (update on completion: kept/rejected totals, any
