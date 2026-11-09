@@ -104,6 +104,27 @@ def ask(url: str, model: str, token: str | None, prompt: str, max_tokens: int, t
     return text
 
 
+def check_object(obj: dict, sources: dict[str, list[str]], default_file: str | None):
+    """Verify one parsed record against the cited source line.
+
+    Returns (kind, obj) with kind in {"keep", "summary", "reject"}.
+    Used by verify() and by recover_fragments.py so the recovered rows go
+    through exactly the same gate as the live ones.
+    """
+    if "line" not in obj or "quote" not in obj:
+        return "summary", obj  # summary / none rows carry no citation
+    fname = obj.get("file", default_file)
+    lines = sources.get(fname)
+    n = obj["line"]
+    ok = (lines is not None and isinstance(n, int) and 1 <= n <= len(lines)
+          and obj["quote"].strip() and obj["quote"].strip() in lines[n - 1])
+    if not ok:
+        return "reject", {"reason": "quote_mismatch", **obj}
+    if default_file:
+        obj.setdefault("file", fname)
+    return "keep", obj
+
+
 def verify(text: str, sources: dict[str, list[str]], default_file: str | None):
     good, bad = [], []
     for raw in text.splitlines():
@@ -116,17 +137,8 @@ def verify(text: str, sources: dict[str, list[str]], default_file: str | None):
         except json.JSONDecodeError:
             bad.append({"reason": "not_json", "raw": raw})
             continue
-        if "line" not in obj or "quote" not in obj:
-            good.append(obj)  # summary / none rows carry no citation
-            continue
-        fname = obj.get("file", default_file)
-        lines = sources.get(fname)
-        n = obj["line"]
-        ok = (lines is not None and isinstance(n, int) and 1 <= n <= len(lines)
-              and obj["quote"].strip() and obj["quote"].strip() in lines[n - 1])
-        (good if ok else bad).append(obj if ok else {"reason": "quote_mismatch", **obj})
-        if ok and default_file:
-            obj.setdefault("file", fname)
+        kind, obj = check_object(obj, sources, default_file)
+        (good if kind in ("keep", "summary") else bad).append(obj)
     return good, bad
 
 

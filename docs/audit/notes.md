@@ -14,7 +14,8 @@ This file is the handoff state for a fresh session.
 - Inventory: Qwen passes p1–p5 over the 33 substantive `pal/**/*.py` files
   (37 .py files, stubs <10 lines skipped) + p6 config surface (pal/config.py,
   agent_core config from the deployed venv, repo systemd units, /etc/pal/discord.env,
-  host pal-*/searxng-* units). 166 passes total.
+  host pal-*/searxng-* units). 167 pass outputs total (p6 ran as two subsets,
+  see Run log).
 - Inventory model: `Qwen3.6-35B-A3B-UD-IQ4_NL_XL` on the egpu slot (chosen over
   Qwen3.8-27B on main to keep the orchestrating session responsive; probes on
   2026-11-09 showed 6s/34s runtimes and 0 rejected quotes).
@@ -43,13 +44,51 @@ This file is the handoff state for a fresh session.
   units + /etc/pal/discord.env + 3 host units), both at 32k cap. Per-subset
   summaries; merge them by hand at synthesis (noted in findings.md). The
   log ends with a `P6 SPLIT RUNS COMPLETE` line when both are done.
-- Status: P6 SPLIT IN PROGRESS. Everything else (165 passes) is complete.
-  On completion: tally kept/rejected, confirm no `.FAILED`, then synthesis.
+- 04:14: p6 split finished (p6a_code 96 kept / 21 rejected; p6b_units_env
+  12 kept / 0 rejected). Inventory phase COMPLETE — no `.FAILED` files.
+- Fragment recovery (same day): 20 passes had 0 kept rows because the model
+  emitted field-per-line JSON fragments (all lines rejected as not_json),
+  incl. 17 p5 passes and p4 for archive/discord_main/config.
+  `recover_fragments.py` rejoins the rejects, re-parses the object sequence,
+  and re-runs each object through the same gate (runner refactored to expose
+  `check_object`; verify() behavior unchanged). Result: 418 objects parsed,
+  388 recovered (30 failed the quote gate and stay rejects-only).
+  p6a's 20 rejected lines were malformed model summaries
+  (`{"key": "summary_key": ...}`) — not recoverable as occurrences;
+  `derive_summaries.py` deterministically rebuilt per-key summaries into
+  `p6a_code.summaries.jsonl` (38 keys) and `p6b_units_env.summaries.jsonl`
+  (4 keys; p6b's 4 model summaries were valid and are in the .jsonl too).
+- Final tally: 167 pass outputs, 1403 kept (incl. 388 recovered), 3871 raw
+  stream rejects (3783 not_json fragments, 88 quote_mismatch) — rejects kept
+  on disk as evidence.
+
+## Inventory quality (carry into findings.md "Inventory quality")
+
+- Field-per-line fragments: 20 passes recovered as above; the 30 recovered
+  objects that failed the quote gate are dropped (their raw fragments remain
+  in the rejects files).
+- `p5_claims__pal_tools_promote_synthesis`: 0 kept, all 8 claims rejected —
+  the model cited multi-line docstrings as single sentences (file
+  `pal/tools/promote_synthesis.py` has docstring text split across physical
+  lines, so no single line contains the quote). Not a re-run fix; the 8
+  claims survive in the rejects file — verify them by hand in step 2 and say
+  so in findings.md.
+- p6 ran in two subsets (p6a_code / p6b_units_env) because the full 10-file
+  surface exceeded the 32k output cap (93,231 chars at cap). Summaries are
+  per-subset; merge by hand. p6a's key list contains both bare pattern names
+  (MODEL, VAULT_PATH, ...) and PAL_-prefixed forms of the same fields —
+  merge them. PAL_INFERENCE_URL is absent from p6a keys although the killed
+  full run had started streaming it — confirm in agent_core source.
+- p6b: `/etc/pal/discord.env` holds only 2 keys (PAL_DISCORD_TOKEN,
+  PAL_DISCORD_ALLOWED_USERS) — the host relies on agent_core BaseConfig
+  defaults for everything else.
+- `p5_claims__pal_prompts_system` needed a 32k cap (16k was hit at 66k chars).
 
 ## Synthesis steps (for the fresh session)
 
-1. Confirm run finished: no `.FAILED` files in `docs/audit/qwen/out/`;
-   re-run any failed pass; record kept/rejected totals here.
+1. Inventory is complete (see Run log + Inventory quality). No re-runs
+   needed. Record the repo HEAD and `git status` here before writing
+   findings.md.
 2. Read every lead in the jsonl in source and verify it (this is where
    inventory quality is enforced). Group into the findings.md categories:
    A async/concurrency, O ordering, Q QoL/stability, D config+docs drift,
