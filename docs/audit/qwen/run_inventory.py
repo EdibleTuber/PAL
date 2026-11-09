@@ -145,6 +145,12 @@ def main():
     ap.add_argument("--files", nargs="*",
                     help="limit per-file passes to these basenames (note: pal/reorg.py and "
                          "pal/tools/reorg.py share a basename; the filter selects both)")
+    ap.add_argument("--p6-files", nargs="*",
+                    help="explicit file list for p6_config_surface (default: derived config "
+                         "surface). Use with --p6-name to run p6 in subsets when the full "
+                         "surface exceeds the output cap.")
+    ap.add_argument("--p6-name", default="p6_config_surface",
+                    help="output basename for the p6 run (must differ between subset runs)")
     ap.add_argument("--max-tokens", type=int, default=16384)
     ap.add_argument("--out", default=str(HERE / "out"))
     ap.add_argument("--think", action="store_true", help="enable model reasoning (default off)")
@@ -173,11 +179,16 @@ def main():
     for p in args.passes:
         task = (PROMPTS / f"{p}.md").read_text()
         if p == "p6_config_surface":
-            files = config_files()
+            files = ([Path(x) for x in args.p6_files] if args.p6_files
+                     else config_files())
+            missing = [str(f) for f in files if not f.is_file()]
+            if missing:
+                print(f"p6: missing files, aborting: {missing}", flush=True)
+                sys.exit(2)
             sources = {str(f): numbered(f) for f in files}
             prompt = common + "\n" + task + "\n\n" + "\n\n".join(
                 render(f, sources[str(f)]) for f in files)
-            run(p, prompt, sources, None)
+            run(args.p6_name, prompt, sources, None)
             continue
         for f in code_files():
             if args.files and f.name not in args.files:
