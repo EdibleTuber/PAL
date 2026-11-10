@@ -60,6 +60,20 @@ from pal.prompts.system import PAL_BASE_PROMPT
 logger = logging.getLogger(__name__)
 
 
+def _log_scan_failure(task: asyncio.Task) -> None:
+    """Done-callback for fire-and-forget learning-scan tasks (audit A4).
+
+    Without it, a scanner failure becomes an un-retrieved task exception
+    ("Task exception was never retrieved") and the learning feature fails
+    silently per turn.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("Learning scan failed: %s", exc, exc_info=True)
+
+
 async def handle_scratch(scratchpad, text: str) -> str:
     """Append a timestamped note to the given scratchpad. Returns user-facing message.
 
@@ -460,6 +474,13 @@ class PALAgent(Agent):
         conv.add_user(msg.text)
         mode = self.decide_mode(conv)
 
+        # A3: pin the model this turn started with. /model default mutates
+        # inference.default_model from a separate task (the daemon runs
+        # commands in their own task), so resolving it per call would let a
+        # mid-turn switch retarget the later rounds of this turn. A model
+        # switch applies from the next turn.
+        turn_model = self.inference.default_model
+
         messages = conv.get_messages_for_api(
             system_prompt=self.system_prompt(ctx),
         )
@@ -472,6 +493,7 @@ class PALAgent(Agent):
             if mode == "on":
                 completion = await self.inference.complete(
                     messages, tools=self.tool_executor.schemas(), reasoning=mode,
+                    model=turn_model,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 )
                 self.record_usage(ctx.channel_id, completion.usage)
@@ -486,17 +508,20 @@ class PALAgent(Agent):
                     )
                     writer.write(encode_message(done))
                     await writer.drain()
-                    # Proactive learning scan (fire-and-forget).
+                    # Proactive learning scan (fire-and-forget); a failure is
+                    # logged by the done-callback instead of vanishing (A4).
                     recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
-                    asyncio.create_task(self.scanner.maybe_scan(
+                    scan_task = asyncio.create_task(self.scanner.maybe_scan(
                         recent_turns=recent_turns,
                         latest_user_message=msg.text,
                     ))
+                    scan_task.add_done_callback(_log_scan_failure)
                     return
                 tool_calls = completion.tool_calls
             else:
                 async for item in self.inference.stream(
                     messages, tools=self.tool_executor.schemas(), reasoning=mode,
+                    model=turn_model,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 ):
                     if isinstance(item, list):
@@ -519,12 +544,14 @@ class PALAgent(Agent):
                     done = ResponseMessage(text=response_text)
                     writer.write(encode_message(done))
                     await writer.drain()
-                    # Proactive learning scan (fire-and-forget).
+                    # Proactive learning scan (fire-and-forget); a failure is
+                    # logged by the done-callback instead of vanishing (A4).
                     recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
-                    asyncio.create_task(self.scanner.maybe_scan(
+                    scan_task = asyncio.create_task(self.scanner.maybe_scan(
                         recent_turns=recent_turns,
                         latest_user_message=msg.text,
                     ))
+                    scan_task.add_done_callback(_log_scan_failure)
                     return
 
             # Tool-use loop
@@ -558,6 +585,7 @@ class PALAgent(Agent):
                 )
                 completion = await self.inference.complete(
                     messages, tools=self.tool_executor.schemas(), reasoning=mode,
+                    model=turn_model,
                     max_tokens=4096,  # stopgap: bound runaway loops; proper fix tracked in inference safety plan
                 )
                 self.record_usage(ctx.channel_id, completion.usage)
@@ -573,12 +601,14 @@ class PALAgent(Agent):
                     )
                     writer.write(encode_message(done))
                     await writer.drain()
-                    # Proactive learning scan (fire-and-forget).
+                    # Proactive learning scan (fire-and-forget); a failure is
+                    # logged by the done-callback instead of vanishing (A4).
                     recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
-                    asyncio.create_task(self.scanner.maybe_scan(
+                    scan_task = asyncio.create_task(self.scanner.maybe_scan(
                         recent_turns=recent_turns,
                         latest_user_message=msg.text,
                     ))
+                    scan_task.add_done_callback(_log_scan_failure)
                     return
 
                 tool_calls = completion.tool_calls
@@ -589,12 +619,14 @@ class PALAgent(Agent):
             done = ResponseMessage(text=cap_msg)
             writer.write(encode_message(done))
             await writer.drain()
-            # Proactive learning scan (fire-and-forget).
+            # Proactive learning scan (fire-and-forget); a failure is
+            # logged by the done-callback instead of vanishing (A4).
             recent_turns = conv.get_messages_for_api(system_prompt="")[-6:]
-            asyncio.create_task(self.scanner.maybe_scan(
+            scan_task = asyncio.create_task(self.scanner.maybe_scan(
                 recent_turns=recent_turns,
                 latest_user_message=msg.text,
             ))
+            scan_task.add_done_callback(_log_scan_failure)
 
         except Exception as exc:
             logger.exception("Chat error: %s", exc)
