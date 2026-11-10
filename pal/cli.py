@@ -344,7 +344,10 @@ async def run_repl() -> None:
                         console.print(Text("\n".join(reasoning_lines), style="dim italic"))
                         console.print()
                     console.print(f"\n{resp.text}\n")
-                except RuntimeError as exc:
+                except (RuntimeError, ConnectionError) as exc:
+                    # RuntimeError: daemon sent an ErrorMessage for the
+                    # command. ConnectionError: the daemon connection closed
+                    # mid-command (EOF) -- report and keep the loop running.
                     console.print(f"\n[red]{exc}[/red]\n")
                 continue
 

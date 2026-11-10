@@ -3,7 +3,9 @@
 After an article is compiled, the categorizer asks the model which vault
 directory best fits the content. Falls back to Research/ on any failure.
 """
+import asyncio
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from agent_core.inference import BatchUnavailableError, InferenceClient
@@ -185,7 +187,15 @@ class Categorizer:
         proposal_emitter(proposal_msg)
 
         proposal = approval_registry.get(proposal_id)
-        await proposal.event.wait()
+        # Block until the user signals a terminal status (or expiry). The
+        # wait is bounded the same way the research tools bound it
+        # (tools/research.py): an unanswered proposal must expire to the
+        # default category instead of hanging categorization forever.
+        remaining = (proposal.expires_at - datetime.now(timezone.utc)).total_seconds()
+        try:
+            await asyncio.wait_for(proposal.event.wait(), timeout=max(0.1, remaining))
+        except asyncio.TimeoutError:
+            approval_registry.expire_stale()
 
         if proposal.status == "declined":
             return self._default_category()

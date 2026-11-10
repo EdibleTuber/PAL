@@ -514,6 +514,37 @@ async def test_batch_fallback_view_skip_button_sends_skip():
 
 
 @pytest.mark.asyncio
+async def test_batch_fallback_view_buttons_handle_send_failure():
+    """A1: if sending a choice to the daemon fails, the button callback
+    must not raise (a raised callback would leave the decision undelivered
+    and the backend flow waiting) and must tell the user in the message
+    that the choice was not delivered."""
+    from pal.discord_interactions import BatchFallbackView
+
+    async def failing_send(pid, choice):
+        raise RuntimeError("send failed")
+
+    for label, choice in (
+        ("Retry on batch", "retry"),
+        ("Run on main", "main"),
+        ("Skip", "skip"),
+    ):
+        view = BatchFallbackView(
+            proposal_id="p1",
+            caller="llm_toc",
+            send_choice_callback=failing_send,
+        )
+        button = next(c for c in view.children if c.label == label)
+        interaction = AsyncMock()
+        await button.callback(interaction)  # must not raise (A1)
+
+        interaction.response.edit_message.assert_awaited_once()
+        content = interaction.response.edit_message.call_args.kwargs["content"]
+        assert choice in content.lower()
+        assert "fail" in content.lower()
+
+
+@pytest.mark.asyncio
 async def test_stream_processor_prepends_reasoning_spoiler_to_streamed_answer():
     """Streamed chunks + ResponseMessage with reasoning produces final_text
     with the spoiler block prepended and the streamed answer after."""

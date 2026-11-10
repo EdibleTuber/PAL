@@ -460,23 +460,50 @@ class BatchFallbackView(discord.ui.View):
         self.add_item(main)
         self.add_item(skip)
 
+    async def _send_and_confirm(
+        self,
+        interaction: discord.Interaction,
+        choice: str,
+        confirm_text: str,
+    ) -> None:
+        """Send the choice to the daemon and confirm it in the message.
+
+        If the send fails, tell the user in the message instead of
+        raising: a raised callback would leave the decision undelivered
+        while the backend flow keeps waiting on the proposal.
+        """
+        try:
+            await self._send_choice(self.proposal_id, choice)
+        except Exception:
+            logger.exception(
+                "batch-fallback send_choice failed for proposal %s (%s)",
+                self.proposal_id, choice,
+            )
+            try:
+                await interaction.response.edit_message(
+                    content=(
+                        f"Failed to deliver your {choice} choice to the "
+                        "daemon. Please try again."
+                    ),
+                    view=None,
+                )
+            except Exception:
+                logger.exception(
+                    "batch-fallback failure notice could not be posted "
+                    "for proposal %s",
+                    self.proposal_id,
+                )
+            return
+        await interaction.response.edit_message(content=confirm_text, view=None)
+
     async def _on_retry(self, interaction: discord.Interaction) -> None:
-        await self._send_choice(self.proposal_id, "retry")
-        await interaction.response.edit_message(
-            content="Retrying on batch...", view=None,
-        )
+        await self._send_and_confirm(interaction, "retry", "Retrying on batch...")
 
     async def _on_main(self, interaction: discord.Interaction) -> None:
-        await self._send_choice(self.proposal_id, "main")
-        await interaction.response.edit_message(
-            content="Running on main...", view=None,
-        )
+        await self._send_and_confirm(interaction, "main", "Running on main...")
 
     async def _on_skip(self, interaction: discord.Interaction) -> None:
-        await self._send_choice(self.proposal_id, "skip")
-        await interaction.response.edit_message(
-            content="Skipped.", view=None,
-        )
+        await self._send_and_confirm(interaction, "skip", "Skipped.")
 
 
 def build_batch_fallback_embed(msg: BatchFallbackProposal) -> discord.Embed:
