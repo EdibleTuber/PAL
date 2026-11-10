@@ -373,3 +373,84 @@ async def test_propose_promote_no_managers(tmp_path):
     agent = _Agent(tmp_path, approval_registry=None, learning=None, wisdom=None)
     result = await ProposePromote().run({"slug": "x", "rationale": "r"}, _ctx(agent))
     assert "not available" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# Q3 / Q4 — error boundaries
+# ---------------------------------------------------------------------------
+
+async def test_reorg_unexpected_merge_error_becomes_failed_row(tmp_path):
+    """Q3: an unexpected exception from a mid-batch op (here: the merge's LLM
+    call) must become a failed row, not abort the report: earlier ops report
+    ok with the ground-truth echo, and rebuild_index still runs."""
+    from agent_core.approval_registry import ApprovalRegistry
+    from pal.reorg import Reorganizer
+
+    (tmp_path / "A.md").write_text("alpha")
+    (tmp_path / "B.md").write_text("beta")
+    (tmp_path / "C.md").write_text("gamma")
+
+    compiler = MagicMock()
+    compiler.merge_into_existing = AsyncMock(side_effect=RuntimeError("LLM boom"))
+    wiki = MagicMock()
+    reorganizer = Reorganizer(
+        vault_path=tmp_path, wiki=wiki, compiler=compiler, retrieval=None
+    )
+
+    registry = ApprovalRegistry()
+    ops = [
+        {"type": "move", "src": "A.md", "dst": "A2.md"},
+        {"type": "merge", "src": "B.md", "dst": "C.md"},
+    ]
+    pid = registry.create_proposal(
+        kind="reorg", operations=ops, rationale="mid-batch failure",
+    )
+    registry.approve(pid)
+
+    agent = _Agent(tmp_path, approval_registry=registry, reorganizer=reorganizer)
+    result = await Reorg().run({"proposal_id": pid}, _ctx(agent))
+
+    report = json.loads(result)
+    assert report["total"] == 2
+    assert report["ok"] == 1
+    assert report["failed"] == 1
+    move_row, merge_row = report["per_op"]
+    assert move_row["status"] == "ok"
+    assert move_row["src_exists_after"] is False
+    assert move_row["dst_exists_after"] is True
+    assert merge_row["status"] == "failed"
+    assert "LLM boom" in merge_row["reason"]
+    wiki.rebuild_index.assert_called_once()
+
+
+async def test_propose_reorg_reference_count_failure_marks_preview_unknown(tmp_path):
+    """Q4: when count_references raises, the preview must be an unknown
+    marker (None) in both the message and the CLI prompt -- not a confident
+    0 the user would approve against."""
+    from agent_core.approval_registry import ApprovalRegistry
+
+    registry = ApprovalRegistry()
+    emit = AsyncMock()
+
+    async def _emit_and_approve(msg):
+        registry.approve(msg.proposal_id)
+
+    emit.side_effect = _emit_and_approve
+
+    reorganizer = MagicMock()
+    reorganizer.validate_operations = MagicMock(return_value=[])
+    reorganizer.count_references = MagicMock(side_effect=OSError("vault unreadable"))
+
+    agent = _Agent(tmp_path, approval_registry=registry, reorganizer=reorganizer)
+    result = await ProposeReorg().run(
+        {"operations": [{"type": "move", "src": "A.md", "dst": "B.md"}], "rationale": "r"},
+        _ctx(agent, emit=emit),
+    )
+    parsed = json.loads(result)
+    assert parsed["status"] == "approved"
+
+    msg = emit.call_args[0][0]
+    assert msg.references_preview is None
+
+    from pal.cli import format_reorg_proposal
+    assert "unknown" in format_reorg_proposal(msg).lower()

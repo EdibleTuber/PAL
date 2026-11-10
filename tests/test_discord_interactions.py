@@ -346,6 +346,20 @@ def test_reorg_embed_includes_operations_and_references_count():
     assert "reorg:edit:xyz-1" in custom_ids
 
 
+def test_reorg_embed_references_unknown_marker_when_scan_failed():
+    """Q4: references_preview=None (count scan failed) renders as unknown,
+    not a confident 0."""
+    msg = ReorgProposalMessage(
+        proposal_id="xyz-2",
+        operations=[{"type": "move", "src": "A.md", "dst": "B.md"}],
+        rationale="r",
+        references_preview=None,
+    )
+    embed, _ = build_reorg_proposal_embed(msg)
+    refs_field = next(f for f in embed.fields if "rewrite" in f.name.lower() or "link" in f.name.lower())
+    assert "unknown" in refs_field.value.lower()
+
+
 def test_reorg_embed_truncates_long_operation_lists():
     # Use paths long enough to exhaust the character budget within 15 ops.
     ops = [

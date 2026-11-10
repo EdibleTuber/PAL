@@ -121,5 +121,11 @@ class AddLearning(Tool):
             slug = ctx.agent.learning.add(title=title, body=body, source="conversation")
         except Exception as exc:
             return json.dumps({"error": str(exc)})
-        ctx.agent.wiki.git_commit(f"learn: add {slug}")
+        try:
+            ctx.agent.wiki.git_commit(f"learn: add {slug}")
+        except Exception as exc:
+            # The learning file is on disk; every later git_commit does a
+            # whole-tree `git add .`, which self-heals the missing commit.
+            # Report success so the LLM doesn't retry an applied write.
+            logger.warning("git commit failed after add_learning: %s", exc)
         return json.dumps({"slug": slug, "title": title})

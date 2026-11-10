@@ -290,3 +290,74 @@ async def test_researcher_emits_per_url_summarize_success(tmp_path, monkeypatch)
     )
     await researcher._summarize(source)
     assert any("Summarized:" in m for m in captured), captured
+
+
+# ---------------------------------------------------------------------------
+# Q5 — vault writes inside the per-source guard
+# ---------------------------------------------------------------------------
+
+def _blocking_web_dir(vault: Path) -> None:
+    """Make raw/web a regular file so mkdir/write on it raises."""
+    (vault / "raw").mkdir()
+    (vault / "raw" / "web").write_text("blocking file")
+
+
+def _ok_fetcher():
+    fetcher = AsyncMock()
+    fetcher.fetch.return_value = FetchResult(
+        url="https://a.example/1",
+        title="A1",
+        text="# A1\n\nBody text.",
+        content_hash="abcd1234" * 8,
+        byte_size=100,
+    )
+    return fetcher
+
+
+async def test_fetch_and_save_write_failure_returns_save_failed(tmp_path):
+    """Q5: a filesystem error while saving fetched content must cost one
+    source (status=save_failed), not raise and abort the research run."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _blocking_web_dir(vault)
+
+    researcher = Researcher(
+        websearch=AsyncMock(),
+        fetcher=_ok_fetcher(),
+        inference=AsyncMock(),
+        vault_path=vault,
+    )
+    src = await researcher._fetch_and_save("https://a.example/1", "topic")
+    assert src.status == "save_failed"
+    assert src.raw_path is None
+    assert src.error
+
+
+async def test_research_topics_survives_save_failure_and_continues(tmp_path):
+    """Q5: a save failure in one topic must not abort the remaining topics --
+    the run returns a report with the bad source marked and the next topic
+    still processed."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _blocking_web_dir(vault)
+
+    ws = AsyncMock()
+
+    async def search(topic):
+        if topic.startswith("alpha"):
+            return [SearchResult(url="https://a.example/1", title="A1", snippet="s")]
+        return []
+
+    ws.search.side_effect = search
+
+    researcher = Researcher(
+        websearch=ws,
+        fetcher=_ok_fetcher(),
+        inference=AsyncMock(),
+        vault_path=vault,
+    )
+    report = await researcher.research_topics(["alpha", "beta"], depth=3)
+    assert len(report.results) == 2
+    assert report.results[0].sources[0].status == "save_failed"
+    assert report.results[1].flagged
+    assert report.total_failed == 1

@@ -166,3 +166,25 @@ async def test_add_learning_rejects_empty_body(tmp_path: Path):
     parsed = json.loads(result)
     assert "error" in parsed
     assert "body" in parsed["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_add_learning_commit_failure_still_returns_success(tmp_path: Path):
+    """Q6: if the post-add git commit raises, the tool still returns the
+    success JSON -- the learning file is on disk and any later whole-tree
+    commit (git add .) self-heals the missing commit."""
+    from agent_core.learning import LearningManager
+
+    _init_vault_git(tmp_path)
+    wiki = MagicMock()
+    wiki.git_commit = MagicMock(side_effect=OSError("git blew up"))
+    lm = LearningManager(tmp_path, "pal")
+    agent = _FakeAgent(tmp_path, learning=lm, wiki=wiki)
+    ctx = _FakeCtx(agent)
+
+    tool = AddLearning()
+    result = await tool.run({"title": "t", "body": "b"}, ctx)
+    parsed = json.loads(result)
+    assert "error" not in parsed
+    assert parsed["slug"]
+    wiki.git_commit.assert_called_once()

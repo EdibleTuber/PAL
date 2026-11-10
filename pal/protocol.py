@@ -12,7 +12,7 @@ batch_fallback). They register with agent_core.protocol's registry at import
 time so encode_message/decode_message round-trip them correctly.
 """
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 from agent_core.protocol import (
     ChatMessage,
@@ -63,7 +63,9 @@ class ReorgProposalMessage:
     proposal_id: str
     operations: list[dict]
     rationale: str
-    references_preview: int
+    # None when the reference-count scan failed; renderers must show an
+    # unknown marker rather than a confident 0.
+    references_preview: Optional[int]
     type: str = "reorg_proposal"
 
 
