@@ -121,9 +121,13 @@ def format_reorg_proposal(msg: "ReorgProposalMessage") -> str:
         tag = f"[{op_type}]"
         lines.append(f"    {tag:<8} {src}")
         lines.append(f"             -> {dst}")
+    if msg.references_preview is None:
+        refs_line = "  Link-reference count unknown (scan failed)."
+    else:
+        refs_line = f"  Would rewrite {msg.references_preview} link references."
     lines.extend([
         f"  Rationale: {msg.rationale}",
-        f"  Would rewrite {msg.references_preview} link references.",
+        refs_line,
         "  [a]pprove  [d]ecline  [e]dit",
         "> ",
     ])

@@ -164,7 +164,6 @@ class Researcher:
         filename = f"{topic_slug}-{url_slug}-{hash8}.md"
 
         raw_dir = self.vault_path / "raw" / "web"
-        raw_dir.mkdir(parents=True, exist_ok=True)
         raw_path = raw_dir / filename
 
         fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -176,7 +175,18 @@ class Researcher:
             "byte_size": fetch_result.byte_size,
             "status": "raw",
         }
-        raw_path.write_text(serialize_frontmatter(meta, fetch_result.text))
+        try:
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            raw_path.write_text(serialize_frontmatter(meta, fetch_result.text))
+        except Exception as exc:
+            # Vault write failure: cost one source, not the whole run.
+            self._progress(f"Save failed ({_short_url(url)}): {exc}")
+            return SourceResult(
+                url=url,
+                title=fetch_result.title or url_slug,
+                status="save_failed",
+                error=str(exc),
+            )
 
         self._progress(f"Fetched: {_short_url(url)}")
         return SourceResult(
@@ -221,7 +231,11 @@ class Researcher:
         for url in urls_to_fetch:
             self._fetched_urls.add(url)
 
-        # Concurrent fetches within the topic
+        # Concurrent fetches within the topic.
+        # Note: asyncio.gather does NOT cancel sibling fetch tasks on first
+        # exception -- they keep running orphaned. _fetch_and_save is total
+        # (it returns a failed SourceResult instead of raising), so a bad
+        # source costs one source rather than aborting the run.
         self._progress(f"Fetching {len(urls_to_fetch)} sources for: {topic}")
         fetch_tasks = [self._fetch_and_save(url, topic_slug) for url in urls_to_fetch]
         sources = await asyncio.gather(*fetch_tasks)

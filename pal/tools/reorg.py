@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -10,6 +11,8 @@ from agent_core.tools.base import Tool
 
 if TYPE_CHECKING:
     from agent_core.agent import HandlerContext
+
+logger = logging.getLogger(__name__)
 
 
 class ProposeReorg(Tool):
@@ -94,8 +97,12 @@ class ProposeReorg(Tool):
         src_paths = [op["src"] for op in operations if "src" in op]
         try:
             references_preview = ctx.agent.reorganizer.count_references(src_paths)
-        except Exception:
-            references_preview = 0
+        except Exception as exc:
+            # Rare backstop (count_references absorbs per-file OSErrors).
+            # Do not present a confident 0 the user would approve against:
+            # surface an unknown marker (None) instead.
+            logger.warning("reference count failed for reorg preview: %s", exc)
+            references_preview = None
 
         ar = ctx.agent.approval_registry
         try:

@@ -273,17 +273,35 @@ class Reorganizer:
         results: list[dict] = []
         for op in operations:
             op_type = op.get("type")
-            if op_type == "move":
-                results.append(self._execute_move(op))
-            elif op_type == "merge":
-                results.append(await self._execute_merge(op))
-            else:
+            try:
+                if op_type == "move":
+                    results.append(self._execute_move(op))
+                elif op_type == "merge":
+                    results.append(await self._execute_merge(op))
+                else:
+                    results.append({
+                        "op": str(op_type),
+                        "src": op.get("src", ""),
+                        "dst": op.get("dst", ""),
+                        "status": "failed",
+                        "reason": f"unknown op type: {op_type!r}",
+                        "references_rewritten": 0,
+                    })
+            except Exception as exc:
+                # Unexpected per-op failure (e.g. the merge's LLM call
+                # raising, or an unguarded file read). Record a failed row
+                # and continue the batch: partial failure must not abort the
+                # report or skip the index rebuild below.
+                logger.exception(
+                    "reorg op failed unexpectedly (type=%s src=%s dst=%s)",
+                    op_type, op.get("src", ""), op.get("dst", ""),
+                )
                 results.append({
                     "op": str(op_type),
                     "src": op.get("src", ""),
                     "dst": op.get("dst", ""),
                     "status": "failed",
-                    "reason": f"unknown op type: {op_type!r}",
+                    "reason": f"unexpected error: {exc}",
                     "references_rewritten": 0,
                 })
         if self.wiki is not None:
@@ -292,11 +310,14 @@ class Reorganizer:
             except Exception as exc:
                 logger.warning("rebuild_index failed after reorg: %s", exc)
         if self.retrieval is not None:
-            touched = self._collect_touched_paths(results)
-            if touched:
-                reindex_result = await self.retrieval.trigger_reindex(paths=touched)
-                if results and reindex_result is not None:
-                    results[0]["_reindex"] = reindex_result
+            try:
+                touched = self._collect_touched_paths(results)
+                if touched:
+                    reindex_result = await self.retrieval.trigger_reindex(paths=touched)
+                    if results and reindex_result is not None:
+                        results[0]["_reindex"] = reindex_result
+            except Exception as exc:
+                logger.warning("reorg reindex trigger failed: %s", exc)
         return results
 
     async def _execute_merge(self, op: dict) -> dict:

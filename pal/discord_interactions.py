@@ -206,7 +206,11 @@ def build_reorg_proposal_embed(
     embed.add_field(name="Rationale", value=msg.rationale, inline=False)
     embed.add_field(
         name="Link rewrites",
-        value=str(msg.references_preview),
+        value=(
+            "unknown (scan failed)"
+            if msg.references_preview is None
+            else str(msg.references_preview)
+        ),
         inline=False,
     )
 
