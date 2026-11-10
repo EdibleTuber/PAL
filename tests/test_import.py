@@ -326,3 +326,174 @@ async def test_import_pdf_llm_toc_fallback_runs_on_main(import_daemon, socket_pa
     # Import succeeded to some form (either chapters or single-file); any
     # response text means we didn't crash on BatchUnavailableError.
     assert resp.text
+
+
+def _build_flat_pdf(vault: Path, name: str) -> Path:
+    """A 3-page PDF with no TOC and flat typography: tier-1 and tier-2
+    structural detection return None, forcing tier-3 LLM-TOC."""
+    import fitz
+
+    pdf_path = vault / "raw" / name
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    doc = fitz.open()
+    for i in range(3):
+        page = doc.new_page()
+        page.insert_text((72, 72), f"uniform body for page {i}", fontsize=11)
+    doc.save(str(pdf_path))
+    doc.close()
+    return pdf_path
+
+
+@pytest.mark.asyncio
+async def test_import_pdf_unanswered_fallback_proposal_expires_to_single_file(
+    import_daemon, socket_path, tmp_path, monkeypatch,
+):
+    """A2: a batch_fallback proposal that is never answered must not hang
+    the import forever. The wait must be bounded by the proposal's
+    expires_at; on expiry the import degrades to single-file and the
+    PyMuPDF handle opened for detection must be closed."""
+    from datetime import datetime, timedelta, timezone
+
+    import agent_core.approval_registry
+    from agent_core.inference import BatchUnavailableError
+    from unittest.mock import AsyncMock
+
+    from pal import pdf_structure
+
+    daemon, vault = import_daemon
+    _build_flat_pdf(vault, "never-answered.pdf")
+
+    async def batch_complete(messages, **kwargs):
+        raise BatchUnavailableError("batch down")
+
+    daemon.batch_inference = AsyncMock()
+    daemon.batch_inference.complete.side_effect = batch_complete
+    daemon.batch_inference.is_batch = True
+
+    # Shorten the proposal's expiry so the bound is observable in-test;
+    # never answer the proposal.
+    original_create = agent_core.approval_registry.ApprovalRegistry.create_proposal
+
+    def short_expiry_create(self, *args, **kwargs):
+        pid = original_create(self, *args, **kwargs)
+        self.get(pid).expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=0.4)
+        )
+        return pid
+
+    monkeypatch.setattr(
+        agent_core.approval_registry.ApprovalRegistry,
+        "create_proposal",
+        short_expiry_create,
+    )
+
+    # Record the PyMuPDF handle the command hands to detection, so we can
+    # assert it is closed on the expiry path.
+    real_detect = pdf_structure.detect_chapters
+    seen_docs = []
+
+    async def spy_detect(doc, **kwargs):
+        seen_docs.append(doc)
+        return await real_detect(doc, **kwargs)
+
+    monkeypatch.setattr(pdf_structure, "detect_chapters", spy_detect)
+
+    client = PalClient(socket_path)
+    await client.connect()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    try:
+        resp = await asyncio.wait_for(
+            client.command("import", "raw/never-answered.pdf"), timeout=10,
+        )
+    except asyncio.TimeoutError:
+        # Unblock the daemon-side wait so fixture teardown is clean.
+        daemon.approval_registry.expire_stale()
+        pytest.fail(
+            "import hung on an unanswered batch_fallback proposal (A2)"
+        )
+    finally:
+        await client.close()
+    elapsed = loop.time() - started
+
+    assert "single-file" in resp.text
+    assert (vault / "raw" / "sources" / "never-answered" / "full.md").exists()
+    assert elapsed < 5, (
+        f"import took {elapsed:.1f}s; wait not bounded by expires_at"
+    )
+    assert seen_docs, "detect_chapters was never called"
+    assert seen_docs[0].is_closed, (
+        "PyMuPDF handle was not closed on the expiry path"
+    )
+
+
+@pytest.mark.asyncio
+async def test_import_pdf_llm_toc_main_branch_failure_degrades_to_single_file(
+    import_daemon, socket_path, tmp_path,
+):
+    """Q1: the 'main' branch of the batch-fallback flow must degrade to a
+    single-file import when detection on the main inference fails, matching
+    the retry branch's degradation semantics, instead of propagating and
+    abandoning the import.
+
+    Note: inference.complete errors are already swallowed inside
+    detect_from_llm_toc (pdf_structure.py catches Exception and returns
+    None), so the test drives an error that escapes tier 3's internal
+    catch on the main-inference call (e.g. build_llm_sample, which runs
+    outside that try).
+    """
+    from agent_core.inference import BatchUnavailableError
+    from unittest.mock import AsyncMock
+
+    import agent_core.approval_registry
+    from pal import pdf_structure
+
+    daemon, vault = import_daemon
+    _build_flat_pdf(vault, "main-down.pdf")
+
+    async def batch_complete(messages, **kwargs):
+        raise BatchUnavailableError("batch down")
+
+    daemon.batch_inference = AsyncMock()
+    daemon.batch_inference.complete.side_effect = batch_complete
+    daemon.batch_inference.is_batch = True
+
+    # Auto-approve the BatchFallbackProposal with choice="main".
+    original_create = agent_core.approval_registry.ApprovalRegistry.create_proposal
+
+    def auto_approve_main(self, *args, **kwargs):
+        pid = original_create(self, *args, **kwargs)
+        if kwargs.get("kind") == "batch_fallback":
+            self.approve(pid, state="main")
+        return pid
+
+    # Fail tier-3 detection on the main-inference call, after the internal
+    # inference catch would have applied (escapes to the unguarded branch).
+    real_llm_toc = pdf_structure.detect_from_llm_toc
+
+    async def failing_main_llm_toc(doc, inference):
+        if inference is daemon.inference:
+            raise RuntimeError("tier-3 detection failed on main")
+        return await real_llm_toc(doc, inference)
+
+    monkeypatch_obj = pytest.MonkeyPatch()
+    monkeypatch_obj.setattr(
+        agent_core.approval_registry.ApprovalRegistry,
+        "create_proposal",
+        auto_approve_main,
+    )
+    monkeypatch_obj.setattr(
+        pdf_structure, "detect_from_llm_toc", failing_main_llm_toc,
+    )
+    client = None
+    try:
+        client = PalClient(socket_path)
+        await client.connect()
+        resp = await client.command("import", "raw/main-down.pdf")
+    finally:
+        if client is not None:
+            await client.close()
+        monkeypatch_obj.undo()
+
+    assert "single-file" in resp.text
+    assert (vault / "raw" / "sources" / "main-down" / "full.md").exists()

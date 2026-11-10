@@ -1,6 +1,7 @@
 """Unit tests for auto-categorization."""
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -132,6 +133,7 @@ class _FakeProposal:
     status: str
     approval_choice: str | None
     event: asyncio.Event
+    expires_at: datetime | None = None  # mirrors agent_core Proposal
 
 
 class _FakeRegistry:
@@ -153,12 +155,60 @@ class _FakeRegistry:
         else:
             status = "approved"
             choice = self.next_choice
-        self.proposals[pid] = _FakeProposal(status=status, approval_choice=choice, event=ev)
+        self.proposals[pid] = _FakeProposal(
+            status=status,
+            approval_choice=choice,
+            event=ev,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        )
         ev.set()  # Auto-resolve so the caller's wait returns immediately.
         return pid
 
     def get(self, pid: str) -> _FakeProposal:
         return self.proposals[pid]
+
+    def expire_stale(self):
+        pass
+
+
+@dataclass
+class _ExpiringFakeProposal:
+    status: str
+    approval_choice: str | None
+    event: asyncio.Event
+    expires_at: datetime
+
+
+class _ExpiringFakeRegistry:
+    """Stand-in whose batch_fallback proposals are NEVER answered; they only
+    reach a terminal state when the caller's bounded wait elapses and
+    ``expire_stale()`` flips them to ``expired`` (A2)."""
+
+    def __init__(self, expires_in: float = 0.3):
+        self.expires_in = expires_in
+        self.expire_stale_calls = 0
+        self.proposals: dict[str, _ExpiringFakeProposal] = {}
+
+    def create_proposal(self, **kwargs):
+        pid = f"p{len(self.proposals) + 1}"
+        self.proposals[pid] = _ExpiringFakeProposal(
+            status="pending",
+            approval_choice=None,
+            event=asyncio.Event(),
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=self.expires_in),
+        )
+        return pid
+
+    def get(self, pid: str) -> _ExpiringFakeProposal:
+        return self.proposals[pid]
+
+    def expire_stale(self):
+        self.expire_stale_calls += 1
+        now = datetime.now(timezone.utc)
+        for p in self.proposals.values():
+            if p.status == "pending" and now >= p.expires_at:
+                p.status = "expired"
+                p.event.set()
 
 
 def _make_inference(side_effect):
@@ -253,3 +303,42 @@ async def test_categorizer_returns_default_when_no_approval_wired(tmp_path):
     cat = Categorizer(inference=_make_inference(batch_fail))
     category = await cat.categorize(title="X", body="y", vault_path=tmp_path)
     assert category == "Research"
+
+
+@pytest.mark.asyncio
+async def test_categorizer_unanswered_proposal_expires_to_default(tmp_path):
+    """A2: a batch_fallback proposal that is never answered must not hang
+    categorize() forever. The wait must be bounded by the proposal's own
+    expires_at; on expiry the call returns the default category and the
+    registry's expire_stale() is consulted."""
+    async def batch_fail(messages, **kwargs):
+        raise BatchUnavailableError("down")
+
+    registry = _ExpiringFakeRegistry(expires_in=0.3)
+    cat = Categorizer(inference=_make_inference(batch_fail))
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    try:
+        category = await asyncio.wait_for(
+            cat.categorize(
+                title="X",
+                body="y",
+                vault_path=tmp_path,
+                approval_registry=registry,
+                proposal_emitter=lambda m: None,
+            ),
+            timeout=5,
+        )
+    except asyncio.TimeoutError:
+        pytest.fail(
+            "categorize() hung on an unanswered batch_fallback proposal (A2)"
+        )
+    elapsed = loop.time() - started
+
+    assert category == "Research"
+    assert elapsed < 2.0, (
+        f"categorize() took {elapsed:.1f}s; wait not bounded by expires_at"
+    )
+    assert registry.expire_stale_calls >= 1
+    assert registry.get("p1").status == "expired"

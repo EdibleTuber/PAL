@@ -163,7 +163,19 @@ class Import(Command):
                         )
                         proposal_emitter(proposal_msg)
                         proposal = approval_registry.get(pid)
-                        await proposal.event.wait()
+                        # Bounded wait (same pattern as tools/research.py):
+                        # an unanswered proposal must expire to single-file
+                        # instead of hanging the import forever.
+                        remaining = (
+                            proposal.expires_at - datetime.now(timezone.utc)
+                        ).total_seconds()
+                        try:
+                            await asyncio.wait_for(
+                                proposal.event.wait(),
+                                timeout=max(0.1, remaining),
+                            )
+                        except asyncio.TimeoutError:
+                            approval_registry.expire_stale()
                         if proposal.status == "declined":
                             detection = DetectionResult(method="single-file", boundaries=[])
                         elif proposal.approval_choice == "retry":
@@ -176,9 +188,21 @@ class Import(Command):
                                     method="single-file", boundaries=[],
                                 )
                         elif proposal.approval_choice == "main":
-                            detection = await detect_chapters(
-                                doc, inference=ctx.agent.inference,
-                            )
+                            try:
+                                detection = await detect_chapters(
+                                    doc, inference=ctx.agent.inference,
+                                )
+                            except Exception:
+                                # Match the retry branch: any failure on the
+                                # main backend degrades to single-file
+                                # instead of aborting the whole import.
+                                logger.exception(
+                                    "Main-backend LLM-TOC detection failed; "
+                                    "falling back to single-file",
+                                )
+                                detection = DetectionResult(
+                                    method="single-file", boundaries=[],
+                                )
                         else:
                             detection = DetectionResult(method="single-file", boundaries=[])
                 detection_method = detection.method
