@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pal.reorg import Reorganizer
 from pal.tools.vault import (
     CreateFile,
     EditFile,
@@ -250,6 +251,89 @@ async def test_move_file_move_single_raises_value_error(tmp_path):
     assert payload["status"] == "error"
     assert payload["path"] == "src.md"
     assert "invalid path" in payload["reason"]
+
+
+# --- MoveFile containment (X1): real Reorganizer, assert where files end up ---
+
+def _real_reorganizer(vault: Path) -> Reorganizer:
+    return Reorganizer(vault_path=vault, wiki=None, compiler=None, retrieval=None)
+
+
+def _make_vault(tmp_path: Path, file_rel: str) -> Path:
+    vault = tmp_path / "vault"
+    (vault / file_rel).parent.mkdir(parents=True)
+    (vault / file_rel).write_text("body")
+    return vault
+
+
+async def test_move_file_rejects_escape_dst_and_file_stays(tmp_path):
+    """dst='../escaped.md' returns an error and the file never leaves the vault."""
+    vault = _make_vault(tmp_path, "notes/secret.md")
+    result = await MoveFile().run(
+        {"src": "notes/secret.md", "dst": "../escaped.md"},
+        _ctx(_Agent(vault, reorganizer=_real_reorganizer(vault))),
+    )
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert not (tmp_path / "escaped.md").exists()
+    assert (vault / "notes" / "secret.md").exists()
+
+
+async def test_move_file_rejects_escape_src_and_host_file_untouched(tmp_path):
+    """src='../host_secret.md' returns an error and the host file is not pulled in."""
+    vault = _make_vault(tmp_path, "notes/b.md")
+    host = tmp_path / "host_secret.md"
+    host.write_text("host")
+    result = await MoveFile().run(
+        {"src": "../host_secret.md", "dst": "notes/stolen.md"},
+        _ctx(_Agent(vault, reorganizer=_real_reorganizer(vault))),
+    )
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert host.exists()
+    assert not (vault / "notes" / "stolen.md").exists()
+
+
+async def test_move_file_rejects_absolute_dst(tmp_path, tmp_path_factory):
+    """Absolute dst returns an error and nothing is written outside the vault."""
+    vault = _make_vault(tmp_path, "notes/b.md")
+    abs_target = tmp_path_factory.mktemp("abs") / "abs_escape.md"
+    result = await MoveFile().run(
+        {"src": "notes/b.md", "dst": str(abs_target)},
+        _ctx(_Agent(vault, reorganizer=_real_reorganizer(vault))),
+    )
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert not abs_target.exists()
+    assert (vault / "notes" / "b.md").exists()
+
+
+async def test_move_file_rejects_nested_system_dst_and_file_stays(tmp_path):
+    """dst='notes/_wisdom/a.md' (system dir not at top level) is rejected."""
+    vault = _make_vault(tmp_path, "notes/a.md")
+    result = await MoveFile().run(
+        {"src": "notes/a.md", "dst": "notes/_wisdom/a.md"},
+        _ctx(_Agent(vault, reorganizer=_real_reorganizer(vault))),
+    )
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert not (vault / "notes" / "_wisdom" / "a.md").exists()
+    assert (vault / "notes" / "a.md").exists()
+
+
+async def test_move_file_legit_in_vault_move_still_works(tmp_path):
+    """Guard against 'reject everything': a normal in-vault move still succeeds."""
+    vault = _make_vault(tmp_path, "Security/a.md")
+    retrieval = MagicMock()
+    retrieval.trigger_reindex = AsyncMock(return_value=None)
+    result = await MoveFile().run(
+        {"src": "Security/a.md", "dst": "IoT/a.md"},
+        _ctx(_Agent(vault, retrieval=retrieval, reorganizer=_real_reorganizer(vault))),
+    )
+    payload = json.loads(result)
+    assert payload["status"] == "moved"
+    assert (vault / "IoT" / "a.md").exists()
+    assert not (vault / "Security" / "a.md").exists()
 
 
 # --- Extra coverage for EditFile ---

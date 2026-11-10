@@ -1,9 +1,9 @@
 """PAL vault write Tool subclasses.
 
-Three write Tool subclasses (EditFile, CreateFile, MoveFile) for vault
-mutation. Read-side tools (ReadFile, ListDirectory, SearchContent) were
-dropped in favor of agent_core builtins (cat, ls, grep), which cover the
-same functionality with broader capability.
+Write-side vault mutation tools (EditFile, CreateFile, MoveFile,
+DeleteFile, ReplaceInFile). Read-side tools (ReadFile, ListDirectory,
+SearchContent) were dropped in favor of agent_core builtins (cat, ls,
+grep), which cover the same functionality with broader capability.
 
 All path operations use _resolve_safe to prevent vault escapes. System
 directories (_-prefixed) are blocked on write operations.
@@ -295,14 +295,28 @@ class MoveFile(Tool):
 
         vault = ctx.agent.config.vault_path.resolve()
         resolved_src = _resolve_safe(vault, src)
-        if resolved_src is not None and not resolved_src.exists():
+        if resolved_src is None:
+            return json.dumps({
+                "status": "error",
+                "path": src,
+                "reason": f"src path escapes outside vault: {src}",
+            })
+        if not resolved_src.exists():
             base = f"file does not exist: {src}"
             reason = format_not_found_with_suggestions(ctx.agent.config.vault_path, src, base)
             return json.dumps({"status": "error", "path": src, "reason": reason})
 
+        resolved_dst = _resolve_safe(vault, dst)
+        if resolved_dst is None:
+            return json.dumps({
+                "status": "error",
+                "path": dst,
+                "reason": f"dst path escapes outside vault: {dst}",
+            })
+
         try:
             reorganizer.move_single(src, dst)
-        except (FileNotFoundError, FileExistsError, ValueError) as exc:
+        except (FileNotFoundError, FileExistsError, ValueError, OSError) as exc:
             return json.dumps({"status": "error", "path": src, "reason": str(exc)})
 
         wiki = getattr(ctx.agent, "wiki", None)
