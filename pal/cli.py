@@ -32,7 +32,6 @@ from pal.protocol import (
     UrlFixProposalMessage,
     BatchFallbackProposal,
     BatchFallbackApprovalMessage,
-    Message,
 )
 
 CLI_CHANNEL_ID = "cli-default"

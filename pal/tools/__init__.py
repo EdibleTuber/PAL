@@ -1,12 +1,17 @@
 """PAL tool implementations (Tool subclasses).
 
-Phase F migration complete through PR7. Tool subclasses are added per-category
-across PRs 2-7 and re-exported here. Tasks owning each migration:
-    PR2: vault.py (edit/create/move/delete/replace; read/list/search dropped
-         in favor of agent_core builtins cat/ls/grep)
-    PR3: research.py (propose_research, research_topic)
-    PR4: compile.py, consolidate.py, reorg.py, wait.py
-    PR7: scratch.py (update_scratch, add_learning, PAL overrides of framework builtins)
+Each category of tools lives in its own module; all are re-exported here
+for the agent's tool registry:
+    vault.py: edit/create/move/delete/replace (read/list/search dropped in
+         favor of agent_core builtins cat/ls/grep)
+    research.py: propose_research, research_topic
+    compile.py: compile_summary, propose_compile_batch, compile_batch
+    consolidate.py: propose_consolidate, consolidate
+    url_fix.py: propose_url_fix, url_fix
+    reorg.py: propose_reorg, propose_promote, reorg
+    promote_synthesis.py: propose_promote_synthesis
+    wait.py: wait_for_reindex
+    scratch.py: update_scratch, add_learning (PAL overrides of framework builtins)
 """
 from pal.tools.vault import (
     CreateFile,

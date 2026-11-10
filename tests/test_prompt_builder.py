@@ -126,6 +126,15 @@ def test_base_prompt_specifies_research_flow():
     assert "blocks until the user" in lower or "blocks until" in lower
 
 
+def test_base_prompt_research_approval_wording_is_adapter_agnostic():
+    """W2: one PAL_BASE_PROMPT serves the CLI and the Discord adapter; the
+    research-approval wording must not name the CLI as the approval mechanism
+    (the CLI renders a prompt, Discord renders buttons — the tool just emits)."""
+    assert "CLI approval prompt" not in PAL_BASE_PROMPT
+    assert "via the CLI prompt" not in PAL_BASE_PROMPT
+    assert "declines in the CLI" not in PAL_BASE_PROMPT
+
+
 def test_base_prompt_routes_wiki_promotion_through_compile():
     # The prompt should list compile tools for wiki promotion
     assert "compile_summary" in PAL_BASE_PROMPT or "compile_batch" in PAL_BASE_PROMPT

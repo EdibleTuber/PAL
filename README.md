@@ -158,13 +158,13 @@ pip install -e .
 
 ### Configure
 
-All settings use environment variables with a `PAL_` prefix. Defaults assume a local inference server and `~/vault` as the vault path.
+All settings use environment variables with a `PAL_` prefix. Defaults assume a local inference server and `~/vault` as the vault path. Where the Default column names `agent_core/config.py`, the default is defined in that file in the deployed agent_core package — the code is the source of truth.
 
 **Core:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PAL_INFERENCE_URL` | `http://127.0.0.1:11434` | Inference server URL |
+| `PAL_INFERENCE_URL` | `agent_core/config.py` | Inference server URL |
 | `PAL_MANAGER_TOKEN` | - | Bearer token the manager requires on every request |
 | `PAL_MODEL` | `Qwen3.5-35B-A3B-Q4_K_M` | Model name |
 | `PAL_VAULT_PATH` | `~/vault` | Path to the Obsidian vault |
@@ -185,7 +185,6 @@ All settings use environment variables with a `PAL_` prefix. Defaults assume a l
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PAL_CHANNELS_DIR` | `~/.local/share/pal/channels` | Per-channel conversation history location |
 | `PAL_SCRATCHPAD_MAX_BYTES` | `2048` | Size cap for per-channel scratchpad |
 
 **Batch inference (Phase B):**
@@ -193,8 +192,8 @@ All settings use environment variables with a `PAL_` prefix. Defaults assume a l
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PAL_BATCH_ENABLED` | `false` | Enable batch slot for background workloads |
-| `PAL_BATCH_INFERENCE_URL` | `http://127.0.0.1:11434` | Manager URL for the batch slot (usually same as main) |
-| `PAL_BATCH_MODEL` | `gemma-4-E4B-it-Q4_K_M` | Default model for the batch slot |
+| `PAL_BATCH_INFERENCE_URL` | `agent_core/config.py` | Manager URL for the batch slot (usually same as main) |
+| `PAL_BATCH_MODEL` | `agent_core/config.py` | Default model for the batch slot |
 
 **Discord:**
 
@@ -371,7 +370,7 @@ flowchart LR
   _wisdom/             # Active wisdom entries (injected into system prompt)
   _learning/           # Extracted learnings from conversations
   _config/             # Configuration (web search allowlist)
-  _channels/           # Per-channel scratchpads (scratch.md per channel)
+  _channels/           # Per-channel state (<agent>/<channel_id>/: history.jsonl, scratch.md)
   Research/            # Wiki articles organized by topic
   raw/
     web/               # Fetched URL content (quarantine)
@@ -406,16 +405,16 @@ flowchart LR
 
 PAL scopes conversation history and a per-channel scratchpad by Discord channel (or a `cli-default` sentinel for the CLI), so different channels stay isolated and context survives daemon restarts.
 
-**Conversation history.** Each channel's turns are appended to a JSONL log at `$PAL_CHANNELS_DIR/<channel_id>/history.jsonl` (default `~/.local/share/pal/channels/`). On the first message to a channel after a daemon restart, the log is replayed to rebuild in-memory state. The on-disk log grows unbounded; the in-memory window still honors `PAL_HISTORY_DEPTH`. History is not git-tracked (mechanical state, not knowledge).
+**Conversation history.** Each channel's turns are appended to a JSONL log at `<vault>/_channels/pal/<channel_id>/history.jsonl`. On the first message to a channel after a daemon restart, the log is replayed to rebuild in-memory state. The on-disk log grows unbounded; the in-memory window still honors `PAL_HISTORY_DEPTH`. History is not git-tracked (mechanical state, not knowledge).
 
-**Scratchpad.** Each channel has a free-form markdown file at `<vault>/_channels/<channel_id>/scratch.md`, git-tracked, auto-injected into PAL's system prompt for every turn in that channel. Two update paths:
+**Scratchpad.** Each channel has a free-form markdown file at `<vault>/_channels/pal/<channel_id>/scratch.md`, git-tracked, auto-injected into PAL's system prompt for every turn in that channel. Two update paths:
 
 - `update_scratch` tool: PAL replaces the scratchpad wholesale when it decides something is worth recording ("current phase: 2", "we chose FastMCP", etc.).
 - `/scratch <text>` slash command: you append a timestamped line yourself.
 
 The scratchpad is capped at `PAL_SCRATCHPAD_MAX_BYTES` (default 2 KB) to keep it as working state, not a second wiki. Oversized writes fail cleanly; PAL prunes and retries.
 
-**CLI behavior.** The CLI always uses channel_id `cli-default`. Your CLI conversation now persists across daemon restarts (was ephemeral before). To start fresh, delete or rename `~/.local/share/pal/channels/cli-default/history.jsonl`.
+**CLI behavior.** The CLI always uses channel_id `cli-default`. Your CLI conversation now persists across daemon restarts (was ephemeral before). To start fresh, delete or rename `<vault>/_channels/pal/cli-default/history.jsonl`.
 
 **Discord behavior.** `on_message` forwards `message.channel.id`; each channel gets its own conversation and scratchpad on first use.
 
@@ -423,9 +422,9 @@ The scratchpad is capped at `PAL_SCRATCHPAD_MAX_BYTES` (default 2 KB) to keep it
 
 PAL can route latency-tolerant background workloads (categorize, learning scanner, PDF TOC detection) to a second inference slot, keeping the chat GPU undisturbed.
 
-**How it works.** The inference server exposes two slots via one manager endpoint (default `http://127.0.0.1:11434`):
+**How it works.** The inference server exposes two slots via one manager endpoint (default in `agent_core/config.py`):
 - `main`: Tesla P40 / CUDA, runs the chat model.
-- `batch`: AMD Vega iGPU / Vulkan, runs a small fast model (default Gemma 4 E4B IT Q4_K_M).
+- `batch`: AMD Vega iGPU / Vulkan, runs the batch model (`PAL_BATCH_MODEL`, defaults to the main model).
 
 The manager routes `/v1/chat/completions` to whichever slot has the requested model loaded. PAL exposes the dual-backend through `PAL_BATCH_*` config.
 

@@ -147,9 +147,9 @@ class BatchFallbackApprovalMessage:
     type: str = "batch_fallback_approval"
 
 
-# Local Message union over BOTH generic and PAL-specific types for type hints.
-# Consumers like pal/client.py and pal/cli.py import this for their isinstance
-# branches and type annotations.
+# Local Message union over BOTH generic and PAL-specific types, for type hints.
+# The only import is pal/discord_interactions.py, which annotates its stream
+# handler with AsyncGenerator[Message, None]; no isinstance branches use it.
 Message = (
     ChatMessage
     | CommandMessage
