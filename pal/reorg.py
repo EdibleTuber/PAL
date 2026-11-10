@@ -30,18 +30,24 @@ class Reorganizer:
     # ---- single-op primitive ----
 
     def move_single(self, src: str, dst: str) -> None:
-        """Rename a single vault file. Raises on missing src, existing dst,
-        or paths inside system directories (raw/ or underscore-prefixed).
+        """Rename a single vault file. Raises ValueError on a path outside
+        the vault (including .., absolute, and symlink escapes) or inside a
+        system directory (raw/ or _-prefixed, any component),
+        FileNotFoundError on missing src, FileExistsError on existing dst.
         """
-        def _is_top_level_system(p: str) -> bool:
-            parts = p.split("/")
-            return parts[0] == "raw" or (parts[0].startswith("_") if parts[0] else False)
+        root = self.vault_path.resolve()
+        resolved: dict[str, Path] = {}
+        for side, rel in (("src", src), ("dst", dst)):
+            parts = Path(rel).parts
+            if "raw" in parts or self._is_system_path(rel):
+                raise ValueError(f"system directory: {side}={rel}")
+            full = (self.vault_path / rel).resolve()
+            if not full.is_relative_to(root):
+                raise ValueError(f"path outside vault: {side}={rel}")
+            resolved[side] = full
 
-        if _is_top_level_system(src) or _is_top_level_system(dst):
-            raise ValueError(f"system directory: {src} or {dst}")
-
-        src_path = self.vault_path / src
-        dst_path = self.vault_path / dst
+        src_path = resolved["src"]
+        dst_path = resolved["dst"]
 
         if not src_path.exists():
             raise FileNotFoundError(f"source not found: {src}")
