@@ -84,11 +84,23 @@ class Reorganizer:
                 errors.append(f"{prefix}: unknown type {op_type!r}")
                 continue
 
-            if not self._path_inside_vault(src) or not self._path_inside_vault(dst):
-                errors.append(f"{prefix}: path outside vault (src={src!r} dst={dst!r})")
+            outside = [
+                (side, rel)
+                for side, rel in (("src", src), ("dst", dst))
+                if not self._path_inside_vault(rel)
+            ]
+            if outside:
+                for side, rel in outside:
+                    errors.append(f"{prefix}: path outside vault: {side}={rel!r}")
                 continue
-            if self._is_system_path(src) or self._is_system_path(dst):
-                errors.append(f"{prefix}: system/underscore path not allowed")
+            system = [
+                (side, rel)
+                for side, rel in (("src", src), ("dst", dst))
+                if "raw" in Path(rel).parts or self._is_system_path(rel)
+            ]
+            if system:
+                for side, rel in system:
+                    errors.append(f"{prefix}: system directory not allowed: {side}={rel!r}")
                 continue
             if src == dst:
                 errors.append(f"{prefix}: src and dst are identical")
@@ -128,11 +140,18 @@ class Reorganizer:
         return errors
 
     def _path_inside_vault(self, rel: str) -> bool:
-        if rel.startswith("/"):
-            return False
-        if ".." in rel.split("/"):
-            return False
-        return True
+        """True iff `rel` resolves to a location inside the vault root.
+
+        Containment is decided on the resolved path, matching
+        move_single: an absolute path, a `..` that leaves the vault, or
+        a symlink inside the vault that points outside it all resolve
+        outside and are rejected. Resolution is non-strict (Python
+        default): a dst whose parent does not exist yet — the move
+        creates it afterwards — still resolves correctly.
+        """
+        root = self.vault_path.resolve()
+        full = (self.vault_path / rel).resolve()
+        return full.is_relative_to(root)
 
     def _is_system_path(self, rel: str) -> bool:
         parts = Path(rel).parts
