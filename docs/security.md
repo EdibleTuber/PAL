@@ -15,13 +15,16 @@ The BASE_PROMPT also explicitly instructs the model to treat any imperative dire
 
 ## Path Traversal
 
-All file operations resolve paths through a safe-path check that rejects:
+Containment is enforced per entry point. Every check resolves the requested path and rejects it if the resolved location is outside the vault root — which covers `..` escapes, absolute paths, and symlinks inside the vault that point outside:
 
-- `..` components
-- Leading `/` (absolute paths)
-- Any resolved path outside the vault root
+- The five vault write tools (`edit_file`, `create_file`, `move_file`, `delete_file`, `replace_in_file`) resolve every target with `_resolve_safe` (`pal/tools/vault.py:46`).
+- Single moves are checked in `Reorganizer.move_single`, which raises `ValueError` for an escaping `src` or `dst` (`pal/reorg.py:44-46`). Batch reorgs are checked in `Reorganizer.validate_operations` (`pal/reorg.py:87-104`), which the tool layer runs both at propose time (`pal/tools/reorg.py:90`) and again immediately before execution (`pal/tools/reorg.py:293`), behind the approval gate (`pal/tools/reorg.py:275-287`) — so an escaping op is rejected before the user is ever asked to approve it, and re-checked in case the vault changed since the proposal.
+- The `/import` slash command rejects `..` components and leading `/` on the raw string, then re-checks the resolved path against the vault root (`pal/commands/domain.py:72,82`).
+- `WikiManager` resolves every article path it reads or writes through `_resolve_safe` (`pal/wiki.py:21`); the vault write tools and the consolidator write articles through it, so article writes are resolved before they touch the filesystem.
 
-System directories (underscore-prefixed like `_wisdom/`, `_profile/`, `_channels/`) are additionally blocked from write operations. The same guards apply to chat tools, slash commands, and the retrieval client.
+System directories (underscore-prefixed like `_wisdom/`, `_profile/`, `_channels/`) are blocked from the write tools by `_is_system_path` (`pal/tools/vault.py:54`); reorg ops reject them — plus `raw/` — on both `src` and `dst` (`pal/reorg.py:42`, `:99`).
+
+The retrieval client is an HTTP client that never touches the vault filesystem. Its only traversal guard is the `doc_id` input check that runs before URL interpolation (`agent_core/retrieval.py:64`).
 
 ## Web Fetch
 
