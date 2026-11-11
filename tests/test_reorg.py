@@ -309,3 +309,160 @@ def test_reorganizer_constructor_default_retrieval_is_none():
     from pal.reorg import Reorganizer
     r = Reorganizer(vault_path=Path("/tmp"), wiki=MagicMock(), compiler=None)
     assert r.retrieval is None
+
+
+# ---- vault containment: batch path (R6b) ----
+#
+# The batch gate (validate_operations) and the single-op primitive
+# (move_single) must agree on containment: for every op that reaches
+# execute_operations_async, both src and dst, resolved against the vault
+# root, are inside vault_path.resolve(). Containment is decided on the
+# resolved path, so an in-vault symlink pointing outside is rejected.
+
+
+def _make_vault_with_outside(tmp_path: Path) -> tuple[Path, Path]:
+    """Vault and a sibling 'outside' directory in a fresh tmp_path."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (vault / "notes").mkdir()
+    (vault / "notes" / "secret.md").write_text("secret")
+    return vault, outside
+
+
+@pytest.mark.asyncio
+async def test_batch_symlink_dst_escape_file_stays_in_vault(tmp_path: Path):
+    """dst traversing an in-vault symlink to an outside dir must not move
+    the file out of the vault. Asserts on where the file landed, not on
+    the error string."""
+    vault, outside = _make_vault_with_outside(tmp_path)
+    (vault / "link").symlink_to(outside)
+    reorg = Reorganizer(vault_path=vault, wiki=None, compiler=None)
+    ops = [{"type": "move", "src": "notes/secret.md", "dst": "link/escaped.md"}]
+    errors = reorg.validate_operations(ops)
+    if not errors:
+        await reorg.execute_operations_async(ops)
+    assert not (outside / "escaped.md").exists()
+    assert (vault / "notes" / "secret.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_batch_symlink_src_escape_host_file_untouched(tmp_path: Path):
+    """src that is an in-vault symlink to a host file must not be moved;
+    nothing is pulled into the vault through the link."""
+    vault, outside = _make_vault_with_outside(tmp_path)
+    (outside / "host_secret.md").write_text("host secret")
+    (vault / "sneaky.md").symlink_to(outside / "host_secret.md")
+    reorg = Reorganizer(vault_path=vault, wiki=None, compiler=None)
+    ops = [{"type": "move", "src": "sneaky.md", "dst": "notes/stolen.md"}]
+    errors = reorg.validate_operations(ops)
+    if not errors:
+        await reorg.execute_operations_async(ops)
+    assert (outside / "host_secret.md").exists()
+    assert not (vault / "notes" / "stolen.md").exists()
+
+
+def test_batch_validate_rejects_symlink_dst_before_approval(tmp_path: Path):
+    """validate_operations returns a non-empty error list naming the op and
+    the offending side, so the proposal is rejected at propose time and
+    never reaches the approval prompt."""
+    vault, outside = _make_vault_with_outside(tmp_path)
+    (vault / "link").symlink_to(outside)
+    reorg = Reorganizer(vault_path=vault, wiki=None, compiler=None)
+    errors = reorg.validate_operations(
+        [{"type": "move", "src": "notes/secret.md", "dst": "link/escaped.md"}]
+    )
+    assert errors, f"expected validation errors, got {errors!r}"
+    assert any("op 1" in e and "dst" in e for e in errors)
+
+
+def test_batch_validate_agrees_with_move_single_rejections(tmp_path: Path, tmp_path_factory):
+    """Every op that move_single rejects with ValueError must also be
+    rejected by validate_operations — the two entry points must agree."""
+    vault, outside = _make_vault_with_outside(tmp_path)
+    (vault / "link").symlink_to(outside)
+    (outside / "host_secret.md").write_text("host secret")
+    (vault / "sneaky.md").symlink_to(outside / "host_secret.md")
+    abs_target = tmp_path_factory.mktemp("abs") / "abs_escape.md"
+    reorg = Reorganizer(vault_path=vault, wiki=None, compiler=None)
+    cases = [
+        ("notes/secret.md", "../escaped.md"),
+        ("notes/secret.md", str(abs_target)),
+        ("notes/secret.md", "link/escaped.md"),
+        ("sneaky.md", "notes/stolen.md"),
+    ]
+    for src, dst in cases:
+        with pytest.raises(ValueError):
+            reorg.move_single(src, dst)
+        errors = reorg.validate_operations(
+            [{"type": "move", "src": src, "dst": dst}]
+        )
+        assert errors, (
+            f"move_single rejects {src!r} -> {dst!r} "
+            f"but validate_operations accepted it"
+        )
+
+
+def test_batch_validate_rejects_raw_component(tmp_path: Path):
+    """raw/ is a system directory: move_single blocks it, and the batch
+    gate must agree (the raw decision of R6b)."""
+    vault = _seed_vault(tmp_path, {"A.md": "---\n---\n"})
+    reorg = Reorganizer(vault_path=vault, wiki=None, compiler=None)
+    assert reorg.validate_operations(
+        [{"type": "move", "src": "A.md", "dst": "raw/A.md"}]
+    )
+    assert reorg.validate_operations(
+        [{"type": "move", "src": "A.md", "dst": "notes/raw/A.md"}]
+    )
+
+
+def test_batch_validate_allows_nested_new_parent_dirs(tmp_path: Path):
+    """A dst whose parent directories do not exist yet must still validate:
+    resolution is non-strict and the move creates the parents afterwards."""
+    vault, _ = _make_vault_with_outside(tmp_path)
+    reorg = Reorganizer(vault_path=vault, wiki=None, compiler=None)
+    errors = reorg.validate_operations(
+        [{"type": "move", "src": "notes/secret.md", "dst": "Deep/Nested/Dir/secret.md"}]
+    )
+    assert errors == []
+
+
+def test_batch_validate_allows_inner_dotdot_staying_inside(tmp_path: Path):
+    """An inner .. that stays inside the vault resolves inside and is
+    allowed: containment is about the resolved location, not the string.
+    (sub/ is a real directory, as it would be in a live vault — the
+    kernel can only walk `..` through directories that exist.)"""
+    vault, _ = _make_vault_with_outside(tmp_path)
+    (vault / "notes" / "sub").mkdir()
+    reorg = Reorganizer(vault_path=vault, wiki=None, compiler=None)
+    errors = reorg.validate_operations(
+        [{"type": "move", "src": "notes/sub/../secret.md", "dst": "notes/moved.md"}]
+    )
+    assert errors == []
+
+
+def test_batch_validate_allows_directory_named_drawer(tmp_path: Path):
+    """A directory merely containing 'raw' as a substring (drawer) is not
+    a raw/ component and must validate."""
+    vault = _seed_vault(tmp_path, {"drawer/note.md": "---\n---\n"})
+    reorg = Reorganizer(vault_path=vault, wiki=None, compiler=None)
+    errors = reorg.validate_operations(
+        [{"type": "move", "src": "drawer/note.md", "dst": "drawer/renamed.md"}]
+    )
+    assert errors == []
+
+
+def test_batch_validate_allows_multi_op_legit_batch(tmp_path: Path):
+    vault = _seed_vault(tmp_path, {
+        "A.md": "---\n---\n",
+        "B.md": "---\n---\n",
+        "C.md": "---\n---\n",
+    })
+    reorg = Reorganizer(vault_path=vault, wiki=None, compiler=None)
+    errors = reorg.validate_operations([
+        {"type": "move", "src": "A.md", "dst": "Topics/A.md"},
+        {"type": "move", "src": "B.md", "dst": "Topics/sub/B.md"},
+        {"type": "move", "src": "C.md", "dst": "drawer/C.md"},
+    ])
+    assert errors == []
