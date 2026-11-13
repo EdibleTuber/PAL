@@ -1,0 +1,24 @@
+# Verified: pal_summarizer p2+p4+p5 (task 1/1)
+
+## Ruled out
+
+- **p2:103** (`except ValueError` around `relative_to` at summarizer.py:103–104): Sound, narrow handler — `Path.relative_to` raises `ValueError` iff the path is not relative to the base; the fallback to the absolute path string is correct. Same pattern already ruled out at research.py:36.
+- **p4:54** (unguarded `read_text` at summarizer.py:54): The sole caller `Researcher._summarize` (researcher.py:193–206) wraps the entire `summarize_raw_file` call in `try/except Exception as exc:`, marking the source `"summarize_failed"` with `source.error = str(exc)`. Any raise from here (including the unguarded read) becomes an honest per-source failure; run continues.
+- **p4:98** (`mkdir` at summarizer.py:98): `mkdir(parents=True, exist_ok=True)` is idempotent — no failure risk.
+- **p4:115** (unguarded `write_text` at summarizer.py:115): Same caller catch as p4:54. Additionally, `source.summary_path` is never assigned on failure (the assignment at researcher.py:200 is inside the try, before the exception), so a truncated/orphaned summary file can never be attached to that source.
+- **p5:52** (docstring line 52 — "RuntimeError or inference errors on LLM failure"): Resolved by chain-following. The `inference.complete()` call at summarizer.py:80 propagates exceptions from the inference server. The synthesis-verified context confirms `agent_core/inference.py` `_post_with_retry` re-raises on final attempt (~:218–221) and re-raises other errors (~:225). `SourceTooLargeError` is a `RuntimeError` subclass (:20), so the docstring claim is consistent. (Note: agent_core/inference.py could not be read directly due to permission denied on external_directory; resolution relies on synthesis-verified context.)
+
+## Notes
+
+- **p5:5 duplicate rows**: Lines 6–8 of the p5 claims JSONL all cite the same module docstring line 5 claim ("on parse failure the raw text is preserved") with three different evidence lines (:81, :82, :120). All three evidence paths are consistent: `raw_response = result.content or ""` (:81) preserves the full response; `parse_title_and_body(raw_response)` (:82) returns `(None, response.strip())` when no TITLE: prefix is found (title_cleanup.py:34–35); `summary_text=summary.strip()` (:120) returns the preserved body. One entry for this claim.
+- **p5:4 / p5:5 (title stem fallback + raw text preservation)**: Verified by reading title_cleanup.py:24–35 — `parse_title_and_body` returns `(None, response.strip())` when no `TITLE:` prefix is found. In summarizer.py:84–91, `if not parsed_title or not parsed_title.strip(): clean_title = raw_path.stem` triggers the stem fallback. The module docstring claim (lines 4–5) is TRUE.
+- **p5:21 / p5:43 / p5:51 (SourceTooLargeError guard)**: All three docstring claims are consistent. The guard at summarizer.py:56–60 checks `len(raw_body) > max_body_chars` and raises `SourceTooLargeError` (refuses rather than truncates). The docstring at line 43 documents the guard, line 51 documents the exception type, and line 21 documents the exception class purpose — all match.
+
+## Synthesis adjudication (2026-11-10)
+
+- 0 findings; all 12 inventory rows (10 unique — p5:5 triplicated) ruled out / verified consistent. All subagent rulings confirmed by synthesis ranged reads.
+- p4:54 / p4:115 caller-catch re-verified by synthesis directly: `Researcher._summarize` (pal/researcher.py:188–202) — `try:` at :193 wraps `summarize_raw_file(...)` (:194–198), `source.summary_path = result.summary_path` at :199 (inside the try), `except Exception as exc:` at :201 → `logger.warning` + `source.status = "summarize_failed"` + `source.error = str(exc)` + return source. So every summarizer raise is an honest per-source failure with the run continuing — strictly milder than filed Q5 (whose researcher.py:167,179 sites lack this catch); not re-filed.
+- p5:52 resolution grounded by synthesis directly (the subagent hit a permission denial on agent_core): agent_core/inference.py `_post_with_retry` — "Final attempt - let it raise on any error" (:218), `resp.raise_for_status()` (:220), repeated-503/timeout re-raised as `BatchUnavailableError` (:224), other errors re-raised (:225). `inference.complete` therefore raises on LLM failure; with `SourceTooLargeError(RuntimeError)` at :20, the docstring's "RuntimeError or inference errors on LLM failure" is accurate.
+- p5:4/:5 parse contract re-verified by synthesis: `parse_title_and_body` (pal/title_cleanup.py) — no "TITLE:" prefix → `(None, response.strip())`; the stem fallback at summarizer.py:93 then applies. Module docstring TRUE.
+- p5:21/:43/:51 guard verified in-file: raise at :55–60 (refusal, not truncation), default `max_body_chars=20_000` matches the PALConfig default.
+- Subagent's write tool was denied; report persisted by synthesis (verbatim from the subagent return, which was complete).
