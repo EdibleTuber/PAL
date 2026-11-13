@@ -127,3 +127,33 @@ This file is the handoff state for a fresh session.
    verified tables by category, Ruled out, Inventory quality, Not yet covered,
    Tests). Commit.
 8. Out of scope here (later sessions): design review + phased fix plans.
+
+## Fix rounds log
+
+- 2026-11-13: **R6c DONE** — amended PR #24 body per
+  `docs/audit/prompt_r6c_amend_pr24_body.md` (written via
+  `gh api --method PATCH repos/EdibleTuber/PAL/pulls/24 --input <json>`;
+  `gh pr edit` is broken on this repo). Three edits, verified by reading
+  the body back from the API (byte-identical to the edited file):
+  (1) round-table X1 row now leads with the resolve-based containment
+  rewrite of `move_single` (`pal/reorg.py:38-47` as merged: both paths
+  resolved, `is_relative_to` the root — four escape vectors + symlink
+  escapes on both sides), OSError catch kept as second sentence;
+  (2) Rebase sentence now says "two conflicts (`tests/test_config.py`
+  and `README.md`), plus two files that merged cleanly and are worth
+  noting", matching the four bullets; (3) Known residuals gained the
+  batch symlink-escape bullet (`_path_inside_vault` string check at
+  merge; approved-proposal-only; `docs/security.md:22` code gap
+  distinct from F1's `:24` doc overstatement; missed due to a fix-brief
+  defect, not an implementer miss). DEVIATION from the prompt's quoted
+  text, made deliberately: the prompt said "still open on main", but
+  R6b (PR #25) merged 2026-11-13 and closed it — the record now says
+  "open at this PR's merge, closed by R6b", verified against
+  `origin/main` (`_path_inside_vault` resolve-based at `pal/reorg.py:142`;
+  security.md Path Traversal section rewritten).
+- Cleanup (same day): deleted local branches `fix-audit-rounds`
+  (c18d7cb) and `fix-audit-rounds-pr` (c27686c) — pre-rebase copies of
+  merged PR #24; every unique commit verified ON MAIN by subject before
+  `-D`. Removed merged worktree `.worktrees/r6b-batch-containment`
+  (was clean); branch `fix-r6b-batch-containment` kept (not in the
+  deletion list; tracks origin).
