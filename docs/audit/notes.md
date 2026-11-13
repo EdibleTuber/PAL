@@ -89,6 +89,18 @@ This file is the handoff state for a fresh session.
 1. Inventory is complete (see Run log + Inventory quality). No re-runs
    needed. Record the repo HEAD and `git status` here before writing
    findings.md.
+   - DONE 2026-11-09 (synthesis session): repo HEAD `6531f32`
+     (6531f32bef0d37e2fa939587f662698f663690e2) on `main`; branch
+     unchanged since `e938761` + audit-tooling commits (a680d7e..6531f32).
+     `git status`: clean except the two untracked
+     `systemd/searxng-restart.{service,timer}` files (p6 surface).
+   - Mechanical quote check (scratch script, /tmp/opencode/pal-audit/):
+     1333/1341 kept leads have their quote on the exact cited line, 0
+     line-drift. 8 missing, all p5: 6 in p5_claims__pal_summarizer
+     (docstring sentences cited as one joined line + extra leading
+     whitespace) and 2 in p5_claims__pal_prompts_system (list items
+     cited with 4-space indent vs 3 in file). All 8 verified present in
+     source — citation artifacts, same class as promote_synthesis.
 2. Read every lead in the jsonl in source and verify it (this is where
    inventory quality is enforced). Group into the findings.md categories:
    A async/concurrency, O ordering, Q QoL/stability, D config+docs drift,
