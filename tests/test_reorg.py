@@ -374,7 +374,13 @@ def test_batch_validate_rejects_symlink_dst_before_approval(tmp_path: Path):
         [{"type": "move", "src": "notes/secret.md", "dst": "link/escaped.md"}]
     )
     assert errors, f"expected validation errors, got {errors!r}"
-    assert any("op 1" in e and "dst" in e for e in errors)
+    # Per-side error contract (R6b, mutation-tested): each error names the op
+    # prefix and the offending side. Only dst is offending here, so exactly
+    # one error naming dst — a combined `(src=... dst=...)` line would fail.
+    assert len(errors) == 1
+    assert "op 1" in errors[0]
+    assert "path outside vault: dst=" in errors[0]
+    assert "src=" not in errors[0]
 
 
 def test_batch_validate_agrees_with_move_single_rejections(tmp_path: Path, tmp_path_factory):
